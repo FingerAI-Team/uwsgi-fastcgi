@@ -338,11 +338,14 @@ class Ranker:
                             batch_scores = batch_scores.numpy()
                             all_scores.extend(1 / (1 + np.exp(-batch_scores)))  # sigmoid 정규화
                             
-                            # 메모리 정리
+                            # 메모리 정리 - 불필요한 정리 제거
                             del inputs, batch_scores
-                            if self.device == "cuda":
-                                torch.cuda.empty_cache()
+                            # GPU 메모리 정리는 마지막 배치 후에만 수행 (제거)
                     
+                    # 모든 배치 처리 후 한 번만 메모리 정리
+                    if self.device == "cuda":
+                        torch.cuda.empty_cache()
+                        
                     break  # 성공적으로 처리 완료
                     
                 except RuntimeError as e:

@@ -39,7 +39,7 @@ class MRCController:
         
         # 모델 로드
         logger.info("Loading MRC model...")
-        self.model_config_args = get_model_config(self.config_path, plm='koroberta', infer_batch_size=10)
+        self.model_config_args = get_model_config(self.config_path, plm='koroberta', infer_batch_size=64)
         self.model = get_model(self.model_config_args, self.model_path)
         logger.info("MRC model loaded successfully")
         

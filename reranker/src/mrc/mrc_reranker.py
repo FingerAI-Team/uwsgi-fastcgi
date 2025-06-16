@@ -142,7 +142,24 @@ class MRCReranker:
                 'temperature': 1.0
             })
         
-        mrc_results = self.mrc_controller.infer_multi(samples)
+        # 배치 크기 설정 (64로 증가)
+        batch_size = 64
+        
+        # 배치 처리를 위한 준비
+        total_samples = len(samples)
+        mrc_results = []
+        
+        # 배치 단위로 처리
+        for i in range(0, total_samples, batch_size):
+            batch_end = min(i + batch_size, total_samples)
+            batch_samples = samples[i:batch_end]
+            
+            # 배치 처리
+            batch_results = self.mrc_controller.infer_multi(batch_samples)
+            mrc_results.extend(batch_results)
+            
+            logger.debug(f"MRC 배치 처리: {i//batch_size + 1}/{(total_samples + batch_size - 1)//batch_size} 완료")
+        
         mrc_scores = []  # MRC 점수 목록 저장
         
         # 점수 결합 및 결과 업데이트

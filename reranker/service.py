@@ -784,7 +784,7 @@ class RerankerService:
                     # MRC 가중치 로깅
                     logger.info(f"[HYBRID-DETAIL] MRC 가중치: {self.hybrid_weight_mrc}, FlashRank 가중치: {1.0 - self.hybrid_weight_mrc}")
                     
-                    # 하이브리드 재랭킹 수행
+                    # 하이브리드 재랭킹 수행 - 전체 검색 결과 사용 (상위 10개 제한 제거)
                     reranked_passages, mrc_scores = self.mrc_reranker.hybrid_rerank(
                         query, 
                         flashrank_result["results"], 
@@ -926,181 +926,33 @@ class RerankerService:
             total_passages = len(passages)
             logger.info(f"Reranking {total_passages} passages for query: '{query}'")
             
-            # 배치 처리를 위한 최적 크기 계산
-            batch_size = min(self.batch_size, total_passages)
-            logger.debug(f"Using batch size: {batch_size} for {total_passages} passages")
+            # 배치 처리를 위한 최적 크기 계산 - 64로 증가
+            batch_size = min(64, total_passages)  # 배치 크기 제한 증가 (16 → 64)
+            logger.debug(f"Using optimized batch size: {batch_size} for {total_passages} passages")
             
             # 동기화 시간 측정을 위한 변수 초기화
             sync_time = 0
             
-            # CUDA 동기화 함수
-            def sync_cuda():
-                if torch.cuda.is_available():
-                    sync_start = time.time()
-                    # 모든 CUDA 스트림 동기화 (완전한 동기화 보장)
-                    torch.cuda.synchronize()
-                    # 메모리 캐시 클리어 (메모리 누수 방지)
-                    torch.cuda.empty_cache()
-                    nonlocal sync_time
-                    sync_time += time.time() - sync_start
-            
-            # 배치 처리 전 GPU 상태 확인 및 초기화
+            # 배치 처리 전 GPU 상태 확인
             log_gpu_memory("배치 처리 전")
-            
-            # CUDA 완전 초기화 및 동기화
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()  # 시작 전 캐시 클리어
-            sync_cuda()
-            
-            # 배치 크기 최적화 - 더 작은 배치로 분할 처리
-            batch_size = min(16, batch_size)  # 배치 크기 제한
-            logger.debug(f"Using optimized batch size: {batch_size} for {total_passages} passages")
-            
-            # 프로파일링 결과를 저장할 변수
-            profiler_output = None
             
             # 배치 처리
             reranked_results = []
+            
             try:
-                # 프로파일링 활성화 여부 확인
-                if self.enable_profiling and PROFILER_AVAILABLE and torch.cuda.is_available():
-                    logger.info("Starting PyTorch profiling for this reranking request")
-                    profile_path = os.path.join(self.profile_dir, f"rerank_profile_{int(time.time())}")
+                # 프로파일링 없이 일반 실행
+                if total_passages > batch_size:
+                    logger.info(f"Processing in {(total_passages + batch_size - 1) // batch_size} batches")
                     
-                    # 프로파일링 시작
-                    with profile(
-                        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-                        record_shapes=True,
-                        profile_memory=True,
-                        with_stack=True,
-                        with_flops=True,
-                        on_trace_ready=torch.profiler.tensorboard_trace_handler(profile_path)
-                    ) as prof:
-                        if total_passages > batch_size:
-                            logger.info(f"Processing in {(total_passages + batch_size - 1) // batch_size} batches with profiling")
-                            
-                            for i in range(0, total_passages, batch_size):
-                                with record_function("batch_processing"):
-                                    batch_start = time.time()
-                                    batch_end = min(i + batch_size, total_passages)
-                                    batch_passages = passages[i:batch_end]
-                                    
-                                    logger.debug(f"Processing batch {i//batch_size + 1}/{(total_passages + batch_size - 1) // batch_size} with {len(batch_passages)} passages")
-                                    
-                                    # Create rerank request
-                                    rerank_request = RerankRequest(query=query, passages=batch_passages)
-                                    
-                                    # Rerank passages (GPU 접근 제한)
-                                    with record_function("rerank_call"):
-                                        with self._gpu_semaphore:  # 최대 7개 동시 GPU 접근
-                                            # GPU 사용량 모니터링
-                                            if torch.cuda.is_available():
-                                                current_memory = torch.cuda.memory_allocated()/1024**2
-                                                reserved_memory = torch.cuda.memory_reserved()/1024**2
-                                                total_memory = torch.cuda.get_device_properties(0).total_memory/1024**2
-                                                active_count = self.max_gpu_workers - self._gpu_semaphore._value  # 현재 활성 GPU 작업 수
-                                                logger.debug(f"[GPU] 활성작업: {active_count}/{self.max_gpu_workers}, 사용메모리: {current_memory:.1f}MB, 예약메모리: {reserved_memory:.1f}MB, 총메모리: {total_memory:.1f}MB")
-                                            
-                                            batch_results = self.ranker.rerank(rerank_request)
-                                    
-                                    # CUDA 동기화
-                                    with record_function("cuda_sync"):
-                                        sync_cuda()
-                                    
-                                    reranked_results.extend(batch_results)
-                                    
-                                    # GPU 메모리 정리
-                                    if torch.cuda.is_available():
-                                        with record_function("cuda_empty_cache"):
-                                            torch.cuda.empty_cache()
-                                    
-                                    batch_time = time.time() - batch_start
-                                    logger.debug(f"Batch {i//batch_size + 1} completed in {batch_time*1000:.2f}ms ({len(batch_passages)/batch_time:.1f} passages/sec)")
-                                
-                                # 프로파일러 스텝 진행
-                                prof.step()
-                        else:
-                            # 소량 데이터는 한 번에 처리
-                            with record_function("single_batch_processing"):
-                                logger.debug(f"Processing all {total_passages} passages in a single batch")
-                                
-                                rerank_request = RerankRequest(query=query, passages=passages)
-                                
-                                with record_function("rerank_call"):
-                                    with self._gpu_semaphore:  # 최대 7개 동시 GPU 접근
-                                        # GPU 사용량 모니터링
-                                        if torch.cuda.is_available():
-                                            current_memory = torch.cuda.memory_allocated()/1024**2
-                                            reserved_memory = torch.cuda.memory_reserved()/1024**2
-                                            total_memory = torch.cuda.get_device_properties(0).total_memory/1024**2
-                                            active_count = self.max_gpu_workers - self._gpu_semaphore._value  # 현재 활성 GPU 작업 수
-                                            logger.debug(f"[GPU] 활성작업: {active_count}/{self.max_gpu_workers}, 사용메모리: {current_memory:.1f}MB, 예약메모리: {reserved_memory:.1f}MB, 총메모리: {total_memory:.1f}MB")
-                                        
-                                        reranked_results = self.ranker.rerank(rerank_request)
-                                
-                                # CUDA 동기화
-                                with record_function("cuda_sync"):
-                                    sync_cuda()
-                                
-                                # GPU 메모리 정리
-                                if torch.cuda.is_available():
-                                    with record_function("cuda_empty_cache"):
-                                        torch.cuda.empty_cache()
-                                
-                            # 프로파일러 스텝 진행
-                            prof.step()
-                    
-                    # 프로파일링 결과 저장
-                    profiler_output = prof.key_averages().table(sort_by="cuda_time_total", row_limit=20)
-                    logger.info(f"Profiling complete. Results saved to {profile_path}")
-                    logger.debug(f"Top 20 operations by CUDA time:\n{profiler_output}")
-                    
-                else:
-                    # 프로파일링 없이 일반 실행
-                    if total_passages > batch_size:
-                        logger.info(f"Processing in {(total_passages + batch_size - 1) // batch_size} batches")
+                    for i in range(0, total_passages, batch_size):
+                        batch_start = time.time()
+                        batch_end = min(i + batch_size, total_passages)
+                        batch_passages = passages[i:batch_end]
                         
-                        for i in range(0, total_passages, batch_size):
-                            batch_start = time.time()
-                            batch_end = min(i + batch_size, total_passages)
-                            batch_passages = passages[i:batch_end]
-                            
-                            logger.debug(f"Processing batch {i//batch_size + 1}/{(total_passages + batch_size - 1) // batch_size} with {len(batch_passages)} passages")
-                            
-                            # Create rerank request
-                            rerank_request = RerankRequest(query=query, passages=batch_passages)
-                            
-                            # Rerank passages (GPU 접근 제한)
-                            with self._gpu_semaphore:  # 최대 7개 동시 GPU 접근
-                                # GPU 사용량 모니터링
-                                if torch.cuda.is_available():
-                                    current_memory = torch.cuda.memory_allocated()/1024**2
-                                    reserved_memory = torch.cuda.memory_reserved()/1024**2
-                                    total_memory = torch.cuda.get_device_properties(0).total_memory/1024**2
-                                    active_count = self.max_gpu_workers - self._gpu_semaphore._value  # 현재 활성 GPU 작업 수
-                                    logger.debug(f"[GPU] 활성작업: {active_count}/{self.max_gpu_workers}, 사용메모리: {current_memory:.1f}MB, 예약메모리: {reserved_memory:.1f}MB, 총메모리: {total_memory:.1f}MB")
-                                
-                                batch_results = self.ranker.rerank(rerank_request)
-                            
-                            # CUDA 동기화
-                            sync_cuda()
-                            
-                            reranked_results.extend(batch_results)
-                            
-                            # GPU 메모리 정리
-                            if torch.cuda.is_available():
-                                torch.cuda.empty_cache()
-                                
-                            batch_time = time.time() - batch_start
-                            logger.debug(f"Batch {i//batch_size + 1} completed in {batch_time*1000:.2f}ms ({len(batch_passages)/batch_time:.1f} passages/sec)")
-                            
-                            # 배치 처리 후 GPU 상태 확인
-                            log_gpu_memory(f"배치 {i//batch_size + 1} 후")
-                    else:
-                        # 소량 데이터는 한 번에 처리
-                        logger.debug(f"Processing all {total_passages} passages in a single batch")
+                        logger.debug(f"Processing batch {i//batch_size + 1}/{(total_passages + batch_size - 1) // batch_size} with {len(batch_passages)} passages")
                         
-                        rerank_request = RerankRequest(query=query, passages=passages)
+                        # Create rerank request
+                        rerank_request = RerankRequest(query=query, passages=batch_passages)
                         
                         # Rerank passages (GPU 접근 제한)
                         with self._gpu_semaphore:  # 최대 7개 동시 GPU 접근
@@ -1112,18 +964,73 @@ class RerankerService:
                                 active_count = self.max_gpu_workers - self._gpu_semaphore._value  # 현재 활성 GPU 작업 수
                                 logger.debug(f"[GPU] 활성작업: {active_count}/{self.max_gpu_workers}, 사용메모리: {current_memory:.1f}MB, 예약메모리: {reserved_memory:.1f}MB, 총메모리: {total_memory:.1f}MB")
                             
-                            reranked_results = self.ranker.rerank(rerank_request)
+                            batch_results = self.ranker.rerank(rerank_request)
                         
-                        # CUDA 동기화
-                        sync_cuda()
+                        # 중간 동기화 및 메모리 정리 제거 (성능 향상)
                         
-                        # GPU 메모리 정리
+                        reranked_results.extend(batch_results)
+                        
+                        batch_time = time.time() - batch_start
+                        logger.debug(f"Batch {i//batch_size + 1} completed in {batch_time*1000:.2f}ms ({len(batch_passages)/batch_time:.1f} passages/sec)")
+                        
+                        # 배치 처리 후 GPU 상태 확인
+                        log_gpu_memory(f"배치 {i//batch_size + 1} 후")
+                else:
+                    # 소량 데이터는 한 번에 처리
+                    logger.debug(f"Processing all {total_passages} passages in a single batch")
+                    
+                    rerank_request = RerankRequest(query=query, passages=passages)
+                    
+                    # Rerank passages (GPU 접근 제한)
+                    with self._gpu_semaphore:  # 최대 7개 동시 GPU 접근
+                        # GPU 사용량 모니터링
                         if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
+                            current_memory = torch.cuda.memory_allocated()/1024**2
+                            reserved_memory = torch.cuda.memory_reserved()/1024**2
+                            total_memory = torch.cuda.get_device_properties(0).total_memory/1024**2
+                            active_count = self.max_gpu_workers - self._gpu_semaphore._value  # 현재 활성 GPU 작업 수
+                            logger.debug(f"[GPU] 활성작업: {active_count}/{self.max_gpu_workers}, 사용메모리: {current_memory:.1f}MB, 예약메모리: {reserved_memory:.1f}MB, 총메모리: {total_memory:.1f}MB")
+                        
+                        reranked_results = self.ranker.rerank(rerank_request)
+                
+                # 모든 배치 처리 완료 후 한 번만 동기화 및 메모리 정리
+                if torch.cuda.is_available():
+                    sync_start = time.time()
+                    torch.cuda.synchronize()
+                    torch.cuda.empty_cache()
+                    sync_time = time.time() - sync_start
+                
+                # 결과 정렬 및 상위 결과 선택
+                if isinstance(reranked_results, list):
+                    reranked_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+                    
+                    # top_k 제한 제거 - 모든 결과 반환
+                    # if top_k and isinstance(top_k, int) and top_k > 0:
+                    #     reranked_results = reranked_results[:top_k]
+                
+                # 처리 시간 계산
+                processing_time = time.time() - start_time
+                logger.info(f"FlashRank 재랭킹 완료: {processing_time:.3f}초, 동기화 시간: {sync_time:.3f}초")
+                
+                # 결과 포맷팅
+                if search_result:
+                    search_result["results"] = reranked_results
+                    search_result["reranked"] = True
+                    search_result["reranker_type"] = "flashrank"
+                    search_result["processing_time"] = processing_time
+                    return search_result
+                else:
+                    return {
+                        "query": query,
+                        "results": reranked_results,
+                        "total": len(reranked_results),
+                        "reranked": True,
+                        "reranker_type": "flashrank",
+                        "processing_time": processing_time
+                    }
             except Exception as e:
-                logger.error(f"Error during reranking: {e}")
+                logger.error(f"Error during reranking: {str(e)}", exc_info=True)
                 logger.warning("Falling back to original results")
-                # 오류 발생 시 원본 결과 반환
                 
                 # 오류 시 GPU 메모리 확인
                 log_gpu_memory("랭킹 오류 후")
@@ -1131,61 +1038,13 @@ class RerankerService:
                 if search_result:
                     return search_result
                 else:
-                    return passages
-            
-            # Convert back to original format if needed
-            if search_result:
-                processed_results = []
-                for result in reranked_results:
-                    # 기본 필드만 포함 (중요한 데이터 유지)
-                    processed_result = {
-                        "passage_id": result["id"],
-                        "doc_id": result["meta"].get("doc_id", ""),
-                        "text": result["text"],
-                        "score": float(result["score"])
+                    return {
+                        "query": query,
+                        "results": passages,
+                        "total": len(passages),
+                        "reranked": False,
+                        "error": str(e)
                     }
-                    
-                    # 메타데이터에서 original_score만 보존
-                    if "original_score" in result["meta"]:
-                        metadata = {"original_score": result["meta"]["original_score"]}
-                        processed_result["metadata"] = metadata
-                    
-                    processed_results.append(processed_result)
-                
-                # Apply top_k if specified
-                if top_k is not None:
-                    processed_results = processed_results[:top_k]
-                
-                # 결과 준비 - 핵심 필드만 포함
-                result = {
-                    "query": query,
-                    "results": processed_results,
-                    "total": len(processed_results),
-                    "reranked": True,
-                    "reranker_type": "flashrank",
-                    "processing_time": time.time() - start_time,
-                    "cached": False
-                }
-                
-                # CUDA 최종 동기화
-                sync_cuda()
-                
-                # 성능 로그 기록
-                elapsed_time = time.time() - start_time
-                logger.info(f"Reranking completed in {elapsed_time:.3f} seconds for {total_passages} passages")
-                logger.info(f"CUDA synchronization overhead: {sync_time:.3f} seconds")
-                logger.info(f"Effective throughput: {total_passages / (elapsed_time - sync_time):.1f} passages/second")
-                
-                # 최종 GPU 메모리 상태 로깅
-                log_gpu_memory("재랭킹 완료")
-                
-                return result
-            else:
-                # 단순히 재랭크된 패시지 리스트 반환
-                if top_k is not None:
-                    reranked_results = reranked_results[:top_k]
-                return reranked_results
-                
         except Exception as e:
             logger.error(f"Error in perform_flashrank_reranking: {str(e)}", exc_info=True)
             if search_result:
