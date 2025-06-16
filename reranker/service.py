@@ -784,13 +784,23 @@ class RerankerService:
                     # MRC 가중치 로깅
                     logger.info(f"[HYBRID-DETAIL] MRC 가중치: {self.hybrid_weight_mrc}, FlashRank 가중치: {1.0 - self.hybrid_weight_mrc}")
                     
-                    # 하이브리드 재랭킹 수행 - 전체 검색 결과 사용 (상위 10개 제한 제거)
+                    # 하이브리드 재랭킹 수행 - 전체 검색 결과 사용 (제한 없이 모든 결과 처리)
+                    logger.info(f"[HYBRID-DETAIL] MRC 재랭킹 시작: 총 {len(flashrank_result['results'])}개 항목 처리")
+                    
+                    # 처리 대상 항목 수 로깅
+                    try:
+                        with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] MRC 재랭킹 시작: 총 {len(flashrank_result['results'])}개 항목 처리\n")
+                    except Exception as e:
+                        logger.warning(f"[HYBRID-DETAIL] 로그 기록 실패: {str(e)}")
+                    
+                    # 모든 결과 처리를 위해 top_k=None으로 설정
                     reranked_passages, mrc_scores = self.mrc_reranker.hybrid_rerank(
                         query, 
                         flashrank_result["results"], 
                         flashrank_scores, 
                         weight_mrc=self.hybrid_weight_mrc,
-                        top_k=top_k,
+                        top_k=None,  # None으로 설정하여 모든 결과 처리
                         return_mrc_scores=True  # MRC 점수도 함께 반환
                     )
                     mrc_processing_time = time.time() - hybrid_start_time
@@ -926,9 +936,26 @@ class RerankerService:
             total_passages = len(passages)
             logger.info(f"Reranking {total_passages} passages for query: '{query}'")
             
-            # 배치 처리를 위한 최적 크기 계산 - 64로 증가
-            batch_size = min(64, total_passages)  # 배치 크기 제한 증가 (16 → 64)
-            logger.debug(f"Using optimized batch size: {batch_size} for {total_passages} passages")
+            # 배치 처리를 위한 최적 크기 계산 - 성능 최적화
+            batch_size = min(64, total_passages)  # 배치 크기 제한
+            logger.info(f"[FLASHRANK-DETAIL] 배치 크기 설정: {batch_size}, 총 패시지 수: {total_passages}")
+            
+            # GPU 또는 CPU 사용 여부 확인 및 로깅
+            device_info = "GPU" if torch.cuda.is_available() else "CPU"
+            logger.info(f"[FLASHRANK-DETAIL] 현재 사용 중인 디바이스: {device_info}")
+            if torch.cuda.is_available():
+                device_name = torch.cuda.get_device_name(0)
+                logger.info(f"[FLASHRANK-DETAIL] GPU 정보: {device_name}")
+            
+            # 상세 로그 파일에 기록
+            try:
+                with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 배치 크기 설정: {batch_size}, 총 패시지 수: {total_passages}\n")
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 현재 사용 중인 디바이스: {device_info}\n")
+                    if torch.cuda.is_available():
+                        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] GPU 정보: {device_name}\n")
+            except Exception as e:
+                logger.warning(f"[FLASHRANK-DETAIL] 로그 기록 실패: {str(e)}")
             
             # 동기화 시간 측정을 위한 변수 초기화
             sync_time = 0
@@ -951,6 +978,14 @@ class RerankerService:
                         
                         logger.debug(f"Processing batch {i//batch_size + 1}/{(total_passages + batch_size - 1) // batch_size} with {len(batch_passages)} passages")
                         
+                        # 배치 시작 로깅
+                        logger.info(f"[FLASHRANK-DETAIL] 배치 {i//batch_size + 1}/{(total_passages + batch_size - 1) // batch_size} 처리 시작: {len(batch_passages)}개 항목")
+                        try:
+                            with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 배치 {i//batch_size + 1}/{(total_passages + batch_size - 1) // batch_size} 처리 시작: {len(batch_passages)}개 항목\n")
+                        except Exception as e:
+                            logger.warning(f"[FLASHRANK-DETAIL] 로그 기록 실패: {str(e)}")
+                        
                         # Create rerank request
                         rerank_request = RerankRequest(query=query, passages=batch_passages)
                         
@@ -971,7 +1006,14 @@ class RerankerService:
                         reranked_results.extend(batch_results)
                         
                         batch_time = time.time() - batch_start
-                        logger.debug(f"Batch {i//batch_size + 1} completed in {batch_time*1000:.2f}ms ({len(batch_passages)/batch_time:.1f} passages/sec)")
+                        logger.info(f"[FLASHRANK-DETAIL] 배치 {i//batch_size + 1} 완료: {batch_time:.3f}초 ({len(batch_passages)/batch_time:.1f} passages/sec)")
+                        
+                        # 배치 완료 로그 파일에 기록
+                        try:
+                            with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 배치 {i//batch_size + 1} 완료: {batch_time:.3f}초 ({len(batch_passages)/batch_time:.1f} passages/sec)\n")
+                        except Exception as e:
+                            logger.warning(f"[FLASHRANK-DETAIL] 로그 기록 실패: {str(e)}")
                         
                         # 배치 처리 후 GPU 상태 확인
                         log_gpu_memory(f"배치 {i//batch_size + 1} 후")
