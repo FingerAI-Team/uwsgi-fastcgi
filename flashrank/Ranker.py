@@ -11,6 +11,7 @@ from flashrank.Config import default_model, default_cache_dir, model_url, model_
 import collections
 from typing import Optional, List, Dict, Any
 import logging
+import time
 
 class RerankRequest:
     """ Represents a reranking request with a query and a list of passages. 
@@ -76,6 +77,7 @@ class Ranker:
                 self.device = "cuda:0"
                 self.logger.info(f"Using GPU 0: {self.device}")
                 self.logger.info(f"GPU Memory: {torch.cuda.memory_allocated()/1024**2:.2f}MB")
+                self.logger.info(f"GPU Name: {torch.cuda.get_device_name(0)}")
             else:
                 self.device = "cpu"
                 self.logger.info("GPU not available, using CPU only")
@@ -108,17 +110,34 @@ class Ranker:
                     cache_dir=str(self.model_dir),
                     local_files_only=False
                 )
+                
+                # GPU 사용 가능 시 half precision 사용
+                dtype = torch.float16 if self.device == "cuda:0" else torch.float32
+                self.logger.info(f"Using model dtype: {dtype}")
+                
                 self.hf_model = AutoModelForSequenceClassification.from_pretrained(
                     hf_model_name,
                     cache_dir=str(self.model_dir),
                     local_files_only=False,
                     trust_remote_code=True,
-                    torch_dtype=torch.float16 if self.device == "cuda" else torch.float32
+                    torch_dtype=dtype
                 )
+                
                 # GPU로 모델 이동
-                if self.device == "cuda":
+                if self.device == "cuda:0":
+                    self.logger.info("Moving model to GPU...")
                     self.hf_model.to(self.device)
+                    # 모델이 실제로 GPU에 있는지 확인
+                    model_device = next(self.hf_model.parameters()).device
+                    self.logger.info(f"Model is now on device: {model_device}")
+                    
+                    # GPU 메모리 사용량 확인
+                    mem_allocated = torch.cuda.memory_allocated(0) / (1024**3)  # GB 단위
+                    mem_reserved = torch.cuda.memory_reserved(0) / (1024**3)  # GB 단위
+                    self.logger.info(f"GPU Memory after model loading: {mem_allocated:.2f}GB allocated, {mem_reserved:.2f}GB reserved")
+                
                 self.hf_model.eval()
+                self.logger.info("Model loaded successfully and set to evaluation mode")
             except ImportError:
                 raise ImportError("Please install torch and transformers to use HuggingFace models: pip install torch transformers")
             except Exception as e:
@@ -301,11 +320,22 @@ class Ranker:
             self.logger.debug("Running HuggingFace reranking...")
             import torch
             
-            if self.device == "cuda":
-                self.logger.info(f"GPU Memory before inference: {torch.cuda.memory_allocated()/1024**2:.2f}MB")
+            # 모델이 실제로 GPU에 있는지 다시 확인
+            if self.device == "cuda:0":
+                model_device = next(self.hf_model.parameters()).device
+                if str(model_device) == "cpu":
+                    self.logger.warning("Model is on CPU! Moving to GPU...")
+                    self.hf_model.to(self.device)
+                    model_device = next(self.hf_model.parameters()).device
+                    self.logger.info(f"Model is now on device: {model_device}")
+                
+                # GPU 메모리 상태 로깅
+                mem_allocated = torch.cuda.memory_allocated(0) / (1024**3)  # GB 단위
+                mem_reserved = torch.cuda.memory_reserved(0) / (1024**3)  # GB 단위
+                self.logger.info(f"GPU Memory before inference: {mem_allocated:.2f}GB allocated, {mem_reserved:.2f}GB reserved")
             
             # 배치 크기 설정 (GPU/CPU에 따라 다르게)
-            batch_size = 256 if self.device == "cuda" else 32
+            batch_size = 32 if self.device == "cuda:0" else 16
             self.logger.info(f"Using batch size: {batch_size} on device: {self.device}")
             
             # 전체 패시지 수
@@ -324,32 +354,65 @@ class Ranker:
                         batch_pairs = [[query, passage["text"]] for passage in batch_passages]
                         self.logger.info(f"Processing batch {i//batch_size + 1}/{(total_passages + batch_size - 1)//batch_size} with {len(batch_pairs)} pairs")
                         
+                        # 배치 시작 시간 기록
+                        batch_start_time = time.time() if 'time' in globals() else None
+                        
                         with torch.no_grad():
-                            inputs = self.hf_tokenizer(batch_pairs, padding=True, truncation=True, return_tensors='pt', max_length=self.max_length)
-                            if self.device == "cuda":
+                            # 토크나이징
+                            inputs = self.hf_tokenizer(
+                                batch_pairs, 
+                                padding=True, 
+                                truncation=True, 
+                                return_tensors='pt', 
+                                max_length=self.max_length
+                            )
+                            
+                            # GPU로 입력 이동
+                            if self.device == "cuda:0":
                                 inputs = {k: v.to(self.device) for k, v in inputs.items()}
-                                self.logger.info(f"GPU Memory after input loading: {torch.cuda.memory_allocated()/1024**2:.2f}MB")
+                                
+                                # GPU 메모리 상태 로깅
+                                mem_allocated = torch.cuda.memory_allocated(0) / (1024**3)  # GB 단위
+                                self.logger.info(f"GPU Memory after input loading: {mem_allocated:.2f}GB")
                             
-                            batch_scores = self.hf_model(**inputs, return_dict=True).logits.view(-1, ).float()
+                            # 추론 실행
+                            outputs = self.hf_model(**inputs, return_dict=True)
+                            batch_scores = outputs.logits.view(-1, ).float()
                             
-                            if self.device == "cuda":
-                                self.logger.info(f"GPU Memory after inference: {torch.cuda.memory_allocated()/1024**2:.2f}MB")
+                            # GPU 메모리 상태 로깅
+                            if self.device == "cuda:0":
+                                mem_allocated = torch.cuda.memory_allocated(0) / (1024**3)  # GB 단위
+                                self.logger.info(f"GPU Memory after inference: {mem_allocated:.2f}GB")
+                                # CPU로 결과 이동
                                 batch_scores = batch_scores.cpu()
-                            batch_scores = batch_scores.numpy()
-                            all_scores.extend(1 / (1 + np.exp(-batch_scores)))  # sigmoid 정규화
                             
-                            # 메모리 정리 - 불필요한 정리 제거
-                            del inputs, batch_scores
-                            # GPU 메모리 정리는 마지막 배치 후에만 수행 (제거)
+                            # numpy로 변환
+                            batch_scores = batch_scores.numpy()
+                            # sigmoid 정규화
+                            batch_scores = 1 / (1 + np.exp(-batch_scores))
+                            all_scores.extend(batch_scores)
+                            
+                            # 배치 처리 시간 계산
+                            if batch_start_time:
+                                batch_time = time.time() - batch_start_time
+                                passages_per_sec = len(batch_passages) / batch_time
+                                self.logger.info(f"Batch {i//batch_size + 1} completed in {batch_time:.3f}s ({passages_per_sec:.1f} passages/sec)")
+                            
+                            # 메모리 정리
+                            del inputs, outputs, batch_scores
+                            
+                            # 매 배치마다 GPU 캐시 정리 (성능에 영향 있을 수 있음)
+                            if self.device == "cuda:0":
+                                torch.cuda.empty_cache()
                     
-                    # 모든 배치 처리 후 한 번만 메모리 정리
-                    if self.device == "cuda":
+                    # 모든 배치 처리 후 메모리 정리
+                    if self.device == "cuda:0":
                         torch.cuda.empty_cache()
                         
                     break  # 성공적으로 처리 완료
                     
                 except RuntimeError as e:
-                    if "out of memory" in str(e) and self.device == "cuda":
+                    if "out of memory" in str(e) and self.device == "cuda:0":
                         retry_count += 1
                         if retry_count < max_retries:
                             self.logger.warning(f"GPU OOM error. Reducing batch size and retrying. Attempt {retry_count}/{max_retries}")

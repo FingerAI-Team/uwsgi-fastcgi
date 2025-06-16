@@ -199,7 +199,53 @@ class RerankerService:
             logger.setLevel(log_level_int)
             logger.info(f"Log level set to {log_level}")
             
-            self.model_name = os.getenv("FLASHRANK_MODEL", self.config.get("model_name", "ms-marco-TinyBERT-L-2-v2"))
+            # FlashRank 초기화
+            self.ranker = None
+            self.model_name = self.config.get("model_name", "BAAI/bge-reranker-large")
+            self.batch_size = self._get_batch_size()
+            
+            # GPU 사용 가능 여부 확인
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            logger.info(f"Using device: {self.device}")
+            
+            # 모델 로딩 시작
+            model_start_time = time.time()
+            try:
+                logger.info(f"Loading FlashRank model: {self.model_name}")
+                self.ranker = Ranker(model_name_or_path=self.model_name)
+                
+                # 모델이 GPU를 사용하는지 확인
+                if self.device == "cuda":
+                    # 모델 디바이스 확인
+                    if hasattr(self.ranker, 'model'):
+                        model_device = next(self.ranker.model.parameters()).device
+                        logger.info(f"FlashRank model device: {model_device}")
+                        
+                        # CPU에 있으면 GPU로 이동
+                        if str(model_device) == "cpu":
+                            logger.warning("FlashRank model is on CPU! Moving to GPU...")
+                            try:
+                                self.ranker.model.to('cuda')
+                                new_device = next(self.ranker.model.parameters()).device
+                                logger.info(f"FlashRank model moved to: {new_device}")
+                                
+                                # 로그 파일에 기록
+                                with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [INIT] FlashRank model moved from CPU to {new_device}\n")
+                            except Exception as e:
+                                logger.error(f"Failed to move FlashRank model to GPU: {str(e)}")
+                
+                logger.info(f"FlashRank model loaded in {(time.time() - model_start_time):.2f}s")
+            except Exception as e:
+                logger.error(f"Failed to load FlashRank model: {str(e)}")
+                self.ranker = None
+            
+            # 로그 레벨 설정
+            log_level = self.config.get("log_level", "INFO")
+            log_level_int = getattr(logging, log_level.upper(), logging.INFO)
+            logger.setLevel(log_level_int)
+            logger.info(f"Log level set to {log_level}")
+            
             self.cache_dir = os.getenv("FLASHRANK_CACHE_DIR", self.config.get("cache_dir", "/reranker/models"))
             self.max_length = int(os.getenv("FLASHRANK_MAX_LENGTH", self.config.get("max_length", 512)))
             
@@ -226,89 +272,6 @@ class RerankerService:
             # 시스템 정보 로깅
             self._log_system_info()
             
-            # 모델 초기화를 try-except로 감싸서 실패해도 서비스는 계속 실행되도록 함
-            try:
-                model_init_start = time.time()  # 모델 초기화 시작 시간
-                logger.info("Starting model initialization...")
-                logger.debug(f"Model path: {os.path.join(self.cache_dir, self.model_name)}")
-                
-                # 모델 디렉토리 존재 여부 확인
-                if not os.path.exists(self.cache_dir):
-                    logger.info(f"Creating cache directory: {self.cache_dir}")
-                    os.makedirs(self.cache_dir, exist_ok=True)
-                
-                # GPU 사용 가능 여부 확인
-                import torch  # 이 부분을 추가하여 torch 모듈을 명시적으로 임포트
-                self.device = "cuda" if torch.cuda.is_available() else "cpu"
-                logger.info(f"Using device: {self.device}")
-                
-                # GPU 메모리 초기 상태 로깅
-                log_gpu_memory("초기화 전")
-                
-                # FlashRank 0.2.10 버전에 맞게 Ranker 초기화
-                try:
-                    ranker_init_start = time.time()  # Ranker 초기화 시작 시간
-                    # FlashRank 0.2.10 버전에서는 batch_size, max_length 등의 매개변수를 지원하지 않음
-                    # 기본 매개변수만 사용
-                    self.ranker = Ranker(
-                        model_name=self.model_name
-                    )
-                    logger.info(f"FlashRank ranker initialized in {(time.time() - ranker_init_start)*1000:.2f}ms")
-                    
-                    # 모델 아키텍처 정보 로깅
-                    if hasattr(self.ranker, 'model'):
-                        logger.info(f"Model type: {type(self.ranker.model).__name__}")
-                        
-                    logger.info("FlashRank reranker initialized with basic parameters")
-                except Exception as e:
-                    logger.warning(f"Failed with basic parameters: {e}, trying without parameters")
-                    ranker_init_start = time.time()  # 두 번째 시도 시작 시간
-                    # 매개변수 없이 초기화 시도
-                    self.ranker = Ranker()
-                    logger.info(f"FlashRank ranker initialized without parameters in {(time.time() - ranker_init_start)*1000:.2f}ms")
-                
-                # GPU 메모리 모델 로드 후 상태 로깅
-                log_gpu_memory("모델 로드 후")
-                
-                # 모델 미리 로드 (첫 요청 지연 방지)
-                logger.info("Pre-warming model...")
-                warm_start = time.time()  # 예열 시작 시간
-                try:
-                    # CUDA 스트림 동기화
-                    if torch.cuda.is_available():
-                        torch.cuda.synchronize()
-                        
-                    # FlashRank 0.2.10 API에 맞게 예열 요청 구성
-                    dummy_request = RerankRequest(
-                        query="warm up query",
-                        passages=[{"id": "0", "text": "warm up passage", "meta": {}}]
-                    )
-                    
-                    # 예열 수행
-                    warm_results = self.ranker.rerank(dummy_request)
-                    
-                    # CUDA 스트림 동기화
-                    if torch.cuda.is_available():
-                        torch.cuda.synchronize()
-                        
-                    logger.info(f"Model pre-warming completed in {(time.time() - warm_start)*1000:.2f}ms")
-                    logger.debug(f"Warm-up result: {warm_results}")
-                except Exception as e:
-                    logger.warning(f"Model pre-warming failed: {e}, this is not critical")
-                
-                # GPU 메모리 예열 후 상태 로깅
-                log_gpu_memory("예열 후")
-                
-                logger.info(f"FlashRank reranker initialization completed in {(time.time() - model_init_start)*1000:.2f}ms")
-            except Exception as e:
-                logger.error(f"Failed to initialize FlashRank reranker: {str(e)}")
-                logger.error(f"Error type: {type(e)}")
-                logger.error(f"Error details: {str(e)}")
-                logger.info("Using dummy reranker for testing")
-                self.ranker = None
-                
-            logger.info(f"Total initialization time: {(time.time() - init_start_time)*1000:.2f}ms")
-                
             # MRC 재랭커 초기화 (설정에서 활성화된 경우)
             self.mrc_enabled = self.config.get("mrc", {}).get("enabled", False)
             self.mrc_reranker = None
@@ -705,7 +668,7 @@ class RerankerService:
                     
                     if self.ranker is not None:
                         logger.info("[HYBRID-DETAIL] FlashRank 재랭킹 시작")
-                        flashrank_result = self.perform_flashrank_reranking(query, passages, top_k)
+                        flashrank_result, flashrank_scores, flashrank_time = self._flashrank_rerank(query, passages, None, search_result)
                         
                         # FlashRank 처리 시간 계산
                         flashrank_time = time.time() - flashrank_start_time
@@ -792,7 +755,7 @@ class RerankerService:
                         with open('/var/log/reranker/reranker_detail.log', 'a') as f:
                             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] MRC 재랭킹 시작: 총 {len(flashrank_result['results'])}개 항목 처리\n")
                     except Exception as e:
-                        logger.warning(f"[HYBRID-DETAIL] 로그 기록 실패: {str(e)}")
+                        logger.error(f"로그 파일 기록 실패: {str(e)}")
                     
                     # 모든 결과 처리를 위해 top_k=None으로 설정
                     reranked_passages, mrc_scores = self.mrc_reranker.hybrid_rerank(
@@ -942,6 +905,179 @@ class RerankerService:
             # 오류 발생 시 원본 결과 반환
             return search_result
     
+    def _flashrank_rerank(self, query: str, passages: List[dict], top_k: int = None, search_result: Dict = None) -> Tuple[List[dict], Dict, float]:
+        """
+        Rerank passages using FlashRank
+        
+        Args:
+            query: Query string
+            passages: List of passages to rerank
+            top_k: Number of top passages to return, if None, return all
+            search_result: 원본 검색 결과 (있는 경우)
+            
+        Returns:
+            Tuple of (reranked passages, scores dict, processing time)
+        """
+        if not self.ranker:
+            logger.warning("FlashRank reranker not initialized, returning original passages")
+            return passages, {}, 0.0
+        
+        if not passages:
+            logger.warning("No passages to rerank")
+            return [], {}, 0.0
+        
+        start_time = time.time()
+        
+        try:
+            # 모델 디바이스 재확인 (GPU 사용 중인지)
+            if self.device == "cuda" and hasattr(self.ranker, 'model'):
+                model_device = next(self.ranker.model.parameters()).device
+                if str(model_device) == "cpu":
+                    logger.warning("FlashRank model is still on CPU! Moving to GPU...")
+                    try:
+                        self.ranker.model.to('cuda')
+                        new_device = next(self.ranker.model.parameters()).device
+                        logger.info(f"FlashRank model moved to: {new_device}")
+                    except Exception as e:
+                        logger.error(f"Failed to move FlashRank model to GPU: {str(e)}")
+            
+            # 대량 패시지 처리 최적화
+            total_passages = len(passages)
+            logger.info(f"Reranking {total_passages} passages for query: '{query}'")
+            
+            # 배치 처리를 위한 최적 크기 계산 - 성능 최적화
+            batch_size = min(64, total_passages)  # 배치 크기 제한
+            logger.info(f"[FLASHRANK-DETAIL] 배치 크기 설정: {batch_size}, 총 패시지 수: {total_passages}")
+            
+            # GPU 또는 CPU 사용 여부 확인 및 로깅
+            device_info = "GPU" if torch.cuda.is_available() else "CPU"
+            logger.info(f"[FLASHRANK-DETAIL] 현재 사용 중인 디바이스: {device_info}")
+            if torch.cuda.is_available():
+                device_name = torch.cuda.get_device_name(0)
+                logger.info(f"[FLASHRANK-DETAIL] GPU 정보: {device_name}")
+            
+            # 상세 로그 파일에 기록
+            try:
+                with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 배치 크기: {batch_size}, 총 패시지 수: {total_passages}, 디바이스: {device_info}\n")
+                    if torch.cuda.is_available():
+                        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] GPU 정보: {device_name}\n")
+                        # GPU 메모리 사용량 기록
+                        mem_allocated = torch.cuda.memory_allocated(0) / (1024**3)  # GB 단위
+                        mem_reserved = torch.cuda.memory_reserved(0) / (1024**3)  # GB 단위
+                        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] GPU 메모리 사용량: {mem_allocated:.2f}GB (할당) / {mem_reserved:.2f}GB (예약)\n")
+            except Exception as e:
+                logger.error(f"로그 파일 기록 실패: {str(e)}")
+            
+            # 배치 처리 수행
+            num_batches = (total_passages + batch_size - 1) // batch_size
+            logger.info(f"Processing in {num_batches} batches")
+            
+            reranked_results = []
+            scores_dict = {}  # 점수 저장을 위한 딕셔너리
+            
+            for i in range(0, total_passages, batch_size):
+                batch_start = time.time()
+                batch_end = min(i + batch_size, total_passages)
+                batch_passages = passages[i:batch_end]
+                
+                logger.debug(f"Processing batch {i//batch_size + 1}/{num_batches} with {len(batch_passages)} passages")
+                
+                # 배치 시작 로깅
+                logger.info(f"[FLASHRANK-DETAIL] 배치 {i//batch_size + 1}/{num_batches} 처리 시작: {len(batch_passages)}개 항목")
+                try:
+                    with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 배치 {i//batch_size + 1}/{num_batches} 처리 시작: {len(batch_passages)}개 항목\n")
+                except Exception as e:
+                    logger.error(f"로그 파일 기록 실패: {str(e)}")
+                
+                # FlashRank 요청 구성
+                try:
+                    # 요청 객체 생성
+                    request = RerankRequest(
+                        query=query,
+                        passages=[{"id": str(idx), "text": p["text"], "meta": p.get("meta", {})} for idx, p in enumerate(batch_passages)]
+                    )
+                    
+                    # GPU 사용 중인지 확인
+                    if self.device == "cuda" and hasattr(self.ranker, 'model'):
+                        # 추론 전에 CUDA 캐시 정리
+                        torch.cuda.empty_cache()
+                        
+                        # GPU 메모리 상태 로깅
+                        mem_allocated = torch.cuda.memory_allocated(0) / (1024**3)  # GB 단위
+                        logger.info(f"[FLASHRANK-DETAIL] 배치 처리 전 GPU 메모리: {mem_allocated:.2f}GB")
+                    
+                    # 재랭킹 수행
+                    batch_results = self.ranker.rerank(request)
+                    
+                    # CUDA 동기화 (비동기 작업 완료 대기)
+                    if self.device == "cuda":
+                        torch.cuda.synchronize()
+                    
+                    # 배치 처리 시간 계산
+                    batch_time = (time.time() - batch_start) * 1000  # ms 단위
+                    passages_per_sec = len(batch_passages) / (batch_time / 1000)
+                    logger.debug(f"Batch {i//batch_size + 1} completed in {batch_time:.2f}ms ({passages_per_sec:.1f} passages/sec)")
+                    
+                    # 배치 처리 결과 로깅
+                    try:
+                        with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 배치 {i//batch_size + 1} 완료: {batch_time:.2f}ms ({passages_per_sec:.1f} passages/sec)\n")
+                            if self.device == "cuda":
+                                mem_allocated = torch.cuda.memory_allocated(0) / (1024**3)  # GB 단위
+                                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 배치 처리 후 GPU 메모리: {mem_allocated:.2f}GB\n")
+                    except Exception as e:
+                        logger.error(f"로그 파일 기록 실패: {str(e)}")
+                    
+                    # 결과 처리
+                    for rank, scored_passage in enumerate(batch_results):
+                        passage_id = int(scored_passage["id"])
+                        original_passage = batch_passages[passage_id]
+                        score = scored_passage["score"]
+                        
+                        # 원본 패시지에 점수 및 순위 정보 추가
+                        original_passage["score"] = score
+                        original_passage["rank"] = rank + i  # 전체 순위 계산
+                        
+                        # 결과 및 점수 저장
+                        reranked_results.append(original_passage)
+                        scores_dict[i + passage_id] = score
+                    
+                except Exception as e:
+                    logger.error(f"Batch processing failed: {str(e)}")
+                    # 오류 발생 시 원본 패시지 사용
+                    for idx, passage in enumerate(batch_passages):
+                        passage["score"] = 0.0
+                        passage["rank"] = i + idx
+                        reranked_results.append(passage)
+            
+            # 전체 처리 시간 계산
+            processing_time = time.time() - start_time
+            logger.info(f"FlashRank 재랭킹 완료: {processing_time:.3f}초")
+            
+            # 결과 정렬 및 상위 결과 선택
+            reranked_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+            
+            # top_k가 지정된 경우 결과 제한
+            if top_k is not None and top_k > 0:
+                reranked_results = reranked_results[:top_k]
+            
+            # 결과 포맷팅
+            if search_result:
+                search_result["results"] = reranked_results
+                search_result["total"] = len(reranked_results)
+                search_result["reranked"] = True
+                search_result["reranker_type"] = "flashrank"
+                search_result["processing_time"] = processing_time
+                return search_result, scores_dict, processing_time
+            else:
+                return reranked_results, scores_dict, processing_time
+                
+        except Exception as e:
+            logger.error(f"Error in _flashrank_rerank: {str(e)}", exc_info=True)
+            return passages, {}, 0.0
+    
     def perform_flashrank_reranking(self, query: str, passages: List[Dict], top_k: int = None, search_result: Dict = None):
         """FlashRank를 사용한 재랭킹 수행"""
         try:
@@ -966,143 +1102,127 @@ class RerankerService:
             # 상세 로그 파일에 기록
             try:
                 with open('/var/log/reranker/reranker_detail.log', 'a') as f:
-                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 배치 크기 설정: {batch_size}, 총 패시지 수: {total_passages}\n")
-                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 현재 사용 중인 디바이스: {device_info}\n")
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 배치 크기: {batch_size}, 총 패시지 수: {total_passages}, 디바이스: {device_info}\n")
                     if torch.cuda.is_available():
                         f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] GPU 정보: {device_name}\n")
+                        # GPU 메모리 사용량 기록
+                        mem_allocated = torch.cuda.memory_allocated(0) / (1024**3)  # GB 단위
+                        mem_reserved = torch.cuda.memory_reserved(0) / (1024**3)  # GB 단위
+                        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] GPU 메모리 사용량: {mem_allocated:.2f}GB (할당) / {mem_reserved:.2f}GB (예약)\n")
             except Exception as e:
-                logger.warning(f"[FLASHRANK-DETAIL] 로그 기록 실패: {str(e)}")
+                logger.error(f"로그 파일 기록 실패: {str(e)}")
             
-            # 동기화 시간 측정을 위한 변수 초기화
-            sync_time = 0
+            # 배치 처리 수행
+            num_batches = (total_passages + batch_size - 1) // batch_size
+            logger.info(f"Processing in {num_batches} batches")
             
-            # 배치 처리 전 GPU 상태 확인
-            log_gpu_memory("배치 처리 전")
-            
-            # 배치 처리
             reranked_results = []
+            scores_dict = {}  # 점수 저장을 위한 딕셔너리
             
-            try:
-                # 프로파일링 없이 일반 실행
-                if total_passages > batch_size:
-                    logger.info(f"Processing in {(total_passages + batch_size - 1) // batch_size} batches")
+            for i in range(0, total_passages, batch_size):
+                batch_start = time.time()
+                batch_end = min(i + batch_size, total_passages)
+                batch_passages = passages[i:batch_end]
+                
+                logger.debug(f"Processing batch {i//batch_size + 1}/{num_batches} with {len(batch_passages)} passages")
+                
+                # 배치 시작 로깅
+                logger.info(f"[FLASHRANK-DETAIL] 배치 {i//batch_size + 1}/{num_batches} 처리 시작: {len(batch_passages)}개 항목")
+                try:
+                    with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 배치 {i//batch_size + 1}/{num_batches} 처리 시작: {len(batch_passages)}개 항목\n")
+                except Exception as e:
+                    logger.error(f"로그 파일 기록 실패: {str(e)}")
+                
+                # FlashRank 요청 구성
+                try:
+                    # 요청 객체 생성
+                    request = RerankRequest(
+                        query=query,
+                        passages=[{"id": str(idx), "text": p["text"], "meta": p.get("meta", {})} for idx, p in enumerate(batch_passages)]
+                    )
                     
-                    for i in range(0, total_passages, batch_size):
-                        batch_start = time.time()
-                        batch_end = min(i + batch_size, total_passages)
-                        batch_passages = passages[i:batch_end]
+                    # GPU 사용 중인지 확인
+                    if self.device == "cuda" and hasattr(self.ranker, 'model'):
+                        # 추론 전에 CUDA 캐시 정리
+                        torch.cuda.empty_cache()
                         
-                        logger.debug(f"Processing batch {i//batch_size + 1}/{(total_passages + batch_size - 1) // batch_size} with {len(batch_passages)} passages")
-                        
-                        # 배치 시작 로깅
-                        logger.info(f"[FLASHRANK-DETAIL] 배치 {i//batch_size + 1}/{(total_passages + batch_size - 1) // batch_size} 처리 시작: {len(batch_passages)}개 항목")
-                        try:
-                            with open('/var/log/reranker/reranker_detail.log', 'a') as f:
-                                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 배치 {i//batch_size + 1}/{(total_passages + batch_size - 1) // batch_size} 처리 시작: {len(batch_passages)}개 항목\n")
-                        except Exception as e:
-                            logger.warning(f"[FLASHRANK-DETAIL] 로그 기록 실패: {str(e)}")
-                        
-                        # Create rerank request
-                        rerank_request = RerankRequest(query=query, passages=batch_passages)
-                        
-                        # Rerank passages (GPU 접근 제한)
-                        with self._gpu_semaphore:  # 최대 7개 동시 GPU 접근
-                            # GPU 사용량 모니터링
-                            if torch.cuda.is_available():
-                                current_memory = torch.cuda.memory_allocated()/1024**2
-                                reserved_memory = torch.cuda.memory_reserved()/1024**2
-                                total_memory = torch.cuda.get_device_properties(0).total_memory/1024**2
-                                active_count = self.max_gpu_workers - self._gpu_semaphore._value  # 현재 활성 GPU 작업 수
-                                logger.debug(f"[GPU] 활성작업: {active_count}/{self.max_gpu_workers}, 사용메모리: {current_memory:.1f}MB, 예약메모리: {reserved_memory:.1f}MB, 총메모리: {total_memory:.1f}MB")
-                            
-                            batch_results = self.ranker.rerank(rerank_request)
-                        
-                        # 중간 동기화 및 메모리 정리 제거 (성능 향상)
-                        
-                        reranked_results.extend(batch_results)
-                        
-                        batch_time = time.time() - batch_start
-                        logger.info(f"[FLASHRANK-DETAIL] 배치 {i//batch_size + 1} 완료: {batch_time:.3f}초 ({len(batch_passages)/batch_time:.1f} passages/sec)")
-                        
-                        # 배치 완료 로그 파일에 기록
-                        try:
-                            with open('/var/log/reranker/reranker_detail.log', 'a') as f:
-                                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 배치 {i//batch_size + 1} 완료: {batch_time:.3f}초 ({len(batch_passages)/batch_time:.1f} passages/sec)\n")
-                        except Exception as e:
-                            logger.warning(f"[FLASHRANK-DETAIL] 로그 기록 실패: {str(e)}")
-                        
-                        # 배치 처리 후 GPU 상태 확인
-                        log_gpu_memory(f"배치 {i//batch_size + 1} 후")
-                else:
-                    # 소량 데이터는 한 번에 처리
-                    logger.debug(f"Processing all {total_passages} passages in a single batch")
+                        # GPU 메모리 상태 로깅
+                        mem_allocated = torch.cuda.memory_allocated(0) / (1024**3)  # GB 단위
+                        logger.info(f"[FLASHRANK-DETAIL] 배치 처리 전 GPU 메모리: {mem_allocated:.2f}GB")
                     
-                    rerank_request = RerankRequest(query=query, passages=passages)
+                    # 재랭킹 수행
+                    batch_results = self.ranker.rerank(request)
                     
-                    # Rerank passages (GPU 접근 제한)
-                    with self._gpu_semaphore:  # 최대 7개 동시 GPU 접근
-                        # GPU 사용량 모니터링
-                        if torch.cuda.is_available():
-                            current_memory = torch.cuda.memory_allocated()/1024**2
-                            reserved_memory = torch.cuda.memory_reserved()/1024**2
-                            total_memory = torch.cuda.get_device_properties(0).total_memory/1024**2
-                            active_count = self.max_gpu_workers - self._gpu_semaphore._value  # 현재 활성 GPU 작업 수
-                            logger.debug(f"[GPU] 활성작업: {active_count}/{self.max_gpu_workers}, 사용메모리: {current_memory:.1f}MB, 예약메모리: {reserved_memory:.1f}MB, 총메모리: {total_memory:.1f}MB")
+                    # CUDA 동기화 (비동기 작업 완료 대기)
+                    if self.device == "cuda":
+                        torch.cuda.synchronize()
+                    
+                    # 배치 처리 시간 계산
+                    batch_time = (time.time() - batch_start) * 1000  # ms 단위
+                    passages_per_sec = len(batch_passages) / (batch_time / 1000)
+                    logger.debug(f"Batch {i//batch_size + 1} completed in {batch_time:.2f}ms ({passages_per_sec:.1f} passages/sec)")
+                    
+                    # 배치 처리 결과 로깅
+                    try:
+                        with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 배치 {i//batch_size + 1} 완료: {batch_time:.2f}ms ({passages_per_sec:.1f} passages/sec)\n")
+                            if self.device == "cuda":
+                                mem_allocated = torch.cuda.memory_allocated(0) / (1024**3)  # GB 단위
+                                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-DETAIL] 배치 처리 후 GPU 메모리: {mem_allocated:.2f}GB\n")
+                    except Exception as e:
+                        logger.error(f"로그 파일 기록 실패: {str(e)}")
+                    
+                    # 결과 처리
+                    for rank, scored_passage in enumerate(batch_results):
+                        passage_id = int(scored_passage["id"])
+                        original_passage = batch_passages[passage_id]
+                        score = scored_passage["score"]
                         
-                        reranked_results = self.ranker.rerank(rerank_request)
-                
-                # 모든 배치 처리 완료 후 한 번만 동기화 및 메모리 정리
-                if torch.cuda.is_available():
-                    sync_start = time.time()
-                    torch.cuda.synchronize()
-                    torch.cuda.empty_cache()
-                    sync_time = time.time() - sync_start
-                
-                # 결과 정렬 및 상위 결과 선택
-                if isinstance(reranked_results, list):
-                    reranked_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+                        # 원본 패시지에 점수 및 순위 정보 추가
+                        original_passage["score"] = score
+                        original_passage["rank"] = rank + i  # 전체 순위 계산
+                        
+                        # 결과 및 점수 저장
+                        reranked_results.append(original_passage)
+                        scores_dict[i + passage_id] = score
                     
-                    # top_k 제한 제거 - 모든 결과 반환
-                    # if top_k and isinstance(top_k, int) and top_k > 0:
-                    #     reranked_results = reranked_results[:top_k]
+                except Exception as e:
+                    logger.error(f"Batch processing failed: {str(e)}")
+                    # 오류 발생 시 원본 패시지 사용
+                    for idx, passage in enumerate(batch_passages):
+                        passage["score"] = 0.0
+                        passage["rank"] = i + idx
+                        reranked_results.append(passage)
+            
+            # 전체 처리 시간 계산
+            processing_time = time.time() - start_time
+            
+            # 결과 정렬 및 상위 결과 선택
+            if isinstance(reranked_results, list):
+                reranked_results.sort(key=lambda x: x.get("score", 0), reverse=True)
                 
-                # 처리 시간 계산
-                processing_time = time.time() - start_time
-                logger.info(f"FlashRank 재랭킹 완료: {processing_time:.3f}초, 동기화 시간: {sync_time:.3f}초")
-                
-                # 결과 포맷팅
-                if search_result:
-                    search_result["results"] = reranked_results
-                    search_result["reranked"] = True
-                    search_result["reranker_type"] = "flashrank"
-                    search_result["processing_time"] = processing_time
-                    return search_result
-                else:
-                    return {
-                        "query": query,
-                        "results": reranked_results,
-                        "total": len(reranked_results),
-                        "reranked": True,
-                        "reranker_type": "flashrank",
-                        "processing_time": processing_time
-                    }
-            except Exception as e:
-                logger.error(f"Error during reranking: {str(e)}", exc_info=True)
-                logger.warning("Falling back to original results")
-                
-                # 오류 시 GPU 메모리 확인
-                log_gpu_memory("랭킹 오류 후")
-                
-                if search_result:
-                    return search_result
-                else:
-                    return {
-                        "query": query,
-                        "results": passages,
-                        "total": len(passages),
-                        "reranked": False,
-                        "error": str(e)
-                    }
+                # top_k 제한 제거 - 모든 결과 반환
+                # if top_k and isinstance(top_k, int) and top_k > 0:
+                #     reranked_results = reranked_results[:top_k]
+            
+            # 결과 포맷팅
+            if search_result:
+                search_result["results"] = reranked_results
+                search_result["total"] = len(reranked_results)
+                search_result["reranked"] = True
+                search_result["reranker_type"] = "flashrank"
+                search_result["processing_time"] = processing_time
+                return search_result
+            else:
+                return {
+                    "query": query,
+                    "results": reranked_results,
+                    "total": len(reranked_results),
+                    "reranked": True,
+                    "reranker_type": "flashrank",
+                    "processing_time": processing_time
+                }
         except Exception as e:
             logger.error(f"Error in perform_flashrank_reranking: {str(e)}", exc_info=True)
             if search_result:
