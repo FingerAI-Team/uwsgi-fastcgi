@@ -909,6 +909,22 @@ class RerankerService:
                 logger.info(f"[HYBRID-DETAIL] 하이브리드 재랭킹 완료: 결과 수={len(reranked_passages)}, MRC 가중치={self.hybrid_weight_mrc}")
                 logger.info(f"[HYBRID-DETAIL] 총 처리 시간: {result['processing_time']:.3f}초 (FlashRank: {flashrank_time:.3f}초, MRC: {mrc_processing_time:.3f}초)")
                 
+                # 최종 응답에서 top_k개만 반환
+                if top_k and isinstance(top_k, int) and top_k > 0 and top_k < len(reranked_passages):
+                    original_count = len(reranked_passages)
+                    reranked_passages = reranked_passages[:top_k]
+                    result["results"] = reranked_passages
+                    result["filtered_count"] = original_count
+                    result["returned_count"] = top_k
+                    logger.info(f"[HYBRID-DETAIL] 최종 응답 필터링: 전체 {original_count}개 중 상위 {top_k}개만 반환")
+                    
+                    # 상세 로그 파일에 기록
+                    try:
+                        with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] 최종 응답 필터링: 전체 {original_count}개 중 상위 {top_k}개만 반환\n")
+                    except Exception as e:
+                        logger.warning(f"[HYBRID-DETAIL] 상세 로그 파일 기록 실패: {str(e)}")
+                
                 # 최종 로그 기록
                 try:
                     with open('/var/log/reranker/reranker_detail.log', 'a') as f:

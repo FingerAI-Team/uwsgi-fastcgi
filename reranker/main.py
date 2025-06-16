@@ -725,9 +725,28 @@ def hybrid_rerank():
         else:
             logger.warning(f"[HYBRID-RERANK] 하이브리드 재랭킹 요청했으나 결과 타입은 '{reranker_type}'입니다. MRC 설정을 확인하세요.")
         
+        # 필터링 적용 여부 확인
+        original_count = len(reranked.get("results", []))
+        if top_k and isinstance(top_k, int) and top_k > 0 and top_k < original_count:
+            # 상위 top_k개만 필터링하여 반환
+            reranked["results"] = reranked["results"][:top_k]
+            reranked["filtered_count"] = original_count
+            reranked["returned_count"] = top_k
+            logger.info(f"[HYBRID-RERANK] 결과 필터링 적용: 전체 {original_count}개 중 상위 {top_k}개만 반환")
+            
+            # 상세 로그 파일에 기록
+            try:
+                with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-RERANK] 결과 필터링 적용: 전체 {original_count}개 중 상위 {top_k}개만 반환\n")
+            except Exception as e:
+                logger.warning(f"상세 로그 파일 기록 실패: {str(e)}")
+        
         # 결과 통계 로깅
         result_count = len(reranked.get("results", []))
-        logger.info(f"[HYBRID-RERANK] 결과 통계: 총 {result_count}개 결과, 상위 점수: {reranked['results'][0]['score']:.4f} (요청: {top_k}개)")
+        if result_count > 0:
+            logger.info(f"[HYBRID-RERANK] 결과 통계: 총 {result_count}개 결과, 상위 점수: {reranked['results'][0]['score']:.4f} (요청: {top_k}개)")
+        else:
+            logger.warning(f"[HYBRID-RERANK] 결과 통계: 결과 없음 (요청: {top_k}개)")
         
         log_step("메타데이터 구성")
         
