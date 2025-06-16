@@ -592,51 +592,98 @@ def hybrid_rerank():
         # 전체 요청 처리 시간 측정 시작
         total_start_time = time.time()
         
+        # 상세 로깅을 위한 타임스탬프 딕셔너리 초기화
+        timestamps = {
+            "start": total_start_time,
+            "steps": []
+        }
+        
+        # 단계별 시간 측정 함수
+        def log_step(name):
+            now = time.time()
+            step_time = now - timestamps.get("last_step", total_start_time)
+            elapsed = now - total_start_time
+            timestamps["steps"].append({"name": name, "time": step_time, "elapsed": elapsed})
+            timestamps["last_step"] = now
+            logger.info(f"[HYBRID-RERANK] 단계 '{name}' 소요시간: {step_time*1000:.2f}ms (누적: {elapsed*1000:.2f}ms)")
+            
+            # 상세 로그 파일에 기록
+            try:
+                with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-RERANK] 단계 '{name}' 소요시간: {step_time*1000:.2f}ms (누적: {elapsed*1000:.2f}ms)\n")
+            except Exception as e:
+                logger.warning(f"상세 로그 파일 기록 실패: {str(e)}")
+        
+        # 요청 파라미터 로깅
+        log_step("요청 시작")
+        
         # Get top_k parameter from query string
         top_k = request.args.get('top_k', type=int)
         
         # Get mrc weight parameter
         mrc_weight = request.args.get('mrc_weight', type=float)
         
+        # 요청 파라미터 로깅
+        logger.info(f"[HYBRID-RERANK] 요청 파라미터: top_k={top_k}, mrc_weight={mrc_weight}")
+        
         # 하이브리드 방식으로 강제 설정
         os.environ["RERANK_METHOD"] = "hybrid"
-        logger.info("하이브리드 재랭킹 모드로 설정됨")
+        logger.info("[HYBRID-RERANK] 하이브리드 재랭킹 모드로 설정됨")
+        log_step("환경 설정")
         
         # MRC 설정 확인 및 로깅
         mrc_config = check_mrc_configuration()
-        logger.info(f"MRC 설정 상태: 활성화={mrc_config['mrc_enabled']}, 모델 로드됨={mrc_config['mrc_reranker_loaded']}")
+        logger.info(f"[HYBRID-RERANK] MRC 설정 상태: 활성화={mrc_config['mrc_enabled']}, 모델 로드됨={mrc_config['mrc_reranker_loaded']}")
         
         # 필요한 파일 존재 확인
         if not mrc_config['config_exists'] or not mrc_config['model_exists']:
-            logger.warning(f"MRC 모델 파일 누락: 설정파일={mrc_config['config_exists']}, 모델파일={mrc_config['model_exists']}")
+            logger.warning(f"[HYBRID-RERANK] MRC 모델 파일 누락: 설정파일={mrc_config['config_exists']}, 모델파일={mrc_config['model_exists']}")
+        
+        log_step("MRC 설정 확인")
         
         # Get request body
         data = request.get_json()
         if not data:
+            logger.error("[HYBRID-RERANK] 요청 본문이 비어있음")
             return jsonify({
                 "error": "No JSON data provided"
             }), 400
-            
+        
+        # 요청 데이터 크기 로깅
+        request_size = len(json.dumps(data).encode('utf-8'))
+        logger.info(f"[HYBRID-RERANK] 요청 데이터 크기: {request_size/1024:.2f}KB")
+        
         # Validate input
         try:
             search_result = SearchResultModel(**data)
-            logger.info(f"재랭킹 요청: query='{search_result.query}', 결과 수={len(search_result.results)}")
+            logger.info(f"[HYBRID-RERANK] 재랭킹 요청: query='{search_result.query}', 결과 수={len(search_result.results)}")
+            
+            # 첫 번째 패시지 샘플 로깅 (디버깅용)
+            if search_result.results and len(search_result.results) > 0:
+                first_passage = search_result.results[0]
+                passage_preview = first_passage.text[:100] + "..." if len(first_passage.text) > 100 else first_passage.text
+                logger.debug(f"[HYBRID-RERANK] 첫 번째 패시지 샘플: {passage_preview}")
+            
         except Exception as e:
-            logger.error(f"요청 검증 실패: {str(e)}")
+            logger.error(f"[HYBRID-RERANK] 요청 검증 실패: {str(e)}")
             return jsonify({
                 "error": f"Invalid input format: {str(e)}"
             }), 400
-            
+        
+        log_step("요청 검증")
+        
         # Process reranking
         reranker_service = get_reranker_service()
         
         # MRC 가중치 설정
         if mrc_weight is not None:
-            logger.info(f"MRC 가중치 변경: {getattr(reranker_service, 'hybrid_weight_mrc', '기본값')} -> {mrc_weight}")
+            logger.info(f"[HYBRID-RERANK] MRC 가중치 변경: {getattr(reranker_service, 'hybrid_weight_mrc', '기본값')} -> {mrc_weight}")
             reranker_service.hybrid_weight_mrc = mrc_weight
-            
+        
+        log_step("서비스 초기화")
+        
         # 재랭킹 처리 시작
-        logger.info("하이브리드 재랭킹 처리 시작")
+        logger.info("[HYBRID-RERANK] 하이브리드 재랭킹 처리 시작")
         process_start_time = time.time()
         
         reranked = reranker_service.process_search_results(
@@ -646,7 +693,14 @@ def hybrid_rerank():
         )
         
         process_time = time.time() - process_start_time
-        logger.info(f"하이브리드 재랭킹 처리 완료: {process_time:.3f}초")
+        logger.info(f"[HYBRID-RERANK] 하이브리드 재랭킹 처리 완료: {process_time:.3f}초")
+        
+        # 상세 처리 시간 로깅
+        flashrank_time = reranked.get("flashrank_time", 0.0)
+        mrc_time = reranked.get("mrc_time", 0.0)
+        logger.info(f"[HYBRID-RERANK] 상세 처리 시간: FlashRank={flashrank_time:.3f}초, MRC={mrc_time:.3f}초")
+        
+        log_step("재랭킹 처리")
         
         # 전체 요청 처리 시간 계산
         processing_time = time.time() - total_start_time
@@ -655,20 +709,46 @@ def hybrid_rerank():
         reranked["processing_time"] = processing_time
         reranked["mrc_weight"] = reranker_service.hybrid_weight_mrc
         
+        # 응답 메타데이터 구성 과정 로깅
+        logger.info(f"[HYBRID-RERANK] 응답 메타데이터 구성: processing_time={processing_time:.3f}초, mrc_weight={reranker_service.hybrid_weight_mrc}")
+        
         # 재랭커 타입 확인 및 로깅
         reranker_type = reranked.get("reranker_type", "unknown")
         
         # 하이브리드 재랭킹 결과인지 확인
         if reranker_type == "hybrid":
-            logger.info(f"하이브리드 재랭킹 성공적으로 완료됨")
+            logger.info(f"[HYBRID-RERANK] 하이브리드 재랭킹 성공적으로 완료됨")
         elif reranker_type == "flashrank":
             # FlashRank 결과인 경우, 하이브리드로 변경
-            logger.info(f"FlashRank 결과를 하이브리드 결과로 변환합니다")
+            logger.info(f"[HYBRID-RERANK] FlashRank 결과를 하이브리드 결과로 변환합니다")
             reranked["reranker_type"] = "hybrid"
         else:
-            logger.warning(f"하이브리드 재랭킹 요청했으나 결과 타입은 '{reranker_type}'입니다. MRC 설정을 확인하세요.")
+            logger.warning(f"[HYBRID-RERANK] 하이브리드 재랭킹 요청했으나 결과 타입은 '{reranker_type}'입니다. MRC 설정을 확인하세요.")
         
-        logger.info(f"Total hybrid-rerank endpoint processing time: {processing_time:.3f} seconds")
+        # 결과 통계 로깅
+        result_count = len(reranked.get("results", []))
+        logger.info(f"[HYBRID-RERANK] 결과 통계: 총 {result_count}개 결과, 상위 점수: {reranked['results'][0]['score']:.4f} (요청: {top_k}개)")
+        
+        log_step("메타데이터 구성")
+        
+        # 최종 처리 시간 로깅
+        logger.info(f"[HYBRID-RERANK] 전체 처리 시간: {processing_time:.3f}초")
+        
+        # 단계별 처리 시간 상세 로깅
+        steps_log = "\n".join([
+            f"  - {step['name']}: {step['time']*1000:.2f}ms ({step['elapsed']*1000:.2f}ms 경과)"
+            for step in timestamps["steps"]
+        ])
+        logger.debug(f"[HYBRID-RERANK] 단계별 처리 시간:\n{steps_log}")
+        
+        # 상세 로그 파일에 단계별 처리 시간 기록
+        try:
+            with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-RERANK] 단계별 처리 시간:\n{steps_log}\n")
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-RERANK] 전체 처리 시간: {processing_time:.3f}초\n")
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-RERANK] 결과 통계: 총 {result_count}개 결과, 상위 점수: {reranked['results'][0]['score']:.4f}\n")
+        except Exception as e:
+            logger.warning(f"상세 로그 파일 기록 실패: {str(e)}")
         
         # 최적화된 응답 생성
         response_data = json.dumps(reranked, ensure_ascii=False)
@@ -677,14 +757,29 @@ def hybrid_rerank():
             mimetype='application/json; charset=utf-8'
         )
         
+        # 응답 크기 로깅
+        response_size = len(response_data.encode('utf-8'))
+        logger.info(f"[HYBRID-RERANK] 응답 데이터 크기: {response_size/1024:.2f}KB")
+        
         # FastCGI 응답 지연 해결을 위한 핵심 헤더 설정
         response.headers['X-Accel-Buffering'] = 'no'
         response.headers['Content-Length'] = str(len(response.data))
         
+        log_step("응답 생성")
+        
         return response
         
     except Exception as e:
-        logger.error(f"하이브리드 재랭킹 실패: {str(e)}", exc_info=True)
+        logger.error(f"[HYBRID-RERANK] 하이브리드 재랭킹 실패: {str(e)}", exc_info=True)
+        
+        # 상세 로그 파일에 오류 기록
+        try:
+            with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-RERANK] 오류 발생: {str(e)}\n")
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {traceback.format_exc()}\n")
+        except Exception as log_error:
+            logger.warning(f"상세 로그 파일 오류 기록 실패: {str(log_error)}")
+        
         return jsonify({
             "error": f"Hybrid reranking failed: {str(e)}"
         }), 500
