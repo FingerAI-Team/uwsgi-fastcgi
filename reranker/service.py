@@ -874,18 +874,44 @@ class RerankerService:
                 
                 # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
                 for passage in result["results"]:
+                    # 중요 점수 정보를 상위 레벨로 명확하게 복사
+                    if "score" in passage:
+                        passage["hybrid_score"] = passage["score"]  # 기본 score를 hybrid_score로 명확하게 복사
+                    
+                    # MRC 관련 필드 상위 레벨로 복사 (있는 경우)
+                    if "mrc_score" in passage:
+                        passage["mrc_score"] = passage["mrc_score"]
+                    if "mrc_answer" in passage:
+                        passage["mrc_answer"] = passage["mrc_answer"]
+                    if "mrc_char_ids" in passage:
+                        passage["mrc_char_ids"] = passage["mrc_char_ids"]
+                    
+                    # FlashRank 점수 상위 레벨로 복사 (있는 경우)
+                    if "flashrank_score" in passage:
+                        passage["flashrank_score"] = passage["flashrank_score"]
+                    
+                    # metadata 필드 처리
                     if "metadata" in passage:
                         # metadata 내부의 모든 필드를 상위 레벨로 복사
                         for key, value in passage["metadata"].items():
                             if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
                                 passage[key] = value
+                                
+                            # 중요 점수 정보는 상위 레벨로 명확하게 복사
+                            if key == "flashrank_score" and "flashrank_score" not in passage:
+                                passage["flashrank_score"] = value
+                            elif key == "mrc_score" and "mrc_score" not in passage:
+                                passage["mrc_score"] = value
+                            elif key == "original_score" and "original_score" not in passage:
+                                passage["original_score"] = value
+                        
                         # metadata 필드 제거
                         del passage["metadata"]
                     
                     # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
-                    if "mrc_answer" not in passage and passage.get("mrc_score") is not None:
+                    if "mrc_score" in passage and "mrc_answer" not in passage:
                         passage["mrc_answer"] = ""
-                    if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
+                    if "mrc_score" in passage and "mrc_char_ids" not in passage:
                         passage["mrc_char_ids"] = []
                 
                 # 최종 응답에서 top_k개만 반환

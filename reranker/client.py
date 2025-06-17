@@ -68,7 +68,42 @@ class RerankerClient:
             params=params
         )
         response.raise_for_status()
-        return response.json()
+        results = response.json()
+        
+        # 기본 필드만 추출 (중요한 메타데이터 유지)
+        processed_results = []
+        for result in results:
+            processed_result = {
+                "passage_id": result["id"],
+                "doc_id": result["meta"].get("doc_id", ""),
+                "text": result["text"],
+                "score": float(result["score"])
+            }
+
+            # 메타데이터에서 original_score 보존
+            if "original_score" in result["meta"]:
+                metadata = {"original_score": result["meta"]["original_score"]}
+                processed_result["metadata"] = metadata
+            
+            # MRC 관련 필드가 있으면 추가
+            if "mrc_score" in result:
+                processed_result["mrc_score"] = result["mrc_score"]
+            if "mrc_answer" in result:
+                processed_result["mrc_answer"] = result["mrc_answer"]
+            if "mrc_char_ids" in result:
+                processed_result["mrc_char_ids"] = result["mrc_char_ids"]
+            
+            # FlashRank 점수가 있으면 추가
+            if "flashrank_score" in result:
+                processed_result["flashrank_score"] = result["flashrank_score"]
+            
+            # 하이브리드 점수가 있으면 추가
+            if "hybrid_score" in result:
+                processed_result["hybrid_score"] = result["hybrid_score"]
+            
+            processed_results.append(processed_result)
+        
+        return processed_results
     
     def mrc_rerank(
         self, 
@@ -104,7 +139,42 @@ class RerankerClient:
             params=params
         )
         response.raise_for_status()
-        return response.json()
+        results = response.json()
+        
+        # 기본 필드만 추출 (중요한 메타데이터 유지)
+        processed_results = []
+        for result in results:
+            processed_result = {
+                "passage_id": result["id"],
+                "doc_id": result["meta"].get("doc_id", ""),
+                "text": result["text"],
+                "score": float(result["score"])
+            }
+
+            # 메타데이터에서 original_score 보존
+            if "original_score" in result["meta"]:
+                metadata = {"original_score": result["meta"]["original_score"]}
+                processed_result["metadata"] = metadata
+            
+            # MRC 관련 필드가 있으면 추가
+            if "mrc_score" in result:
+                processed_result["mrc_score"] = result["mrc_score"]
+            if "mrc_answer" in result:
+                processed_result["mrc_answer"] = result["mrc_answer"]
+            if "mrc_char_ids" in result:
+                processed_result["mrc_char_ids"] = result["mrc_char_ids"]
+            
+            # FlashRank 점수가 있으면 추가
+            if "flashrank_score" in result:
+                processed_result["flashrank_score"] = result["flashrank_score"]
+            
+            # 하이브리드 점수가 있으면 추가
+            if "hybrid_score" in result:
+                processed_result["hybrid_score"] = result["hybrid_score"]
+            
+            processed_results.append(processed_result)
+        
+        return processed_results
     
     def hybrid_rerank(
         self, 
@@ -144,7 +214,42 @@ class RerankerClient:
             params=params
         )
         response.raise_for_status()
-        return response.json()
+        results = response.json()
+        
+        # 기본 필드만 추출 (중요한 메타데이터 유지)
+        processed_results = []
+        for result in results:
+            processed_result = {
+                "passage_id": result["id"],
+                "doc_id": result["meta"].get("doc_id", ""),
+                "text": result["text"],
+                "score": float(result["score"])
+            }
+
+            # 메타데이터에서 original_score 보존
+            if "original_score" in result["meta"]:
+                metadata = {"original_score": result["meta"]["original_score"]}
+                processed_result["metadata"] = metadata
+            
+            # MRC 관련 필드가 있으면 추가
+            if "mrc_score" in result:
+                processed_result["mrc_score"] = result["mrc_score"]
+            if "mrc_answer" in result:
+                processed_result["mrc_answer"] = result["mrc_answer"]
+            if "mrc_char_ids" in result:
+                processed_result["mrc_char_ids"] = result["mrc_char_ids"]
+            
+            # FlashRank 점수가 있으면 추가
+            if "flashrank_score" in result:
+                processed_result["flashrank_score"] = result["flashrank_score"]
+            
+            # 하이브리드 점수가 있으면 추가
+            if "hybrid_score" in result:
+                processed_result["hybrid_score"] = result["hybrid_score"]
+            
+            processed_results.append(processed_result)
+        
+        return processed_results
     
     def batch_rerank(
         self, 
@@ -178,7 +283,25 @@ class RerankerClient:
             params=params
         )
         response.raise_for_status()
-        return response.json()
+        results = response.json()
+        
+        # 기본 필드만 추출 (중요한 메타데이터 유지)
+        processed_results = []
+        for query, results in zip(queries, results):
+            processed_results.append({
+                "query": query,
+                "results": [
+                    {
+                        "passage_id": result["id"],
+                        "doc_id": result["meta"].get("doc_id", ""),
+                        "text": result["text"],
+                        "score": float(result["score"])
+                    }
+                    for result in results
+                ]
+            })
+        
+        return processed_results
 
 
 # 사용 예시

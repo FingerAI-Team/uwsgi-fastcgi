@@ -202,15 +202,26 @@ class MRCReranker:
             mrc_score = mrc_result['answerability']
             mrc_scores.append(mrc_score)
             
-            # MRC 결과 저장
+            # MRC 결과 저장 - 상위 레벨에 명확하게 저장
             passage['mrc_answer'] = mrc_result['answer']
             passage['mrc_char_ids'] = mrc_result['char_ids']
             passage['mrc_score'] = mrc_score
             passage['flashrank_score'] = flashrank_score
             
             # 하이브리드 점수 계산
-            passage['hybrid_score'] = (flashrank_score * weight_flashrank) + (mrc_score * weight_mrc)
-            passage['score'] = passage['hybrid_score']  # 기본 score 필드 업데이트
+            hybrid_score = (flashrank_score * weight_flashrank) + (mrc_score * weight_mrc)
+            passage['hybrid_score'] = hybrid_score
+            passage['score'] = hybrid_score  # 기본 score 필드 업데이트
+            
+            # 메타데이터 필드가 없으면 생성
+            if 'metadata' not in passage:
+                passage['metadata'] = {}
+                
+            # 메타데이터에도 점수 정보 저장 (중복 저장으로 안전성 확보)
+            passage['metadata']['mrc_score'] = mrc_score
+            passage['metadata']['flashrank_score'] = flashrank_score
+            passage['metadata']['hybrid_score'] = hybrid_score
+            passage['metadata']['mrc_weight'] = weight_mrc
             
             logger.debug(f"Passage {i}: flashrank={flashrank_score:.4f}, mrc={mrc_score:.4f}, hybrid={passage['hybrid_score']:.4f}")
         
@@ -228,9 +239,9 @@ class MRCReranker:
                 del passage["metadata"]
             
             # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
-            if "mrc_answer" not in passage and passage.get("mrc_score") is not None:
+            if "mrc_score" in passage and "mrc_answer" not in passage:
                 passage["mrc_answer"] = ""
-            if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
+            if "mrc_score" in passage and "mrc_char_ids" not in passage:
                 passage["mrc_char_ids"] = []
         
         # top_k 적용 (점수 목록도 함께 정렬)

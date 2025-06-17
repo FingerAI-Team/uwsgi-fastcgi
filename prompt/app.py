@@ -567,13 +567,39 @@ def enhanced_search():
             if original_item and "score" in original_item:
                 result_item["original_score"] = original_item["score"]
             
-            # 하이브리드 재랭킹 점수 정보 (있는 경우)
+            # 중요 점수 정보 처리 - 직접 필드에서 우선 확인
+            # 하이브리드 점수 (score를 hybrid_score로 명확하게 복사)
+            result_item["hybrid_score"] = hybrid_score
+            
+            # FlashRank 점수
+            if "flashrank_score" in item:
+                result_item["flashrank_score"] = item["flashrank_score"]
+                
+            # MRC 점수
+            if "mrc_score" in item:
+                result_item["mrc_score"] = item["mrc_score"]
+                
+            # MRC 관련 필드
+            if "mrc_answer" in item:
+                result_item["mrc_answer"] = item["mrc_answer"]
+            if "mrc_char_ids" in item:
+                result_item["mrc_char_ids"] = item["mrc_char_ids"]
+            
+            # 하이브리드 재랭킹 점수 정보 (메타데이터에 있는 경우)
             if "metadata" in item:
-                # 메타데이터가 있는 경우 - 정상적인 경우
-                if "flashrank_score" in item["metadata"]:
+                # 메타데이터에서 점수 정보 확인 (직접 필드에 없는 경우에만)
+                if "flashrank_score" in item["metadata"] and "flashrank_score" not in result_item:
                     result_item["flashrank_score"] = item["metadata"]["flashrank_score"]
-                if "mrc_score" in item["metadata"]:
+                if "mrc_score" in item["metadata"] and "mrc_score" not in result_item:
                     result_item["mrc_score"] = item["metadata"]["mrc_score"]
+                if "hybrid_score" in item["metadata"] and "hybrid_score" not in result_item:
+                    result_item["hybrid_score"] = item["metadata"]["hybrid_score"]
+                
+                # MRC 관련 필드 (메타데이터에 있는 경우)
+                if "mrc_answer" in item["metadata"] and "mrc_answer" not in result_item:
+                    result_item["mrc_answer"] = item["metadata"]["mrc_answer"]
+                if "mrc_char_ids" in item["metadata"] and "mrc_char_ids" not in result_item:
+                    result_item["mrc_char_ids"] = item["metadata"]["mrc_char_ids"]
                     
                 # 메타데이터 복사
                 result_item["metadata"] = item["metadata"]
@@ -590,6 +616,16 @@ def enhanced_search():
                     if field in item:
                         result_item["metadata"][field] = item[field]
                         metadata_logger.debug(f"항목 {idx}에 {field} 필드를 메타데이터로 복구: {item[field]}")
+                
+                # 직접 필드에서 점수 정보 확인 (이미 위에서 처리했으므로 중복 코드 제거)
+            
+            # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
+            if "mrc_score" in result_item and "mrc_answer" not in result_item:
+                result_item["mrc_answer"] = ""
+                metadata_logger.debug(f"항목 {idx}에 빈 mrc_answer 필드 추가")
+            if "mrc_score" in result_item and "mrc_char_ids" not in result_item:
+                result_item["mrc_char_ids"] = []
+                metadata_logger.debug(f"항목 {idx}에 빈 mrc_char_ids 필드 추가")
             
             # id 필드 처리 - 원본 id만 보존하고 새 id는 생성하지 않음
             if "id" in result_item:
@@ -679,6 +715,7 @@ def enhanced_search():
                 "rag_search": round(rag_time, 3),
                 "reranking": round(rerank_time, 3)
             },
+            "reranked": True,  # 명확하게 재랭킹 여부 표시
             "reranker_type": reranked_results.get("reranker_type", "hybrid")
         }
         
