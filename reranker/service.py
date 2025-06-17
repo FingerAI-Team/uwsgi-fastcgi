@@ -872,6 +872,22 @@ class RerankerService:
                 logger.info(f"[HYBRID-DETAIL] 하이브리드 재랭킹 완료: 결과 수={len(reranked_passages)}, MRC 가중치={self.hybrid_weight_mrc}")
                 logger.info(f"[HYBRID-DETAIL] 총 처리 시간: {result['processing_time']:.3f}초 (FlashRank: {flashrank_time:.3f}초, MRC: {mrc_processing_time:.3f}초)")
                 
+                # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
+                for passage in result["results"]:
+                    if "metadata" in passage:
+                        # metadata 내부의 모든 필드를 상위 레벨로 복사
+                        for key, value in passage["metadata"].items():
+                            if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
+                                passage[key] = value
+                        # metadata 필드 제거
+                        del passage["metadata"]
+                    
+                    # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
+                    if "mrc_answer" not in passage and passage.get("mrc_score") is not None:
+                        passage["mrc_answer"] = ""
+                    if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
+                        passage["mrc_char_ids"] = []
+                
                 # 최종 응답에서 top_k개만 반환
                 if top_k and isinstance(top_k, int) and top_k > 0 and top_k < len(reranked_passages):
                     original_count = len(reranked_passages)
@@ -1070,10 +1086,51 @@ class RerankerService:
                 search_result["reranked"] = True
                 search_result["reranker_type"] = "flashrank"
                 search_result["processing_time"] = processing_time
-                return search_result, scores_dict, processing_time
-            else:
-                return reranked_results, scores_dict, processing_time
                 
+                # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
+                for passage in search_result["results"]:
+                    if "metadata" in passage:
+                        # metadata 내부의 모든 필드를 상위 레벨로 복사
+                        for key, value in passage["metadata"].items():
+                            if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
+                                passage[key] = value
+                        # metadata 필드 제거
+                        del passage["metadata"]
+                    
+                    # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
+                    if "mrc_answer" not in passage and passage.get("mrc_score") is not None:
+                        passage["mrc_answer"] = ""
+                    if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
+                        passage["mrc_char_ids"] = []
+                
+                return search_result
+            else:
+                result = {
+                    "query": query,
+                    "results": reranked_results,
+                    "total": len(reranked_results),
+                    "reranked": True,
+                    "reranker_type": "flashrank",
+                    "processing_time": processing_time
+                }
+                
+                # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
+                for passage in result["results"]:
+                    if "metadata" in passage:
+                        # metadata 내부의 모든 필드를 상위 레벨로 복사
+                        for key, value in passage["metadata"].items():
+                            if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
+                                passage[key] = value
+                        # metadata 필드 제거
+                        del passage["metadata"]
+                    
+                    # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
+                    if "mrc_answer" not in passage and passage.get("mrc_score") is not None:
+                        passage["mrc_answer"] = ""
+                    if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
+                        passage["mrc_char_ids"] = []
+                
+                return result
         except Exception as e:
             logger.error(f"Error in _flashrank_rerank: {str(e)}", exc_info=True)
             return passages, {}, 0.0
@@ -1213,9 +1270,26 @@ class RerankerService:
                 search_result["reranked"] = True
                 search_result["reranker_type"] = "flashrank"
                 search_result["processing_time"] = processing_time
+                
+                # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
+                for passage in search_result["results"]:
+                    if "metadata" in passage:
+                        # metadata 내부의 모든 필드를 상위 레벨로 복사
+                        for key, value in passage["metadata"].items():
+                            if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
+                                passage[key] = value
+                        # metadata 필드 제거
+                        del passage["metadata"]
+                    
+                    # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
+                    if "mrc_answer" not in passage and passage.get("mrc_score") is not None:
+                        passage["mrc_answer"] = ""
+                    if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
+                        passage["mrc_char_ids"] = []
+                
                 return search_result
             else:
-                return {
+                result = {
                     "query": query,
                     "results": reranked_results,
                     "total": len(reranked_results),
@@ -1223,6 +1297,24 @@ class RerankerService:
                     "reranker_type": "flashrank",
                     "processing_time": processing_time
                 }
+                
+                # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
+                for passage in result["results"]:
+                    if "metadata" in passage:
+                        # metadata 내부의 모든 필드를 상위 레벨로 복사
+                        for key, value in passage["metadata"].items():
+                            if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
+                                passage[key] = value
+                        # metadata 필드 제거
+                        del passage["metadata"]
+                    
+                    # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
+                    if "mrc_answer" not in passage and passage.get("mrc_score") is not None:
+                        passage["mrc_answer"] = ""
+                    if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
+                        passage["mrc_char_ids"] = []
+                
+                return result
         except Exception as e:
             logger.error(f"Error in perform_flashrank_reranking: {str(e)}", exc_info=True)
             if search_result:
