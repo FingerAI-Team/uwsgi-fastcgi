@@ -590,10 +590,13 @@ def enhanced_search():
                 # 메타데이터에서 점수 정보 확인 (직접 필드에 없는 경우에만)
                 if "flashrank_score" in item["metadata"] and "flashrank_score" not in result_item:
                     result_item["flashrank_score"] = item["metadata"]["flashrank_score"]
+                    logger.info(f"항목 {idx}에 flashrank_score 추가: {item['metadata']['flashrank_score']}")
                 if "mrc_score" in item["metadata"] and "mrc_score" not in result_item:
                     result_item["mrc_score"] = item["metadata"]["mrc_score"]
+                    logger.info(f"항목 {idx}에 mrc_score 추가: {item['metadata']['mrc_score']}")
                 if "hybrid_score" in item["metadata"] and "hybrid_score" not in result_item:
                     result_item["hybrid_score"] = item["metadata"]["hybrid_score"]
+                    logger.info(f"항목 {idx}에 hybrid_score 추가: {item['metadata']['hybrid_score']}")
                 
                 # MRC 관련 필드 (메타데이터에 있는 경우)
                 if "mrc_answer" in item["metadata"] and "mrc_answer" not in result_item:

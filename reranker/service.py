@@ -5,18 +5,29 @@ Service layer for reranking functionality
 import os
 import sys
 import logging
-import torch
 import time
 import threading
 import traceback
 from typing import List, Dict, Any, Optional, Union, Tuple
 from pydantic import BaseModel
+
+# PyTorch 임포트 시도
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError as e:
+    TORCH_AVAILABLE = False
+    print(f"PyTorch 임포트 실패: {str(e)}")
+
 from flashrank import Ranker, RerankRequest
 
 # PyTorch 프로파일러 임포트
 try:
-    from torch.profiler import profile, record_function, ProfilerActivity
-    PROFILER_AVAILABLE = True
+    if TORCH_AVAILABLE:
+        from torch.profiler import profile, record_function, ProfilerActivity
+        PROFILER_AVAILABLE = True
+    else:
+        PROFILER_AVAILABLE = False
 except ImportError:
     PROFILER_AVAILABLE = False
     
@@ -205,8 +216,14 @@ class RerankerService:
             self.batch_size = self._get_batch_size()
             
             # GPU 사용 가능 여부 확인
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-            logger.info(f"Using device: {self.device}")
+            try:
+                import torch
+                self.device = "cuda" if torch.cuda.is_available() else "cpu"
+                logger.info(f"Using device: {self.device}")
+            except Exception as e:
+                logger.error(f"PyTorch 임포트 실패: {str(e)}")
+                self.device = "cpu"
+                logger.info(f"PyTorch 임포트 실패로 CPU 사용")
             
             # 모델 로딩 시작
             model_start_time = time.time()
@@ -216,24 +233,28 @@ class RerankerService:
                 
                 # 모델이 GPU를 사용하는지 확인
                 if self.device == "cuda":
-                    # 모델 디바이스 확인
-                    if hasattr(self.ranker, 'model'):
-                        model_device = next(self.ranker.model.parameters()).device
-                        logger.info(f"FlashRank model device: {model_device}")
-                        
-                        # CPU에 있으면 GPU로 이동
-                        if str(model_device) == "cpu":
-                            logger.warning("FlashRank model is on CPU! Moving to GPU...")
-                            try:
-                                self.ranker.model.to('cuda')
-                                new_device = next(self.ranker.model.parameters()).device
-                                logger.info(f"FlashRank model moved to: {new_device}")
-                                
-                                # 로그 파일에 기록
-                                with open('/var/log/reranker/reranker_detail.log', 'a') as f:
-                                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [INIT] FlashRank model moved from CPU to {new_device}\n")
-                            except Exception as e:
-                                logger.error(f"Failed to move FlashRank model to GPU: {str(e)}")
+                    try:
+                        import torch
+                        # 모델 디바이스 확인
+                        if hasattr(self.ranker, 'model'):
+                            model_device = next(self.ranker.model.parameters()).device
+                            logger.info(f"FlashRank model device: {model_device}")
+                            
+                            # CPU에 있으면 GPU로 이동
+                            if str(model_device) == "cpu":
+                                logger.warning("FlashRank model is on CPU! Moving to GPU...")
+                                try:
+                                    self.ranker.model.to('cuda')
+                                    new_device = next(self.ranker.model.parameters()).device
+                                    logger.info(f"FlashRank model moved to: {new_device}")
+                                    
+                                    # 로그 파일에 기록
+                                    with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                                        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [INIT] FlashRank model moved from CPU to {new_device}\n")
+                                except Exception as e:
+                                    logger.error(f"Failed to move FlashRank model to GPU: {str(e)}")
+                    except Exception as e:
+                        logger.error(f"GPU 설정 확인 중 오류: {str(e)}")
                 
                 logger.info(f"FlashRank model loaded in {(time.time() - model_start_time):.2f}s")
             except Exception as e:
@@ -442,17 +463,22 @@ class RerankerService:
         logger.info(f"Python version: {sys.version}")
         
         # PyTorch 버전
-        logger.info(f"PyTorch version: {torch.__version__}")
-        
-        # CUDA 정보
-        if torch.cuda.is_available():
-            logger.info(f"CUDA available: True")
-            logger.info(f"CUDA version: {torch.version.cuda}")
-            logger.info(f"GPU count: {torch.cuda.device_count()}")
-            for i in range(torch.cuda.device_count()):
-                logger.info(f"GPU {i}: {torch.cuda.get_device_name(i)}")
-        else:
-            logger.info("CUDA available: False")
+        try:
+            import torch
+            logger.info(f"PyTorch version: {torch.__version__}")
+            
+            # CUDA 정보
+            if torch.cuda.is_available():
+                logger.info(f"CUDA available: True")
+                logger.info(f"CUDA version: {torch.version.cuda}")
+                logger.info(f"GPU count: {torch.cuda.device_count()}")
+                for i in range(torch.cuda.device_count()):
+                    logger.info(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+            else:
+                logger.info("CUDA available: False")
+        except Exception as e:
+            logger.error(f"PyTorch 정보 로깅 실패: {str(e)}")
+            logger.info("CUDA available: Unknown (PyTorch error)")
             
         logger.info("========================")
     
@@ -465,7 +491,12 @@ class RerankerService:
         }
         
         # GPU 여부에 따라 배치 크기 선택
-        mode = "gpu" if torch.cuda.is_available() else "cpu"
+        try:
+            import torch
+            mode = "gpu" if torch.cuda.is_available() else "cpu"
+        except Exception as e:
+            logger.warning(f"PyTorch 임포트 실패 (_get_batch_size): {str(e)}")
+            mode = "cpu"
         
         # 설정된 배치 크기 가져오기
         if isinstance(self.config.get("batch_size"), dict):
