@@ -702,6 +702,11 @@ def enhanced_search():
         # 전체 처리 시간 계산
         total_time = (datetime.now() - start_time).total_seconds()
         
+        # 최종 결과에서 metadata 필드 제거
+        for result in processed_results:
+            if "metadata" in result:
+                del result["metadata"]
+        
         # 최종 응답 구성
         response = {
             "query": query,
