@@ -250,7 +250,7 @@ class RerankerService:
                         logger.error(f"로그 파일 기록 실패: {str(e)}")
                     
                     # 모델 초기화 시도
-                    self.ranker = Ranker(model_name_or_path=self.model_name)
+                    self.ranker = Ranker(model_name=self.model_name)
                     logger.info(f"FlashRank model initialized successfully: {self.model_name}")
                     
                     # 상세 로그 파일에 기록
