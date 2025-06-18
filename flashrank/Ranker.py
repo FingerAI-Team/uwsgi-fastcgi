@@ -12,6 +12,7 @@ import collections
 from typing import Optional, List, Dict, Any
 import logging
 import time
+import traceback
 
 class RerankRequest:
     """ Represents a reranking request with a query and a list of passages. 
@@ -48,7 +49,10 @@ class Ranker:
         # 로그 디렉토리 설정
         log_dir = "/var/log/reranker"
         if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+            try:
+                os.makedirs(log_dir, exist_ok=True)
+            except Exception as e:
+                print(f"로그 디렉토리 생성 실패: {str(e)}")
             
         # 로깅 설정
         logging.basicConfig(level=getattr(logging, log_level.upper(), logging.INFO))
@@ -57,17 +61,31 @@ class Ranker:
         # 로그 포맷 설정
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         
-        # 파일 핸들러 설정
-        file_handler = logging.FileHandler(os.path.join(log_dir, 'ranker.log'))
-        file_handler.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-        file_handler.setFormatter(formatter)
+        # 파일 핸들러 설정 - ranker.log
+        try:
+            file_handler = logging.FileHandler(os.path.join(log_dir, 'ranker.log'))
+            file_handler.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+            file_handler.setFormatter(formatter)
+            self.logger.addHandler(file_handler)
+        except Exception as e:
+            print(f"ranker.log 파일 핸들러 설정 실패: {str(e)}")
         
-        # 핸들러 추가
-        self.logger.addHandler(file_handler)
+        # 상세 로그용 파일 핸들러 - reranker_detail.log
+        try:
+            detail_handler = logging.FileHandler(os.path.join(log_dir, 'reranker_detail.log'))
+            detail_handler.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+            detail_handler.setFormatter(formatter)
+            self.logger.addHandler(detail_handler)
+        except Exception as e:
+            print(f"reranker_detail.log 파일 핸들러 설정 실패: {str(e)}")
 
+        # 초기화 시작 로그
+        self.log_with_detail(f"[FLASHRANK-INIT] FlashRank 초기화 시작: 모델={model_name}, 캐시 디렉토리={cache_dir}")
+        
         self.cache_dir: Path = Path(cache_dir)
         self.model_dir: Path = self.cache_dir / model_name
         self.max_length = max_length
+        self.name = model_name  # 모델 이름 저장
         
         # GPU 사용 설정
         try:
@@ -75,116 +93,163 @@ class Ranker:
             if torch.cuda.is_available():
                 os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # GPU 0 사용
                 self.device = "cuda:0"
-                self.logger.info(f"Using GPU 0: {self.device}")
-                self.logger.info(f"GPU Memory: {torch.cuda.memory_allocated()/1024**2:.2f}MB")
-                self.logger.info(f"GPU Name: {torch.cuda.get_device_name(0)}")
+                self.log_with_detail(f"[FLASHRANK-INIT] GPU 사용: {self.device}")
+                self.log_with_detail(f"[FLASHRANK-INIT] GPU 메모리: {torch.cuda.memory_allocated()/1024**2:.2f}MB")
+                self.log_with_detail(f"[FLASHRANK-INIT] GPU 이름: {torch.cuda.get_device_name(0)}")
             else:
                 self.device = "cpu"
-                self.logger.info("GPU not available, using CPU only")
+                self.log_with_detail("[FLASHRANK-INIT] GPU 사용 불가, CPU 사용")
         except ImportError:
             self.device = "cpu"
-            self.logger.info("PyTorch not found, using CPU only")
+            self.log_with_detail("[FLASHRANK-INIT] PyTorch 없음, CPU 사용")
         
         self.llm_model = None
         self.hf_model = None
         self.hf_tokenizer = None
         
-        # HuggingFace 모델 사용 시
-        if model_name in huggingface_rankers:
-            try:
-                import torch
-                from transformers import AutoModelForSequenceClassification, AutoTokenizer
-                
-                # 모델 이름 가져오기
-                hf_model_name = huggingface_model_map[model_name]
-                
-                self.logger.info(f"Loading HuggingFace model: {hf_model_name}")
-                
-                # 캐시 디렉토리 설정
-                if not self.model_dir.exists():
-                    self.model_dir.mkdir(parents=True, exist_ok=True)
-                
-                # 모델과 토크나이저 로드
-                self.hf_tokenizer = AutoTokenizer.from_pretrained(
-                    hf_model_name,
-                    cache_dir=str(self.model_dir),
-                    local_files_only=False
-                )
-                
-                # GPU 사용 가능 시 half precision 사용
-                dtype = torch.float16 if self.device == "cuda:0" else torch.float32
-                self.logger.info(f"Using model dtype: {dtype}")
-                
-                self.hf_model = AutoModelForSequenceClassification.from_pretrained(
-                    hf_model_name,
-                    cache_dir=str(self.model_dir),
-                    local_files_only=False,
-                    trust_remote_code=True,
-                    torch_dtype=dtype
-                )
-                
-                # GPU로 모델 이동
-                if self.device == "cuda:0":
-                    self.logger.info("Moving model to GPU...")
-                    self.hf_model.to(self.device)
-                    # 모델이 실제로 GPU에 있는지 확인
-                    model_device = next(self.hf_model.parameters()).device
-                    self.logger.info(f"Model is now on device: {model_device}")
-                    
-                    # GPU 메모리 사용량 확인
-                    mem_allocated = torch.cuda.memory_allocated(0) / (1024**3)  # GB 단위
-                    mem_reserved = torch.cuda.memory_reserved(0) / (1024**3)  # GB 단위
-                    self.logger.info(f"GPU Memory after model loading: {mem_allocated:.2f}GB allocated, {mem_reserved:.2f}GB reserved")
-                
-                self.hf_model.eval()
-                self.logger.info("Model loaded successfully and set to evaluation mode")
-            except ImportError:
-                raise ImportError("Please install torch and transformers to use HuggingFace models: pip install torch transformers")
-            except Exception as e:
-                self.logger.error(f"Failed to load HuggingFace model {hf_model_name}: {str(e)}")
-                raise
-        # 기존 모델 사용 시
-        else:
-            self._prepare_model_dir(model_name)
-            model_file = model_file_map[model_name]
-            
-            if model_name in listwise_rankers:
-                try:
-                    from llama_cpp import Llama
-                    # GPU 지원을 위한 옵션 설정
-                    gpu_layers = -1 if self.device == "cuda" else 0
-                    self.llm_model = Llama(
-                        model_path=str(self.model_dir / model_file),
-                        n_ctx=max_length,
-                        n_threads=8,
-                        n_gpu_layers=gpu_layers  # GPU 사용 시 모든 레이어를 GPU로
-                    )
-                    self.logger.info(f"LLM model loaded with GPU layers: {gpu_layers}")
-                except ImportError:
-                    raise ImportError("Please install llama-cpp-python with GPU support: CMAKE_ARGS='-DLLAMA_CUBLAS=on' pip install llama-cpp-python")
+        try:
+            # HuggingFace 모델 사용 시
+            if model_name in huggingface_rankers:
+                self.init_huggingface_model(model_name)
+            # 기존 모델 사용 시
             else:
-                # ONNX Runtime providers 설정
-                providers = []
-                if self.device == "cuda":
-                    providers.extend([
-                        ('CUDAExecutionProvider', {
-                            'device_id': 0,
-                            'arena_extend_strategy': 'kNextPowerOfTwo',
-                            'gpu_mem_limit': 2 * 1024 * 1024 * 1024,
-                            'cudnn_conv_algo_search': 'EXHAUSTIVE',
-                            'do_copy_in_default_stream': True,
-                        }),
-                        'CPUExecutionProvider'
-                    ])
-                else:
-                    providers.append('CPUExecutionProvider')
-                    
-                self.logger.info(f"Using ONNX Runtime providers: {providers}")
+                self.init_standard_model(model_name)
+                
+            self.log_with_detail(f"[FLASHRANK-INIT] FlashRank 초기화 성공: 모델={model_name}")
+        except Exception as e:
+            error_msg = f"[FLASHRANK-INIT] FlashRank 초기화 실패: {str(e)}"
+            self.log_with_detail(error_msg, level="ERROR", include_traceback=True)
+            raise RuntimeError(error_msg) from e
+
+    def log_with_detail(self, message: str, level: str = "INFO", include_traceback: bool = False):
+        """로그 메시지를 일반 로그와 상세 로그 파일에 모두 기록합니다."""
+        log_method = getattr(self.logger, level.lower(), self.logger.info)
+        log_method(message)
+        
+        # 상세 로그 파일에 직접 기록
+        try:
+            with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
+                if include_traceback:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {traceback.format_exc()}\n")
+        except Exception as e:
+            self.logger.warning(f"상세 로그 파일 기록 실패: {str(e)}")
+
+    def init_huggingface_model(self, model_name: str):
+        """HuggingFace 모델을 초기화합니다."""
+        try:
+            import torch
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
+            
+            # 모델 이름 가져오기
+            hf_model_name = huggingface_model_map[model_name]
+            
+            self.log_with_detail(f"[FLASHRANK-INIT] HuggingFace 모델 로딩 시작: {hf_model_name}")
+            
+            # 캐시 디렉토리 설정
+            if not self.model_dir.exists():
+                self.model_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 모델과 토크나이저 로드
+            self.hf_tokenizer = AutoTokenizer.from_pretrained(
+                hf_model_name,
+                cache_dir=str(self.model_dir),
+                local_files_only=False
+            )
+            
+            # GPU 사용 가능 시 half precision 사용
+            dtype = torch.float16 if self.device == "cuda:0" else torch.float32
+            self.log_with_detail(f"[FLASHRANK-INIT] 모델 데이터 타입: {dtype}")
+            
+            self.hf_model = AutoModelForSequenceClassification.from_pretrained(
+                hf_model_name,
+                cache_dir=str(self.model_dir),
+                local_files_only=False,
+                trust_remote_code=True,
+                torch_dtype=dtype
+            )
+            
+            # GPU로 모델 이동
+            if self.device == "cuda:0":
+                self.log_with_detail("[FLASHRANK-INIT] 모델을 GPU로 이동...")
+                self.hf_model.to(self.device)
+                # 모델이 실제로 GPU에 있는지 확인
+                model_device = next(self.hf_model.parameters()).device
+                self.log_with_detail(f"[FLASHRANK-INIT] 모델 현재 장치: {model_device}")
+                
+                # GPU 메모리 사용량 확인
+                mem_allocated = torch.cuda.memory_allocated(0) / (1024**3)  # GB 단위
+                mem_reserved = torch.cuda.memory_reserved(0) / (1024**3)  # GB 단위
+                self.log_with_detail(f"[FLASHRANK-INIT] 모델 로딩 후 GPU 메모리: {mem_allocated:.2f}GB 할당, {mem_reserved:.2f}GB 예약")
+            
+            self.hf_model.eval()
+            self.log_with_detail("[FLASHRANK-INIT] HuggingFace 모델 로딩 성공 (평가 모드 설정)")
+        except ImportError:
+            error_msg = "HuggingFace 모델 사용을 위해 torch와 transformers를 설치하세요: pip install torch transformers"
+            self.log_with_detail(f"[FLASHRANK-INIT] {error_msg}", level="ERROR")
+            raise ImportError(error_msg)
+        except Exception as e:
+            error_msg = f"HuggingFace 모델 {hf_model_name} 로딩 실패: {str(e)}"
+            self.log_with_detail(f"[FLASHRANK-INIT] {error_msg}", level="ERROR", include_traceback=True)
+            raise RuntimeError(error_msg) from e
+
+    def init_standard_model(self, model_name: str):
+        """표준 ONNX 또는 LLM 모델을 초기화합니다."""
+        self._prepare_model_dir(model_name)
+        model_file = model_file_map[model_name]
+        
+        self.log_with_detail(f"[FLASHRANK-INIT] 표준 모델 로딩 시작: {model_name}, 파일: {model_file}")
+        
+        if model_name in listwise_rankers:
+            try:
+                from llama_cpp import Llama
+                # GPU 지원을 위한 옵션 설정
+                gpu_layers = -1 if self.device == "cuda" else 0
+                self.llm_model = Llama(
+                    model_path=str(self.model_dir / model_file),
+                    n_ctx=self.max_length,
+                    n_threads=8,
+                    n_gpu_layers=gpu_layers  # GPU 사용 시 모든 레이어를 GPU로
+                )
+                self.log_with_detail(f"[FLASHRANK-INIT] LLM 모델 로딩 성공: GPU 레이어={gpu_layers}")
+            except ImportError:
+                error_msg = "LLM 모델 사용을 위해 GPU 지원과 함께 llama-cpp-python을 설치하세요: CMAKE_ARGS='-DLLAMA_CUBLAS=on' pip install llama-cpp-python"
+                self.log_with_detail(f"[FLASHRANK-INIT] {error_msg}", level="ERROR")
+                raise ImportError(error_msg)
+            except Exception as e:
+                error_msg = f"LLM 모델 로딩 실패: {str(e)}"
+                self.log_with_detail(f"[FLASHRANK-INIT] {error_msg}", level="ERROR", include_traceback=True)
+                raise RuntimeError(error_msg) from e
+        else:
+            # ONNX Runtime providers 설정
+            providers = []
+            if self.device == "cuda":
+                providers.extend([
+                    ('CUDAExecutionProvider', {
+                        'device_id': 0,
+                        'arena_extend_strategy': 'kNextPowerOfTwo',
+                        'gpu_mem_limit': 2 * 1024 * 1024 * 1024,
+                        'cudnn_conv_algo_search': 'EXHAUSTIVE',
+                        'do_copy_in_default_stream': True,
+                    }),
+                    'CPUExecutionProvider'
+                ])
+            else:
+                providers.append('CPUExecutionProvider')
+                
+            self.log_with_detail(f"[FLASHRANK-INIT] ONNX Runtime providers: {providers}")
+            
+            try:
                 self.session = ort.InferenceSession(
                     str(self.model_dir / model_file),
                     providers=providers
                 )
-                self.tokenizer: Tokenizer = self._get_tokenizer(max_length)
+                self.tokenizer: Tokenizer = self._get_tokenizer(self.max_length)
+                self.log_with_detail(f"[FLASHRANK-INIT] ONNX 모델 및 토크나이저 로딩 성공")
+            except Exception as e:
+                error_msg = f"ONNX 모델 로딩 실패: {str(e)}"
+                self.log_with_detail(f"[FLASHRANK-INIT] {error_msg}", level="ERROR", include_traceback=True)
+                raise RuntimeError(error_msg) from e
 
     def _prepare_model_dir(self, model_name: str):
         """ Ensures the model directory is prepared by downloading and extracting the model if not present.
@@ -200,89 +265,100 @@ class Ranker:
                 self.model_dir.mkdir(parents=True, exist_ok=True)
             return
 
-        # 일반 모델 처리
+        # 모델 디렉토리가 없으면 생성
         if not self.cache_dir.exists():
-            self.logger.debug(f"Cache directory {self.cache_dir} not found. Creating it..")
             self.cache_dir.mkdir(parents=True, exist_ok=True)
-        
         if not self.model_dir.exists():
-            if model_name in huggingface_rankers and use_direct_hf_download:
-                self.logger.info(f"Model directory will be created by HuggingFace Hub...")
-                self.model_dir.mkdir(parents=True, exist_ok=True)
-            else:
-                self.logger.info(f"Downloading {model_name}...")
-                self._download_model_files(model_name)
+            self.model_dir.mkdir(parents=True, exist_ok=True)
+
+        # 모델 파일 확인
+        model_file = model_file_map[model_name]
+        model_path = self.model_dir / model_file
+        if not model_path.exists():
+            self.log_with_detail(f"[FLASHRANK-INIT] 모델 파일이 없습니다. 다운로드를 시작합니다: {model_file}")
+            self._download_model_files(model_name)
+        else:
+            self.log_with_detail(f"[FLASHRANK-INIT] 모델 파일이 이미 존재합니다: {model_path}")
 
     def _download_model_files(self, model_name: str):
-        """ Downloads and extracts the model files from a specified URL.
+        """Downloads model files from the specified URL.
 
         Args:
             model_name (str): The name of the model to download.
         """
-        local_zip_file = self.cache_dir / f"{model_name}.zip"
-        formatted_model_url = model_url.format(model_name)
-        
-        with requests.get(formatted_model_url, stream=True) as r:
-            r.raise_for_status()
-            total_size = int(r.headers.get('content-length', 0))
-            with open(local_zip_file, 'wb') as f, tqdm(desc=local_zip_file.name, total=total_size, unit='iB', unit_scale=True, unit_divisor=1024) as bar:
-                for chunk in r.iter_content(chunk_size=8192):
-                    size = f.write(chunk)
-                    bar.update(size)
-
-        with zipfile.ZipFile(local_zip_file, 'r') as zip_ref:
-            zip_ref.extractall(self.cache_dir)
-        os.remove(local_zip_file)
+        try:
+            model_zip_path = self.model_dir / f"{model_name}.zip"
+            self.log_with_detail(f"[FLASHRANK-INIT] 모델 파일 다운로드 시작: {model_url[model_name]} -> {model_zip_path}")
+            
+            # 모델 파일 다운로드
+            response = requests.get(model_url[model_name], stream=True)
+            response.raise_for_status()  # HTTP 오류 확인
+            
+            # 파일 크기 확인
+            total_size = int(response.headers.get('content-length', 0))
+            self.log_with_detail(f"[FLASHRANK-INIT] 다운로드 크기: {total_size/1024/1024:.2f} MB")
+            
+            # 파일 저장
+            with open(model_zip_path, 'wb') as f:
+                for chunk in tqdm(response.iter_content(chunk_size=8192), total=total_size//8192, desc=f"Downloading {model_name}"):
+                    if chunk:
+                        f.write(chunk)
+            
+            # 압축 해제
+            self.log_with_detail(f"[FLASHRANK-INIT] 모델 파일 압축 해제 시작: {model_zip_path}")
+            with zipfile.ZipFile(model_zip_path, 'r') as zip_ref:
+                zip_ref.extractall(self.model_dir)
+            
+            # 다운로드한 zip 파일 삭제
+            model_zip_path.unlink()
+            self.log_with_detail(f"[FLASHRANK-INIT] 모델 파일 다운로드 및 압축 해제 완료")
+        except Exception as e:
+            error_msg = f"모델 파일 다운로드 실패: {str(e)}"
+            self.log_with_detail(f"[FLASHRANK-INIT] {error_msg}", level="ERROR", include_traceback=True)
+            raise RuntimeError(error_msg) from e
 
     def _get_tokenizer(self, max_length: int = 512) -> Tokenizer:
-        """ Initializes and configures the tokenizer with padding and truncation.
+        """Gets the tokenizer for the model.
 
         Args:
-            max_length (int): The maximum token length for truncation.
+            max_length (int): The maximum length of the tokens.
 
         Returns:
-            Tokenizer: Configured tokenizer for text processing.
+            Tokenizer: The tokenizer for the model.
         """
-        with open(str(self.model_dir / "config.json")) as config_file:
-            config = json.load(config_file)
-        with open(str(self.model_dir / "tokenizer_config.json")) as tokenizer_config_file:
-            tokenizer_config = json.load(tokenizer_config_file)
-        with open(str(self.model_dir / "special_tokens_map.json")) as tokens_map_file:
-            tokens_map = json.load(tokens_map_file)
-        tokenizer = Tokenizer.from_file(str(self.model_dir / "tokenizer.json"))
+        try:
+            self.log_with_detail(f"[FLASHRANK-INIT] 토크나이저 초기화 시작: 최대 길이={max_length}")
+            
+            # 토크나이저 파일 경로
+            tokenizer_path = self.model_dir / "tokenizer.json"
+            if not tokenizer_path.exists():
+                error_msg = f"토크나이저 파일을 찾을 수 없습니다: {tokenizer_path}"
+                self.log_with_detail(f"[FLASHRANK-INIT] {error_msg}", level="ERROR")
+                raise FileNotFoundError(error_msg)
+            
+            # 토크나이저 로드
+            tokenizer = Tokenizer.from_file(str(tokenizer_path))
+            
+            # 특수 토큰 추가
+            tokenizer.add_special_tokens([
+                AddedToken("<s>", normalized=False),
+                AddedToken("</s>", normalized=False),
+                AddedToken("<pad>", normalized=False)
+            ])
+            
+            # 패딩 토큰 설정
+            tokenizer.enable_padding(pad_id=0, pad_token="<pad>", length=max_length)
+            
+            # 트렁케이션 설정
+            tokenizer.enable_truncation(max_length=max_length)
+            
+            self.log_with_detail(f"[FLASHRANK-INIT] 토크나이저 초기화 완료")
+            return tokenizer
+        except Exception as e:
+            error_msg = f"토크나이저 초기화 실패: {str(e)}"
+            self.log_with_detail(f"[FLASHRANK-INIT] {error_msg}", level="ERROR", include_traceback=True)
+            raise RuntimeError(error_msg) from e
 
-        tokenizer.enable_truncation(max_length=min(tokenizer_config["model_max_length"], max_length))
-        tokenizer.enable_padding(pad_id=config["pad_token_id"], pad_token=tokenizer_config["pad_token"])
-
-        for token in tokens_map.values():
-            if isinstance(token, str):
-                tokenizer.add_special_tokens([token])
-            elif isinstance(token, dict):
-                tokenizer.add_special_tokens([AddedToken(**token)])
-
-        vocab_file = self.model_dir / "vocab.txt"
-        if vocab_file.exists():
-            tokenizer.vocab = self._load_vocab(vocab_file)
-            tokenizer.ids_to_tokens = collections.OrderedDict([(ids, tok) for tok, ids in tokenizer.vocab.items()])
-        return tokenizer
-
-    def _load_vocab(self, vocab_file: Path) -> Dict[str, int]:
-        """ Loads the vocabulary from a file and returns it as an ordered dictionary.
-
-        Args:
-            vocab_file (Path): The file path to the vocabulary.
-
-        Returns:
-            Dict[str, int]: An ordered dictionary mapping tokens to their respective indices.
-        """
-        vocab = collections.OrderedDict()
-        with open(vocab_file, "r", encoding="utf-8") as reader:
-            tokens = reader.readlines()
-        for index, token in enumerate(tokens):
-            token = token.rstrip("\n")
-            vocab[token] = index
-        return vocab
-    
     def _get_prefix_prompt(self, query, num):
         return [
             {
