@@ -539,14 +539,14 @@ def enhanced_search():
             original_item = None
             if doc_id and doc_id in original_results_by_id:
                 original_item = original_results_by_id[doc_id]
-                # 원본 검색 결과의 모든 필드 복사 (점수 관련 필드 제외)
+                # 원본 검색 결과의 모든 필드 복사 (점수 관련 필드와 metadata 제외)
                 for key, value in original_item.items():
-                    if key not in ["score", "flashrank_score", "mrc_score", "hybrid_score"]:
+                    if key not in ["score", "flashrank_score", "mrc_score", "hybrid_score", "metadata"]:
                         result_item[key] = value
             
-            # 2. 재랭킹 결과의 필드 복사 (원본 덮어쓰기, 점수 관련 필드 제외)
+            # 2. 재랭킹 결과의 필드 복사 (원본 덮어쓰기, 점수 관련 필드와 metadata 제외)
             for key, value in item.items():
-                if key not in ["score", "flashrank_score", "mrc_score", "hybrid_score", "rerank_score"]:
+                if key not in ["score", "flashrank_score", "mrc_score", "hybrid_score", "rerank_score", "metadata"]:
                     result_item[key] = value
             
             # 3. 중요 메타데이터 필드 명시적으로 복사 (원본 결과에서)

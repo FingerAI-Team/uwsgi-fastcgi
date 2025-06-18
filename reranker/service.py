@@ -838,7 +838,7 @@ class RerankerService:
                         flashrank_result["results"], 
                         flashrank_scores, 
                         weight_mrc=self.hybrid_weight_mrc,
-                        top_k=None,  # None으로 설정하여 모든 결과 처리
+                        top_k=top_k,  # top_k 파라미터 적용하여 요청한 개수만 반환
                         return_mrc_scores=True  # MRC 점수도 함께 반환
                     )
                     mrc_processing_time = time.time() - hybrid_start_time
@@ -988,7 +988,7 @@ class RerankerService:
                     flashrank_result["results"], 
                     flashrank_scores, 
                     weight_mrc=self.hybrid_weight_mrc,
-                    top_k=None,  # None으로 설정하여 모든 결과 처리
+                    top_k=top_k,  # top_k 파라미터 적용하여 요청한 개수만 반환
                     return_mrc_scores=True  # MRC 점수도 함께 반환
                 )
                 mrc_processing_time = time.time() - hybrid_start_time

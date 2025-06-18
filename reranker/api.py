@@ -89,8 +89,15 @@ async def rerank_passages(
             
         reranked = service.process_search_results(data.query, results_dict, top_k)
         
-        # Set total value
-        reranked["total"] = len(reranked["results"])
+        # 원본 검색 결과 개수 저장 (필터링 전)
+        original_count = len(results_dict.get("results", []))
+        
+        # 필터링 후 결과 개수
+        filtered_count = len(reranked.get("results", []))
+        
+        # 필터링 정보 추가
+        reranked["original_count"] = original_count
+        reranked["filtered_count"] = filtered_count
         
         return reranked
         
@@ -142,8 +149,15 @@ async def hybrid_rerank(
         if hasattr(service, 'hybrid_weight_mrc') and 'original_weight' in locals():
             service.hybrid_weight_mrc = original_weight
         
-        # Set total value
-        reranked["total"] = len(reranked["results"])
+        # 원본 검색 결과 개수 저장 (필터링 전)
+        original_count = len(results_dict.get("results", []))
+        
+        # 필터링 후 결과 개수
+        filtered_count = len(reranked.get("results", []))
+        
+        # 필터링 정보 추가
+        reranked["original_count"] = original_count
+        reranked["filtered_count"] = filtered_count
         
         return reranked
         
