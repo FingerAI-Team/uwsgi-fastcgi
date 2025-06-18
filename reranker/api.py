@@ -83,7 +83,10 @@ async def rerank_passages(
         # Convert to plain dict
         results_dict = data.dict()
         
-        # Process search results
+        # Process search results - top_k 값이 있으면 정수로 변환
+        if top_k is not None:
+            top_k = int(top_k)
+            
         reranked = service.process_search_results(data.query, results_dict, top_k)
         
         # Set total value
@@ -122,6 +125,10 @@ async def hybrid_rerank(
     try:
         # Convert to plain dict
         results_dict = data.dict()
+        
+        # top_k 값이 있으면 정수로 변환
+        if top_k is not None:
+            top_k = int(top_k)
         
         # 임시로 MRC 가중치 설정 (실제 서비스에서는 이 값이 유지되어야 함)
         if hasattr(service, 'hybrid_weight_mrc'):

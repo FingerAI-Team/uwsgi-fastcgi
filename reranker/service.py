@@ -902,7 +902,7 @@ class RerankerService:
                     logger.info(f"[HYBRID-DETAIL] 총 처리 시간: {result['processing_time']:.3f}초 (FlashRank: {flashrank_time:.3f}초, MRC: {mrc_processing_time:.3f}초)")
                     
                     # 최종 응답에서 top_k개만 반환
-                    if top_k and isinstance(top_k, int) and top_k > 0 and top_k < len(reranked_passages):
+                    if top_k is not None and isinstance(top_k, int) and top_k > 0 and top_k < len(reranked_passages):
                         original_count = len(reranked_passages)
                         reranked_passages = reranked_passages[:top_k]
                         result["results"] = reranked_passages
@@ -1042,7 +1042,7 @@ class RerankerService:
                 logger.info(f"[HYBRID-DETAIL] 총 처리 시간: {result['processing_time']:.3f}초 (FlashRank: {flashrank_time:.3f}초, MRC: {mrc_processing_time:.3f}초)")
                 
                 # 최종 응답에서 top_k개만 반환
-                if top_k and isinstance(top_k, int) and top_k > 0 and top_k < len(reranked_passages):
+                if top_k is not None and isinstance(top_k, int) and top_k > 0 and top_k < len(reranked_passages):
                     original_count = len(reranked_passages)
                     reranked_passages = reranked_passages[:top_k]
                     result["results"] = reranked_passages
@@ -1071,145 +1071,7 @@ class RerankerService:
                     # 둘 다 사용할 수 없으면 원본 결과 반환
                     logger.error("[HYBRID-DETAIL] 모든 재랭커를 사용할 수 없어 원본 결과를 반환합니다.")
                     return search_result
-                
-                # 결과에 세부 점수 추가
-                logger.info("[HYBRID-DETAIL] 결과에 세부 점수 추가 시작")
-                combined_scores = []
-                
-                for i, passage in enumerate(reranked_passages):
-                    # 메타데이터 필드 확인 및 생성
-                    if "metadata" not in passage:
-                        passage["metadata"] = {}
-                    
-                    # 원본 메타데이터 유지하면서 세부 점수 추가
-                    metadata = passage.get("metadata", {})
-                    
-                    # FlashRank 점수 추가 - 상위 레벨과 메타데이터 모두에 추가
-                    flashrank_score = float(flashrank_scores[i]) if i < len(flashrank_scores) else 0.0
-                    passage["flashrank_score"] = flashrank_score
-                    metadata["flashrank_score"] = flashrank_score
-                    
-                    # MRC 점수 추가 - 상위 레벨과 메타데이터 모두에 추가
-                    mrc_score = float(mrc_scores[i]) if i < len(mrc_scores) else 0.0
-                    passage["mrc_score"] = mrc_score
-                    metadata["mrc_score"] = mrc_score
-                    
-                    # 최종 점수 계산 (이미 계산되어 있지만 로깅용으로 다시 계산)
-                    combined_score = (1.0 - self.hybrid_weight_mrc) * flashrank_score + self.hybrid_weight_mrc * mrc_score
-                    combined_scores.append(combined_score)
-                    
-                    # 하이브리드 점수도 명시적으로 추가 (score 필드와 동일)
-                    passage["hybrid_score"] = passage.get("score", combined_score)
-                    metadata["hybrid_score"] = passage.get("score", combined_score)
-                    
-                    # 메타데이터 업데이트
-                    passage["metadata"] = metadata
-                
-                # 상위 3개 결과의 점수 비교 로깅
-                if len(reranked_passages) >= 3:
-                    for i in range(3):
-                        passage = reranked_passages[i]
-                        fr_score = passage.get("flashrank_score", passage.get("metadata", {}).get("flashrank_score", 0.0))
-                        mrc_score = passage.get("mrc_score", passage.get("metadata", {}).get("mrc_score", 0.0))
-                        final_score = passage.get("score", passage.get("hybrid_score", 0.0))
-                        logger.info(f"[HYBRID-DETAIL] 상위 결과 #{i+1}: FlashRank={fr_score:.4f}, MRC={mrc_score:.4f}, 최종={final_score:.4f}")
-                        
-                        # 상세 로그 파일에 기록
-                        try:
-                            with open('/var/log/reranker/reranker_detail.log', 'a') as f:
-                                passage_preview = passage["text"][:100] + "..." if len(passage["text"]) > 100 else passage["text"]
-                                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] 상위 결과 #{i+1}: FlashRank={fr_score:.4f}, MRC={mrc_score:.4f}, 최종={final_score:.4f}\n")
-                                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] 패시지 #{i+1}: {passage_preview}\n")
-                        except Exception as e:
-                            logger.warning(f"[HYBRID-DETAIL] 상세 로그 파일 기록 실패: {str(e)}")
-                
-                # 결과 포맷팅
-                result = {
-                    "query": query,
-                    "results": reranked_passages,
-                    "total": len(reranked_passages),
-                    "reranked": True,
-                    "reranker_type": "hybrid",  # hybrid로 명확하게 표시
-                    "processing_time": time.time() - start_time,
-                    "flashrank_time": flashrank_time,
-                    "mrc_time": mrc_processing_time,
-                    "mrc_weight": self.hybrid_weight_mrc
-                }
-                
-                # 로그에 하이브리드 재랭킹 결과 기록
-                logger.info(f"[HYBRID-DETAIL] 하이브리드 재랭킹 완료: 결과 수={len(reranked_passages)}, MRC 가중치={self.hybrid_weight_mrc}")
-                logger.info(f"[HYBRID-DETAIL] 총 처리 시간: {result['processing_time']:.3f}초 (FlashRank: {flashrank_time:.3f}초, MRC: {mrc_processing_time:.3f}초)")
-                
-                # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
-                for passage in result["results"]:
-                    # 중요 점수 정보를 상위 레벨로 명확하게 복사
-                    if "score" in passage:
-                        passage["hybrid_score"] = passage["score"]  # 기본 score를 hybrid_score로 명확하게 복사
-                    
-                    # MRC 관련 필드 상위 레벨로 복사 (있는 경우)
-                    if "mrc_score" in passage:
-                        passage["mrc_score"] = passage["mrc_score"]
-                    if "mrc_answer" in passage:
-                        passage["mrc_answer"] = passage["mrc_answer"]
-                    if "mrc_char_ids" in passage:
-                        passage["mrc_char_ids"] = passage["mrc_char_ids"]
-                    
-                    # FlashRank 점수 상위 레벨로 복사 (있는 경우)
-                    if "flashrank_score" in passage:
-                        passage["flashrank_score"] = passage["flashrank_score"]
-                    
-                    # metadata 필드 처리
-                    if "metadata" in passage:
-                        # metadata 내부의 모든 필드를 상위 레벨로 복사
-                        for key, value in passage["metadata"].items():
-                            if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
-                                passage[key] = value
-                                
-                            # 중요 점수 정보는 상위 레벨로 명확하게 복사
-                            if key == "flashrank_score" and "flashrank_score" not in passage:
-                                passage["flashrank_score"] = value
-                            elif key == "mrc_score" and "mrc_score" not in passage:
-                                passage["mrc_score"] = value
-                            elif key == "original_score" and "original_score" not in passage:
-                                passage["original_score"] = value
-                        
-                        # metadata 필드 제거
-                        del passage["metadata"]
-                    
-                    # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
-                    if "mrc_score" in passage and "mrc_answer" not in passage:
-                        passage["mrc_answer"] = ""
-                    if "mrc_score" in passage and "mrc_char_ids" not in passage:
-                        passage["mrc_char_ids"] = []
-                
-                # 최종 응답에서 top_k개만 반환
-                if top_k and isinstance(top_k, int) and top_k > 0 and top_k < len(reranked_passages):
-                    original_count = len(reranked_passages)
-                    reranked_passages = reranked_passages[:top_k]
-                    result["results"] = reranked_passages
-                    result["filtered_count"] = original_count
-                    result["returned_count"] = top_k
-                    logger.info(f"[HYBRID-DETAIL] 최종 응답 필터링: 전체 {original_count}개 중 상위 {top_k}개만 반환")
-                    
-                    # 상세 로그 파일에 기록
-                    try:
-                        with open('/var/log/reranker/reranker_detail.log', 'a') as f:
-                            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] 최종 응답 필터링: 전체 {original_count}개 중 상위 {top_k}개만 반환\n")
-                    except Exception as e:
-                        logger.warning(f"[HYBRID-DETAIL] 상세 로그 파일 기록 실패: {str(e)}")
-                
-                # 최종 로그 기록
-                try:
-                    with open('/var/log/reranker/reranker_detail.log', 'a') as f:
-                        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] 하이브리드 재랭킹 완료: 총 처리 시간={result['processing_time']:.3f}초\n")
-                        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] 처리 세부 시간: FlashRank={flashrank_time:.3f}초, MRC={mrc_processing_time:.3f}초\n")
-                        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] 결과 수: {len(reranked_passages)}개, MRC 가중치: {self.hybrid_weight_mrc}\n")
-                        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] ===== 하이브리드 재랭킹 처리 완료 =====\n\n")
-                except Exception as e:
-                    logger.warning(f"[HYBRID-DETAIL] 상세 로그 파일 기록 실패: {str(e)}")
-                
-                return result
-                
+        
         except Exception as e:
             logger.error(f"Reranking failed: {str(e)}")
             # 오류 발생 시 원본 결과 반환

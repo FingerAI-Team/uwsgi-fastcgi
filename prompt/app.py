@@ -409,7 +409,7 @@ def enhanced_search():
             rerank_payload = {
                 "query": query,
                 "results": search_results.get("search_result", []),
-                "top_k": top_n,  # 상위 N개 결과만 요청
+                "top_k": int(top_n),  # 상위 N개 결과만 요청 (정수형으로 변환)
                 "mrc_weight": mrc_weight  # MRC 가중치 전달
             }
             
@@ -550,10 +550,7 @@ def enhanced_search():
                     result_item[key] = value
             
             # 3. 중요 메타데이터 필드 명시적으로 복사 (원본 결과에서)
-            if original_item:
-                for important_field in ["title", "author", "domain", "raw_doc_id", "passage_id", "tags", "info"]:
-                    if important_field in original_item:
-                        result_item[important_field] = original_item[important_field]
+            # (metadata 필드는 별도로 처리하므로 여기서는 제외)
             
             # 4. 점수 정보 설정 - 중복 제거하고 명확하게 구분
             # 기본 점수 설정

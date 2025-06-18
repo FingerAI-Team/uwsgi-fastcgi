@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 from urllib.parse import quote_plus
 import time
 import sys
+import uvicorn
+from api import app
 
 # 로깅 설정
 log_dir = "/var/log/reranker"
@@ -863,4 +865,21 @@ def batch_rerank():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000) 
+    try:
+        logger.info("Reranker 서비스 시작 중...")
+        
+        # 환경 변수 확인
+        config_path = os.environ.get("RERANKER_CONFIG", "/reranker/config.json")
+        logger.info(f"설정 파일 경로: {config_path}")
+        
+        # 설정 파일 존재 확인
+        if os.path.exists(config_path):
+            logger.info(f"설정 파일 확인됨: {config_path}")
+        else:
+            logger.warning(f"설정 파일이 존재하지 않음: {config_path}")
+        
+        # 서비스 시작
+        logger.info("FastAPI 서버 시작...")
+        uvicorn.run(app, host="0.0.0.0", port=9020)
+    except Exception as e:
+        logger.error(f"서비스 시작 중 오류 발생: {str(e)}", exc_info=True) 
