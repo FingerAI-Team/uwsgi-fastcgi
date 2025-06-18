@@ -83,7 +83,7 @@ class MRCReranker:
         
         # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
         for passage in reranked_passages:
-            if "metadata" in passage:
+            if "metadata" in passage and passage["metadata"] is not None:
                 # metadata 내부의 모든 필드를 상위 레벨로 복사
                 for key, value in passage["metadata"].items():
                     if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
@@ -92,9 +92,9 @@ class MRCReranker:
                 del passage["metadata"]
             
             # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
-            if "mrc_answer" not in passage and passage.get("mrc_score") is not None:
+            if "mrc_score" in passage and "mrc_answer" not in passage:
                 passage["mrc_answer"] = ""
-            if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
+            if "mrc_score" in passage and "mrc_char_ids" not in passage:
                 passage["mrc_char_ids"] = []
         
         return reranked_passages
@@ -112,13 +112,38 @@ class MRCReranker:
         Returns:
             재랭킹된 검색 결과
         """
+        # search_result가 None인 경우 처리 (오류 수정)
+        if search_result is None:
+            logger.warning("MRC 재랭킹: search_result가 None입니다.")
+            return {
+                "query": query,
+                "results": [],
+                "total": 0,
+                "reranked": False,
+                "reranker_type": "mrc",
+                "error": "검색 결과가 없습니다."
+            }
+            
         # 재랭킹 수행
         passages = search_result.get("results", [])
+        
+        # passages가 비어있는 경우 처리 (오류 수정)
+        if not passages:
+            logger.warning("MRC 재랭킹: 검색 결과가 비어 있습니다.")
+            return {
+                "query": query,
+                "results": [],
+                "total": 0,
+                "reranked": False,
+                "reranker_type": "mrc",
+                "error": "검색 결과가 비어 있습니다."
+            }
+            
         reranked_passages = self.rerank(query, passages, top_k)
         
         # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
         for passage in reranked_passages:
-            if "metadata" in passage:
+            if "metadata" in passage and passage["metadata"] is not None:
                 # metadata 내부의 모든 필드를 상위 레벨로 복사
                 for key, value in passage["metadata"].items():
                     if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
@@ -127,9 +152,9 @@ class MRCReranker:
                 del passage["metadata"]
             
             # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
-            if "mrc_answer" not in passage and passage.get("mrc_score") is not None:
+            if "mrc_score" in passage and "mrc_answer" not in passage:
                 passage["mrc_answer"] = ""
-            if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
+            if "mrc_score" in passage and "mrc_char_ids" not in passage:
                 passage["mrc_char_ids"] = []
         
         # 결과 포맷팅
@@ -218,10 +243,11 @@ class MRCReranker:
                 passage['metadata'] = {}
                 
             # 메타데이터에도 점수 정보 저장 (중복 저장으로 안전성 확보)
-            passage['metadata']['mrc_score'] = mrc_score
-            passage['metadata']['flashrank_score'] = flashrank_score
-            passage['metadata']['hybrid_score'] = hybrid_score
-            passage['metadata']['mrc_weight'] = weight_mrc
+            if passage['metadata'] is not None:  # metadata가 None이 아닌 경우에만 처리
+                passage['metadata']['mrc_score'] = mrc_score
+                passage['metadata']['flashrank_score'] = flashrank_score
+                passage['metadata']['hybrid_score'] = hybrid_score
+                passage['metadata']['mrc_weight'] = weight_mrc
             
             logger.debug(f"Passage {i}: flashrank={flashrank_score:.4f}, mrc={mrc_score:.4f}, hybrid={passage['hybrid_score']:.4f}")
         
@@ -230,7 +256,7 @@ class MRCReranker:
         
         # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
         for passage in reranked_passages:
-            if "metadata" in passage:
+            if "metadata" in passage and passage["metadata"] is not None:
                 # metadata 내부의 모든 필드를 상위 레벨로 복사
                 for key, value in passage["metadata"].items():
                     if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음

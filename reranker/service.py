@@ -215,6 +215,10 @@ class RerankerService:
             self.model_name = self.config.get("model_name", "BAAI/bge-reranker-large")
             self.batch_size = self._get_batch_size()
             
+            # cache_dir 먼저 정의 (오류 수정)
+            self.cache_dir = os.getenv("FLASHRANK_CACHE_DIR", self.config.get("cache_dir", "/reranker/models"))
+            self.max_length = int(os.getenv("FLASHRANK_MAX_LENGTH", self.config.get("max_length", 512)))
+            
             # GPU 사용 가능 여부 확인
             try:
                 import torch
@@ -320,9 +324,6 @@ class RerankerService:
             log_level_int = getattr(logging, log_level.upper(), logging.INFO)
             logger.setLevel(log_level_int)
             logger.info(f"Log level set to {log_level}")
-            
-            self.cache_dir = os.getenv("FLASHRANK_CACHE_DIR", self.config.get("cache_dir", "/reranker/models"))
-            self.max_length = int(os.getenv("FLASHRANK_MAX_LENGTH", self.config.get("max_length", 512)))
             
             # 배치 크기 설정
             self.batch_size = self._get_batch_size()
