@@ -649,6 +649,8 @@ class RerankerService:
             logger.warning("Using default configuration due to error")
             return default_config
     
+
+    
     def process_search_results(self, query: str, search_result: Dict[str, Any], top_k: int = 5) -> Dict[str, Any]:
         """
         Process search results with reranking
@@ -679,19 +681,30 @@ class RerankerService:
                 timestamps["last_time"] = now
                 logger.debug(f"Step '{name}' took {step_time*1000:.2f}ms (elapsed: {elapsed*1000:.2f}ms)")
             
-            # 모델이 초기화되지 않은 경우 MRC만 사용하거나 원본 결과를 반환
-            if self.ranker is None:
-                logger.warning("FlashRank reranker not initialized")
-                
-                # MRC가 활성화되어 있고 초기화되었다면 MRC만 사용
-                if self.mrc_enabled and self.mrc_reranker:
-                    logger.info("Using MRC reranker only since FlashRank is not available")
-                    return self.mrc_reranker.process_search_results(query, search_result, top_k)
-                
-                # 그렇지 않으면 원본 결과 반환
-                logger.warning("No rerankers available, returning original results")
-                return search_result
-                
+            # FlashRank와 MRC 초기화 상태에 따라 분기 처리
+            flashrank_initialized = self.ranker is not None
+            mrc_initialized = self.mrc_enabled and self.mrc_reranker is not None
+            
+            # FlashRank 초기화 상태 상세 로깅
+            if flashrank_initialized:
+                logger.info(f"[FLASHRANK-STATUS] FlashRank 초기화 성공: {type(self.ranker).__name__}")
+                # 모델 정보 로깅 시도
+                try:
+                    if hasattr(self.ranker, 'model'):
+                        model_name = getattr(self.ranker.model, 'name', 'Unknown')
+                        logger.info(f"[FLASHRANK-STATUS] FlashRank 모델: {model_name}")
+                    if hasattr(self.ranker, 'device'):
+                        logger.info(f"[FLASHRANK-STATUS] FlashRank 장치: {self.ranker.device}")
+                except Exception as e:
+                    logger.warning(f"[FLASHRANK-STATUS] FlashRank 모델 정보 로깅 실패: {str(e)}")
+            else:
+                logger.warning(f"[FLASHRANK-STATUS] FlashRank 초기화 실패: self.ranker is None")
+            
+            # MRC 초기화 상태 로깅
+            logger.info(f"[MRC-STATUS] MRC 활성화 상태: {self.mrc_enabled}, MRC 초기화 상태: {self.mrc_reranker is not None}")
+            
+            logger.info(f"Reranker 초기화 상태: FlashRank={flashrank_initialized}, MRC={mrc_initialized}")
+            
             # 결과가 없으면 빈 결과 반환
             if not search_result.get("results"):
                 logger.warning("No results to rerank")
@@ -718,170 +731,105 @@ class RerankerService:
             # 캐시 사용하지 않음 (디버깅 및 테스트용으로 비활성화)
             log_step("캐시 사용 안함")
             
-            # 재랭킹 메소드 결정 (환경변수로 제어 가능)
-            rerank_method = os.getenv("RERANK_METHOD", "auto").lower()
-            
-            # 'auto' 모드: MRC가 활성화되어 있으면 하이브리드, 아니면 FlashRank만 사용
-            if rerank_method == "auto":
-                rerank_method = "hybrid" if self.mrc_enabled and self.mrc_reranker else "flashrank"
+            # 재랭킹 메소드 결정
+            if flashrank_initialized and mrc_initialized:
+                # 1. 둘 다 초기화된 경우 - 하이브리드 재랭킹
+                logger.info("FlashRank와 MRC 모두 초기화됨 - 하이브리드 재랭킹 수행")
+                rerank_method = "hybrid"
+            elif flashrank_initialized and not mrc_initialized:
+                # 2. FlashRank만 초기화된 경우
+                logger.info("FlashRank만 초기화됨 - FlashRank 재랭킹 수행")
+                rerank_method = "flashrank"
+            elif not flashrank_initialized and mrc_initialized:
+                # 3. MRC만 초기화된 경우
+                logger.info("MRC만 초기화됨 - MRC 재랭킹 수행")
+                rerank_method = "mrc"
+            else:
+                # 4. 둘 다 초기화되지 않은 경우
+                logger.warning("모든 재랭커가 초기화되지 않음 - 원본 결과 반환")
+                # 원본 결과에 reranked=false 표시 추가
+                search_result["reranked"] = False
+                return search_result
             
             # 재랭킹 수행
-            if rerank_method == "mrc" and self.mrc_enabled and self.mrc_reranker:
+            if rerank_method == "mrc":
                 # MRC 방식만 사용
                 logger.info("MRC 방식으로 재랭킹 수행")
                 return self.mrc_reranker.process_search_results(query, search_result, top_k)
                 
-            elif rerank_method == "hybrid" and self.mrc_enabled and self.mrc_reranker:
+            elif rerank_method == "flashrank":
+                # FlashRank 방식만 사용
+                logger.info("[FLASHRANK-STATUS] FlashRank 방식으로 재랭킹 수행 시작")
+                try:
+                    result = self.perform_flashrank_reranking(query, passages, top_k, search_result)
+                    logger.info(f"[FLASHRANK-STATUS] FlashRank 재랭킹 성공: {len(result.get('results', []))}개 결과")
+                    return result
+                except Exception as e:
+                    logger.error(f"[FLASHRANK-STATUS] FlashRank 재랭킹 실패: {str(e)}", exc_info=True)
+                    # 실패 시 원본 결과 반환
+                    search_result["reranked"] = False
+                    search_result["reranker_type"] = "none"
+                    search_result["error"] = f"FlashRank 재랭킹 실패: {str(e)}"
+                    return search_result
+                
+            elif rerank_method == "hybrid":
                 # 하이브리드 방식 (FlashRank + MRC)
                 logger.info("[HYBRID-DETAIL] 하이브리드 방식으로 재랭킹 수행 시작")
                 logger.info(f"[HYBRID-DETAIL] MRC 모듈 활성화 상태: {self.mrc_enabled}, MRC 리랭커 객체 존재: {self.mrc_reranker is not None}")
                 
-                if not self.mrc_enabled or self.mrc_reranker is None:
-                    logger.error("[HYBRID-DETAIL] MRC 모듈이 비활성화되었거나 초기화되지 않았습니다. 하이브리드 재랭킹을 수행할 수 없습니다.")
-                    logger.error("[HYBRID-DETAIL] MRC 모델 파일이 올바르게 설치되었는지 확인하세요: /reranker/models/mrc/config.json, /reranker/models/mrc/model.ckpt")
-                    # FlashRank 방식으로 폴백
-                    logger.info("[HYBRID-DETAIL] FlashRank 방식으로 대체 수행합니다.")
-                    return self.perform_flashrank_reranking(query, passages, top_k, search_result)
-                
                 try:
-                    # FlashRank 재랭킹 수행 (FlashRank가 초기화되었을 경우만)
-                    flashrank_result = None
-                    flashrank_scores = []
-                    
-                    # FlashRank 시작 시간 기록
+                    # FlashRank 재랭킹 수행
                     flashrank_start_time = time.time()
+                    logger.info("[HYBRID-DETAIL] FlashRank 재랭킹 시작")
                     
-                    if self.ranker is not None:
-                        logger.info("[HYBRID-DETAIL] FlashRank 재랭킹 시작")
+                    # 상세 로그 파일에 기록
+                    try:
+                        with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] FlashRank 재랭킹 시작: 쿼리='{query}', 패시지 수={len(passages)}\n")
+                    except Exception as e:
+                        logger.error(f"로그 파일 기록 실패: {str(e)}")
+                    
+                    flashrank_result, flashrank_scores, flashrank_time = self._flashrank_rerank(query, passages, None, search_result)
+                    
+                    # FlashRank 처리 시간 계산
+                    flashrank_time = time.time() - flashrank_start_time
+                    logger.info(f"[HYBRID-DETAIL] FlashRank 재랭킹 완료: {flashrank_time:.3f}초")
+                    
+                    # flashrank_result가 딕셔너리인지 리스트인지 확인
+                    if isinstance(flashrank_result, dict) and "results" in flashrank_result:
+                        # 딕셔너리 형태로 반환된 경우
+                        flashrank_scores = [p.get("score", 0.0) for p in flashrank_result["results"]]
+                        logger.info(f"[HYBRID-DETAIL] FlashRank 재랭킹 완료 (딕셔너리 형태), 결과 수: {len(flashrank_scores)}")
                         
-                        # 상세 로그 파일에 기록
-                        try:
-                            with open('/var/log/reranker/reranker_detail.log', 'a') as f:
-                                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] FlashRank 재랭킹 시작: 쿼리='{query}', 패시지 수={len(passages)}\n")
-                        except Exception as e:
-                            logger.error(f"로그 파일 기록 실패: {str(e)}")
-                        
-                        try:
-                            flashrank_result, flashrank_scores, flashrank_time = self._flashrank_rerank(query, passages, None, search_result)
-                            
-                            # FlashRank 처리 시간 계산
-                            flashrank_time = time.time() - flashrank_start_time
-                            logger.info(f"[HYBRID-DETAIL] FlashRank 재랭킹 완료: {flashrank_time:.3f}초")
-                            
-                            # 상세 로그 파일에 기록
-                            try:
-                                with open('/var/log/reranker/reranker_detail.log', 'a') as f:
-                                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] FlashRank 재랭킹 완료: {flashrank_time:.3f}초\n")
-                            except Exception as e:
-                                logger.error(f"로그 파일 기록 실패: {str(e)}")
-                            
-                            # flashrank_result가 딕셔너리인지 리스트인지 확인
-                            if isinstance(flashrank_result, dict) and "results" in flashrank_result:
-                                # 딕셔너리 형태로 반환된 경우
-                                flashrank_scores = [p.get("score", 0.0) for p in flashrank_result["results"]]
-                                logger.info(f"[HYBRID-DETAIL] FlashRank 재랭킹 완료 (딕셔너리 형태), 결과 수: {len(flashrank_scores)}")
-                                
-                                # 점수 분포 로깅
-                                if flashrank_scores:
-                                    min_score = min(flashrank_scores)
-                                    max_score = max(flashrank_scores)
-                                    avg_score = sum(flashrank_scores) / len(flashrank_scores)
-                                    logger.info(f"[HYBRID-DETAIL] FlashRank 점수 분포: 최소={min_score:.4f}, 최대={max_score:.4f}, 평균={avg_score:.4f}")
-                                    
-                                    # 상위 3개 점수 로깅
-                                    top_scores = sorted(flashrank_scores, reverse=True)[:3]
-                                    logger.info(f"[HYBRID-DETAIL] FlashRank 상위 3개 점수: {[f'{score:.4f}' for score in top_scores]}")
-                            
-                            elif isinstance(flashrank_result, list):
-                                # 리스트 형태로 반환된 경우
-                                flashrank_scores = [p.get("score", 0.0) for p in flashrank_result]
-                                # 딕셔너리 형태로 변환
-                                flashrank_result = {
-                                    "query": query,
-                                    "results": flashrank_result,
-                                    "total": len(flashrank_result),
-                                    "reranked": True,
-                                    "reranker_type": "flashrank"
-                                }
-                                logger.info(f"[HYBRID-DETAIL] FlashRank 재랭킹 완료 (리스트 형태), 결과 수: {len(flashrank_scores)}")
-                            else:
-                                # 예상치 못한 형태인 경우
-                                logger.error(f"[HYBRID-DETAIL] 예상치 못한 FlashRank 결과 형식: {type(flashrank_result)}")
-                                # 안전하게 빈 리스트로 초기화
-                                flashrank_result = {
-                                    "query": query,
-                                    "results": passages,
-                                    "total": len(passages),
-                                    "reranked": False
-                                }
-                                flashrank_scores = [p.get("meta", {}).get("original_score", 0.5) for p in passages]
-                                
-                                # 상세 로그 파일에 기록
-                                try:
-                                    with open('/var/log/reranker/reranker_detail.log', 'a') as f:
-                                        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] 예상치 못한 FlashRank 결과 형식: {type(flashrank_result)}\n")
-                                except Exception as e:
-                                    logger.error(f"로그 파일 기록 실패: {str(e)}")
-                        except Exception as e:
-                            logger.error(f"[HYBRID-DETAIL] FlashRank 재랭킹 중 오류 발생: {str(e)}", exc_info=True)
-                            # 오류 발생 시 원본 결과 사용
-                            flashrank_result = {
-                                "query": query,
-                                "results": passages,
-                                "total": len(passages),
-                                "reranked": False
-                            }
-                            flashrank_scores = [p.get("meta", {}).get("original_score", 0.5) for p in passages]
-                            flashrank_time = 0.0
-                            
-                            # 상세 로그 파일에 기록
-                            try:
-                                with open('/var/log/reranker/reranker_detail.log', 'a') as f:
-                                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] FlashRank 재랭킹 오류: {str(e)}\n")
-                                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] 스택 트레이스:\n{traceback.format_exc()}\n")
-                            except Exception as log_error:
-                                logger.error(f"로그 파일 기록 실패: {str(log_error)}")
-                    else:
-                        logger.warning("[HYBRID-DETAIL] FlashRank 재랭커가 초기화되지 않아 MRC만 사용합니다")
-                        # FlashRank 결과가 없으면 원본 결과를 사용
+                        # 점수 분포 로깅
+                        if flashrank_scores:
+                            min_score = min(flashrank_scores)
+                            max_score = max(flashrank_scores)
+                            avg_score = sum(flashrank_scores) / len(flashrank_scores)
+                            logger.info(f"[HYBRID-DETAIL] FlashRank 점수 분포: 최소={min_score:.4f}, 최대={max_score:.4f}, 평균={avg_score:.4f}")
+                    
+                    elif isinstance(flashrank_result, list):
+                        # 리스트 형태로 반환된 경우
+                        flashrank_scores = [p.get("score", 0.0) for p in flashrank_result]
+                        # 딕셔너리 형태로 변환
                         flashrank_result = {
                             "query": query,
-                            "results": passages,
-                            "total": len(passages),
-                            "reranked": False
+                            "results": flashrank_result,
+                            "total": len(flashrank_result),
+                            "reranked": True,
+                            "reranker_type": "flashrank"
                         }
-                        # 원본 점수 또는 기본값 사용
-                        flashrank_scores = [p.get("meta", {}).get("original_score", 0.5) for p in passages]
-                        flashrank_time = 0.0
-                        
-                        # 상세 로그 파일에 기록
-                        try:
-                            with open('/var/log/reranker/reranker_detail.log', 'a') as f:
-                                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] FlashRank 재랭커가 초기화되지 않아 MRC만 사용합니다\n")
-                        except Exception as e:
-                            logger.error(f"로그 파일 기록 실패: {str(e)}")
+                        logger.info(f"[HYBRID-DETAIL] FlashRank 재랭킹 완료 (리스트 형태), 결과 수: {len(flashrank_scores)}")
                     
                     # 하이브리드 재랭킹 수행
                     logger.info("[HYBRID-DETAIL] MRC 하이브리드 재랭킹 시작")
                     hybrid_start_time = time.time()
-                    
-                    # MRC 리랭커 존재 여부 확인 (불필요한 예외 방지)
-                    if not hasattr(self.mrc_reranker, 'hybrid_rerank'):
-                        logger.error("[HYBRID-DETAIL] MRC 리랭커에 hybrid_rerank 메소드가 없습니다.")
-                        raise AttributeError("hybrid_rerank method missing in MRC reranker")
                     
                     # MRC 가중치 로깅
                     logger.info(f"[HYBRID-DETAIL] MRC 가중치: {self.hybrid_weight_mrc}, FlashRank 가중치: {1.0 - self.hybrid_weight_mrc}")
                     
                     # 하이브리드 재랭킹 수행 - 전체 검색 결과 사용 (제한 없이 모든 결과 처리)
                     logger.info(f"[HYBRID-DETAIL] MRC 재랭킹 시작: 총 {len(flashrank_result['results'])}개 항목 처리")
-                    
-                    # 처리 대상 항목 수 로깅
-                    try:
-                        with open('/var/log/reranker/reranker_detail.log', 'a') as f:
-                            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] MRC 재랭킹 시작: 총 {len(flashrank_result['results'])}개 항목 처리\n")
-                    except Exception as e:
-                        logger.error(f"로그 파일 기록 실패: {str(e)}")
                     
                     # 모든 결과 처리를 위해 top_k=None으로 설정
                     reranked_passages, mrc_scores = self.mrc_reranker.hybrid_rerank(
@@ -902,20 +850,67 @@ class RerankerService:
                         max_score = max(mrc_scores)
                         avg_score = sum(mrc_scores) / len(mrc_scores)
                         logger.info(f"[HYBRID-DETAIL] MRC 점수 분포: 최소={min_score:.4f}, 최대={max_score:.4f}, 평균={avg_score:.4f}")
+                    
+                    # 결과에 세부 점수 추가
+                    logger.info("[HYBRID-DETAIL] 결과에 세부 점수 추가 시작")
+                    combined_scores = []
+                    
+                    for i, passage in enumerate(reranked_passages):
+                        # 메타데이터 필드 확인 및 생성
+                        if "metadata" not in passage:
+                            passage["metadata"] = {}
                         
-                        # 상위 3개 점수 로깅
-                        top_indices = sorted(range(len(mrc_scores)), key=lambda i: mrc_scores[i], reverse=True)[:3]
-                        top_mrc_scores = [mrc_scores[i] for i in top_indices]
-                        logger.info(f"[HYBRID-DETAIL] MRC 상위 3개 점수: {[f'{score:.4f}' for score in top_mrc_scores]}")
+                        # 원본 메타데이터 유지하면서 세부 점수 추가
+                        metadata = passage.get("metadata", {})
                         
-                        # 상세 로그 파일에 기록
-                        try:
-                            with open('/var/log/reranker/reranker_detail.log', 'a') as f:
-                                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] MRC 하이브리드 재랭킹 완료: {mrc_processing_time:.3f}초\n")
-                                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] MRC 점수 분포: 최소={min_score:.4f}, 최대={max_score:.4f}, 평균={avg_score:.4f}\n")
-                                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] MRC 상위 3개 점수: {[f'{score:.4f}' for score in top_mrc_scores]}\n")
-                        except Exception as e:
-                            logger.warning(f"[HYBRID-DETAIL] 상세 로그 파일 기록 실패: {str(e)}")
+                        # FlashRank 점수 추가 - 상위 레벨과 메타데이터 모두에 추가
+                        flashrank_score = float(flashrank_scores[i]) if i < len(flashrank_scores) else 0.0
+                        passage["flashrank_score"] = flashrank_score
+                        metadata["flashrank_score"] = flashrank_score
+                        
+                        # MRC 점수 추가 - 상위 레벨과 메타데이터 모두에 추가
+                        mrc_score = float(mrc_scores[i]) if i < len(mrc_scores) else 0.0
+                        passage["mrc_score"] = mrc_score
+                        metadata["mrc_score"] = mrc_score
+                        
+                        # 최종 점수 계산 (이미 계산되어 있지만 로깅용으로 다시 계산)
+                        combined_score = (1.0 - self.hybrid_weight_mrc) * flashrank_score + self.hybrid_weight_mrc * mrc_score
+                        combined_scores.append(combined_score)
+                        
+                        # 하이브리드 점수도 명시적으로 추가 (score 필드와 동일)
+                        passage["hybrid_score"] = passage.get("score", combined_score)
+                        metadata["hybrid_score"] = passage.get("score", combined_score)
+                        
+                        # 메타데이터 업데이트
+                        passage["metadata"] = metadata
+                    
+                    # 결과 포맷팅
+                    result = {
+                        "query": query,
+                        "results": reranked_passages,
+                        "total": len(reranked_passages),
+                        "reranked": True,
+                        "reranker_type": "hybrid",  # hybrid로 명확하게 표시
+                        "processing_time": time.time() - start_time,
+                        "flashrank_time": flashrank_time,
+                        "mrc_time": mrc_processing_time,
+                        "mrc_weight": self.hybrid_weight_mrc
+                    }
+                    
+                    # 로그에 하이브리드 재랭킹 결과 기록
+                    logger.info(f"[HYBRID-DETAIL] 하이브리드 재랭킹 완료: 결과 수={len(reranked_passages)}, MRC 가중치={self.hybrid_weight_mrc}")
+                    logger.info(f"[HYBRID-DETAIL] 총 처리 시간: {result['processing_time']:.3f}초 (FlashRank: {flashrank_time:.3f}초, MRC: {mrc_processing_time:.3f}초)")
+                    
+                    # 최종 응답에서 top_k개만 반환
+                    if top_k and isinstance(top_k, int) and top_k > 0 and top_k < len(reranked_passages):
+                        original_count = len(reranked_passages)
+                        reranked_passages = reranked_passages[:top_k]
+                        result["results"] = reranked_passages
+                        result["filtered_count"] = original_count
+                        result["returned_count"] = top_k
+                        logger.info(f"[HYBRID-DETAIL] 최종 응답 필터링: 전체 {original_count}개 중 상위 {top_k}개만 반환")
+                    
+                    return result
                     
                 except Exception as e:
                     logger.error(f"[HYBRID-DETAIL] 하이브리드 재랭킹 중 오류 발생: {str(e)}", exc_info=True)
@@ -929,13 +924,153 @@ class RerankerService:
                         logger.warning(f"[HYBRID-DETAIL] 상세 로그 파일 오류 기록 실패: {str(log_error)}")
                     
                     # FlashRank가 초기화되었으면 FlashRank로 대체
-                    if self.ranker is not None:
-                        logger.error("[HYBRID-DETAIL] FlashRank 방식으로 대체 수행합니다.")
-                        return self.perform_flashrank_reranking(query, passages, top_k, search_result)
-                    else:
-                        # 둘 다 사용할 수 없으면 원본 결과 반환
-                        logger.error("[HYBRID-DETAIL] 모든 재랭커를 사용할 수 없어 원본 결과를 반환합니다.")
-                        return search_result
+                    logger.error("[HYBRID-DETAIL] FlashRank 방식으로 대체 수행합니다.")
+                    return self.perform_flashrank_reranking(query, passages, top_k, search_result)
+                
+            # 결과가 없으면 빈 결과 반환
+            if not search_result.get("results"):
+                logger.warning("No results to rerank")
+                return search_result
+            
+            # GPU 메모리 초기 상태 로깅
+            log_gpu_memory("재랭킹 시작")
+                
+            # 패시지 형식으로 변환
+            passages = self._convert_to_passages(search_result)
+            log_step("데이터 포맷 변환")
+            
+            # 캐시 사용하지 않음 (디버깅 및 테스트용으로 비활성화)
+            log_step("캐시 사용 안함")
+            
+            # 이미 위에서 초기화 상태를 확인했으므로 여기서는 하이브리드 재랭킹 수행
+            # 1. FlashRank와 MRC 모두 초기화된 경우 - 하이브리드 재랭킹 수행
+            try:
+                logger.info("[HYBRID-DETAIL] 하이브리드 방식으로 재랭킹 수행 시작")
+                
+                # 1. FlashRank 점수 계산
+                flashrank_start_time = time.time()
+                flashrank_result, flashrank_scores, flashrank_time = self._flashrank_rerank(query, passages, None, search_result)
+                flashrank_time = time.time() - flashrank_start_time
+                logger.info(f"[HYBRID-DETAIL] FlashRank 재랭킹 완료: {flashrank_time:.3f}초")
+                
+                # FlashRank 결과 형식 확인 및 표준화
+                if isinstance(flashrank_result, dict) and "results" in flashrank_result:
+                    # 딕셔너리 형태로 반환된 경우
+                    flashrank_scores = [p.get("score", 0.0) for p in flashrank_result["results"]]
+                    logger.info(f"[HYBRID-DETAIL] FlashRank 재랭킹 완료 (딕셔너리 형태), 결과 수: {len(flashrank_scores)}")
+                elif isinstance(flashrank_result, list):
+                    # 리스트 형태로 반환된 경우
+                    flashrank_scores = [p.get("score", 0.0) for p in flashrank_result]
+                    # 딕셔너리 형태로 변환
+                    flashrank_result = {
+                        "query": query,
+                        "results": flashrank_result,
+                        "total": len(flashrank_result),
+                        "reranked": True,
+                        "reranker_type": "flashrank"
+                    }
+                    logger.info(f"[HYBRID-DETAIL] FlashRank 재랭킹 완료 (리스트 형태), 결과 수: {len(flashrank_scores)}")
+                
+                # 2. MRC 하이브리드 재랭킹 수행
+                logger.info("[HYBRID-DETAIL] MRC 하이브리드 재랭킹 시작")
+                hybrid_start_time = time.time()
+                
+                # MRC 가중치 로깅
+                logger.info(f"[HYBRID-DETAIL] MRC 가중치: {self.hybrid_weight_mrc}, FlashRank 가중치: {1.0 - self.hybrid_weight_mrc}")
+                
+                # 하이브리드 재랭킹 수행 - 전체 검색 결과 사용 (제한 없이 모든 결과 처리)
+                logger.info(f"[HYBRID-DETAIL] MRC 재랭킹 시작: 총 {len(flashrank_result['results'])}개 항목 처리")
+                
+                # 모든 결과 처리를 위해 top_k=None으로 설정
+                reranked_passages, mrc_scores = self.mrc_reranker.hybrid_rerank(
+                    query, 
+                    flashrank_result["results"], 
+                    flashrank_scores, 
+                    weight_mrc=self.hybrid_weight_mrc,
+                    top_k=None,  # None으로 설정하여 모든 결과 처리
+                    return_mrc_scores=True  # MRC 점수도 함께 반환
+                )
+                mrc_processing_time = time.time() - hybrid_start_time
+                logger.info(f"[HYBRID-DETAIL] MRC 하이브리드 재랭킹 완료, 소요 시간: {mrc_processing_time:.3f}초, 결과 수: {len(reranked_passages)}")
+                
+                # 3. 결과 포맷팅
+                # 결과에 세부 점수 추가
+                logger.info("[HYBRID-DETAIL] 결과에 세부 점수 추가 시작")
+                for i, passage in enumerate(reranked_passages):
+                    # 메타데이터 필드 확인 및 생성
+                    if "metadata" not in passage:
+                        passage["metadata"] = {}
+                    
+                    # 원본 메타데이터 유지하면서 세부 점수 추가
+                    metadata = passage.get("metadata", {})
+                    
+                    # FlashRank 점수 추가 - 상위 레벨과 메타데이터 모두에 추가
+                    flashrank_score = float(flashrank_scores[i]) if i < len(flashrank_scores) else 0.0
+                    passage["flashrank_score"] = flashrank_score
+                    metadata["flashrank_score"] = flashrank_score
+                    
+                    # MRC 점수 추가 - 상위 레벨과 메타데이터 모두에 추가
+                    mrc_score = float(mrc_scores[i]) if i < len(mrc_scores) else 0.0
+                    passage["mrc_score"] = mrc_score
+                    metadata["mrc_score"] = mrc_score
+                    
+                    # 최종 점수 계산 (이미 계산되어 있지만 로깅용으로 다시 계산)
+                    combined_score = (1.0 - self.hybrid_weight_mrc) * flashrank_score + self.hybrid_weight_mrc * mrc_score
+                    
+                    # 하이브리드 점수도 명시적으로 추가 (score 필드와 동일)
+                    passage["hybrid_score"] = passage.get("score", combined_score)
+                    metadata["hybrid_score"] = passage.get("score", combined_score)
+                    
+                    # 메타데이터 업데이트
+                    passage["metadata"] = metadata
+                
+                # 결과 포맷팅
+                result = {
+                    "query": query,
+                    "results": reranked_passages,
+                    "total": len(reranked_passages),
+                    "reranked": True,
+                    "reranker_type": "hybrid",  # hybrid로 명확하게 표시
+                    "processing_time": time.time() - start_time,
+                    "flashrank_time": flashrank_time,
+                    "mrc_time": mrc_processing_time,
+                    "mrc_weight": self.hybrid_weight_mrc
+                }
+                
+                # 로그에 하이브리드 재랭킹 결과 기록
+                logger.info(f"[HYBRID-DETAIL] 하이브리드 재랭킹 완료: 결과 수={len(reranked_passages)}, MRC 가중치={self.hybrid_weight_mrc}")
+                logger.info(f"[HYBRID-DETAIL] 총 처리 시간: {result['processing_time']:.3f}초 (FlashRank: {flashrank_time:.3f}초, MRC: {mrc_processing_time:.3f}초)")
+                
+                # 최종 응답에서 top_k개만 반환
+                if top_k and isinstance(top_k, int) and top_k > 0 and top_k < len(reranked_passages):
+                    original_count = len(reranked_passages)
+                    reranked_passages = reranked_passages[:top_k]
+                    result["results"] = reranked_passages
+                    result["filtered_count"] = original_count
+                    result["returned_count"] = top_k
+                    logger.info(f"[HYBRID-DETAIL] 최종 응답 필터링: 전체 {original_count}개 중 상위 {top_k}개만 반환")
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"[HYBRID-DETAIL] 하이브리드 재랭킹 중 오류 발생: {str(e)}", exc_info=True)
+                
+                # 오류 상세 정보 로깅
+                try:
+                    with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [HYBRID-DETAIL] 하이브리드 재랭킹 오류: {str(e)}\n")
+                        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {traceback.format_exc()}\n")
+                except Exception as log_error:
+                    logger.warning(f"[HYBRID-DETAIL] 상세 로그 파일 오류 기록 실패: {str(log_error)}")
+                
+                # FlashRank가 초기화되었으면 FlashRank로 대체
+                if self.ranker is not None:
+                    logger.error("[HYBRID-DETAIL] FlashRank 방식으로 대체 수행합니다.")
+                    return self.perform_flashrank_reranking(query, passages, top_k, search_result)
+                else:
+                    # 둘 다 사용할 수 없으면 원본 결과 반환
+                    logger.error("[HYBRID-DETAIL] 모든 재랭커를 사용할 수 없어 원본 결과를 반환합니다.")
+                    return search_result
                 
                 # 결과에 세부 점수 추가
                 logger.info("[HYBRID-DETAIL] 결과에 세부 점수 추가 시작")
@@ -1205,25 +1340,29 @@ class RerankerService:
                     except Exception as e:
                         logger.error(f"로그 파일 기록 실패: {str(e)}")
                     
-                    # 결과 처리
+                                            # 결과 처리
                     for rank, scored_passage in enumerate(batch_results):
                         passage_id = int(scored_passage["id"])
                         original_passage = batch_passages[passage_id]
                         score = scored_passage["score"]
                         
                         # 원본 패시지에 점수 및 순위 정보 추가
-                        original_passage["score"] = score
+                        flashrank_score = score  # FlashRank 점수 저장
+                        original_passage["flashrank_score"] = flashrank_score  # FlashRank 점수 명시적으로 저장
+                        original_passage["score"] = flashrank_score  # FlashRank 모드에서는 flashrank_score를 최종 점수로 사용
                         original_passage["rank"] = rank + i  # 전체 순위 계산
                         
                         # 결과 및 점수 저장
                         reranked_results.append(original_passage)
-                        scores_dict[i + passage_id] = score
+                        scores_dict[i + passage_id] = flashrank_score
                     
                 except Exception as e:
                     logger.error(f"Batch processing failed: {str(e)}")
                     # 오류 발생 시 원본 패시지 사용
                     for idx, passage in enumerate(batch_passages):
-                        passage["score"] = 0.0
+                        flashrank_score = 0.0
+                        passage["flashrank_score"] = flashrank_score  # FlashRank 점수 명시적으로 저장
+                        passage["score"] = flashrank_score  # FlashRank 모드에서는 flashrank_score를 최종 점수로 사용
                         passage["rank"] = i + idx
                         reranked_results.append(passage)
             
@@ -1300,9 +1439,14 @@ class RerankerService:
             # 시작 시간 기록
             start_time = time.time()
             
+            # FlashRank 상태 확인 로깅
+            if self.ranker is None:
+                logger.error("[FLASHRANK-DETAIL] FlashRank 랭커가 초기화되지 않았습니다")
+                raise ValueError("FlashRank 랭커가 초기화되지 않았습니다")
+            
             # 대량 패시지 처리 최적화
             total_passages = len(passages)
-            logger.info(f"Reranking {total_passages} passages for query: '{query}'")
+            logger.info(f"[FLASHRANK-DETAIL] 재랭킹 시작: 쿼리='{query}', 패시지 수={total_passages}")
             
             # 배치 처리를 위한 최적 크기 계산 - 성능 최적화
             batch_size = min(64, total_passages)  # 배치 크기 제한
@@ -1396,18 +1540,22 @@ class RerankerService:
                         score = scored_passage["score"]
                         
                         # 원본 패시지에 점수 및 순위 정보 추가
-                        original_passage["score"] = score
+                        flashrank_score = score  # FlashRank 점수 저장
+                        original_passage["flashrank_score"] = flashrank_score  # FlashRank 점수 명시적으로 저장
+                        original_passage["score"] = flashrank_score  # FlashRank 모드에서는 flashrank_score를 최종 점수로 사용
                         original_passage["rank"] = rank + i  # 전체 순위 계산
                         
                         # 결과 및 점수 저장
                         reranked_results.append(original_passage)
-                        scores_dict[i + passage_id] = score
+                        scores_dict[i + passage_id] = flashrank_score
                     
                 except Exception as e:
                     logger.error(f"Batch processing failed: {str(e)}")
                     # 오류 발생 시 원본 패시지 사용
                     for idx, passage in enumerate(batch_passages):
-                        passage["score"] = 0.0
+                        flashrank_score = 0.0
+                        passage["flashrank_score"] = flashrank_score  # FlashRank 점수 명시적으로 저장
+                        passage["score"] = flashrank_score  # FlashRank 모드에서는 flashrank_score를 최종 점수로 사용
                         passage["rank"] = i + idx
                         reranked_results.append(passage)
             
@@ -1417,10 +1565,7 @@ class RerankerService:
             # 결과 정렬 및 상위 결과 선택
             if isinstance(reranked_results, list):
                 reranked_results.sort(key=lambda x: x.get("score", 0), reverse=True)
-                
-                # top_k 제한 제거 - 모든 결과 반환
-                # if top_k and isinstance(top_k, int) and top_k > 0:
-                #     reranked_results = reranked_results[:top_k]
+                logger.info(f"[FLASHRANK-DETAIL] 결과 정렬 완료: {len(reranked_results)}개 결과")
             
             # 결과 포맷팅
             if search_result:
@@ -1429,6 +1574,8 @@ class RerankerService:
                 search_result["reranked"] = True
                 search_result["reranker_type"] = "flashrank"
                 search_result["processing_time"] = processing_time
+                
+                logger.info(f"[FLASHRANK-DETAIL] 재랭킹 완료: {len(reranked_results)}개 결과, 처리 시간: {processing_time:.3f}초")
                 
                 # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
                 for passage in search_result["results"]:
@@ -1457,6 +1604,8 @@ class RerankerService:
                     "processing_time": processing_time
                 }
                 
+                logger.info(f"[FLASHRANK-DETAIL] 재랭킹 완료 (새 결과 생성): {len(reranked_results)}개 결과, 처리 시간: {processing_time:.3f}초")
+                
                 # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
                 for passage in result["results"]:
                     if "metadata" in passage:
@@ -1475,8 +1624,20 @@ class RerankerService:
                 
                 return result
         except Exception as e:
-            logger.error(f"Error in perform_flashrank_reranking: {str(e)}", exc_info=True)
+            logger.error(f"[FLASHRANK-ERROR] FlashRank 재랭킹 중 오류 발생: {str(e)}", exc_info=True)
+            # 오류 상세 정보 로깅
+            try:
+                with open('/var/log/reranker/reranker_detail.log', 'a') as f:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - [FLASHRANK-ERROR] 재랭킹 오류: {str(e)}\n")
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {traceback.format_exc()}\n")
+            except Exception as log_error:
+                logger.warning(f"[FLASHRANK-ERROR] 상세 로그 파일 오류 기록 실패: {str(log_error)}")
+                
             if search_result:
+                # 오류 정보 추가
+                search_result["reranked"] = False
+                search_result["reranker_type"] = "none"
+                search_result["error"] = f"FlashRank 재랭킹 실패: {str(e)}"
                 return search_result
             else:
-                return passages 
+                return passages

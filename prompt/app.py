@@ -278,7 +278,7 @@ def enhanced_search():
     try:
         # 메타데이터 추적을 위한 로그 파일 설정
         metadata_logger = logging.getLogger("metadata-tracer")
-        metadata_logger.setLevel(logging.DEBUG)
+        metadata_logger.setLevel(logging.INFO)
         
         # 기존 핸들러 제거 (중복 방지)
         for handler in metadata_logger.handlers[:]:
@@ -327,7 +327,6 @@ def enhanced_search():
             top_n = top_m
             
         logger.info(f"검색 파라미터: query='{query}', top_m={top_m}, top_n={top_n}, threshold={threshold}, mrc_weight={mrc_weight}")
-        metadata_logger.info(f"검색 파라미터: query='{query}', top_m={top_m}, top_n={top_n}, threshold={threshold}, mrc_weight={mrc_weight}")
             
         # 1. RAG 서비스 호출하여 문서 검색
         logger.info(f"RAG 서비스 호출 준비: endpoint={RAG_ENDPOINT}/search")
@@ -349,7 +348,6 @@ def enhanced_search():
                 logger.info(f"추가 검색 파라미터: {param}={data[param]}")
         
         logger.info(f"RAG 검색 요청: params={json.dumps(search_params, ensure_ascii=False)}")
-        metadata_logger.info(f"RAG 검색 요청 파라미터: {json.dumps(search_params, ensure_ascii=False)}")
         
         # RAG 요청 시작 시간
         rag_start_time = datetime.now()
@@ -357,7 +355,6 @@ def enhanced_search():
         rag_time = (datetime.now() - rag_start_time).total_seconds()
         
         logger.info(f"RAG 응답 코드: {search_response.status_code}, 소요 시간: {rag_time:.3f}초")
-        metadata_logger.info(f"RAG 응답 코드: {search_response.status_code}, 소요 시간: {rag_time:.3f}초")
         
         if search_response.status_code != 200:
             logger.error(f"RAG 검색 오류 응답: {search_response.text}")
@@ -365,24 +362,10 @@ def enhanced_search():
             
         search_results = search_response.json()
         logger.info(f"RAG 검색 결과 수: {len(search_results.get('search_result', []))}")
-        logger.info(f"RAG 응답 구조: {json.dumps({k: type(v).__name__ for k, v in search_results.items()}, ensure_ascii=False)}")
-        
-        # 메타데이터 추적을 위한 상세 로깅
-        metadata_logger.info(f"RAG 검색 결과 수: {len(search_results.get('search_result', []))}")
-        metadata_logger.info(f"RAG 응답 구조: {json.dumps({k: type(v).__name__ for k, v in search_results.items()}, ensure_ascii=False)}")
-        
-        # domain_results 확인 로깅
-        if "domain_results" in search_results:
-            logger.info(f"domain_results 키 존재: {list(search_results['domain_results'].keys())}")
-            metadata_logger.info(f"domain_results 키 존재: {list(search_results['domain_results'].keys())}")
-        else:
-            logger.warning("domain_results 키가 RAG 응답에 없습니다.")
-            metadata_logger.warning("domain_results 키가 RAG 응답에 없습니다.")
         
         # 검색 결과가 없는 경우
         if not search_results.get("search_result"):
             logger.warning("검색 결과가 없습니다")
-            metadata_logger.warning("검색 결과가 없습니다")
             return jsonify({
                 "query": query,
                 "top_m": top_m,
@@ -398,139 +381,154 @@ def enhanced_search():
             if "doc_id" in item:
                 original_results_by_id[item["doc_id"]] = item
                 
-                # 로깅 (처음 3개만)
-                if len(original_results_by_id) <= 3:
-                    logger.info(f"원본 결과 매핑: doc_id={item['doc_id']}, fields={list(item.keys())}")
-                    metadata_logger.info(f"원본 결과 매핑: doc_id={item['doc_id']}, fields={list(item.keys())}")
-                    
-                    # 메타데이터 추적을 위한 상세 로깅
-                    metadata_logger.debug(f"원본 결과 상세 내용: doc_id={item['doc_id']}, 내용={json.dumps(item, ensure_ascii=False)}")
-        
         # 검색 결과에 메타데이터 보존 확인 및 처리
-        metadata_logger.info("=== RAG 검색 결과 메타데이터 처리 시작 ===")
+        logger.info("RAG 검색 결과 메타데이터 처리 시작")
         for idx, item in enumerate(search_results.get("search_result", [])):
-            # 메타데이터 처리 전 상태 로깅
-            if idx < 3:  # 처음 3개 항목만 상세 로깅
-                metadata_logger.debug(f"메타데이터 처리 전 항목 {idx}: {json.dumps({k: v for k, v in item.items() if k != 'text'}, ensure_ascii=False)}")
-            
             # 메타데이터 필드 생성 (없는 경우)
             if "metadata" not in item:
                 item["metadata"] = {}
-                metadata_logger.info(f"항목 {idx}: metadata 필드 생성됨")
                 
             # 메타데이터에 주요 필드 복사
             for field in ["title", "author", "tags", "info", "domain", "doc_id", "raw_doc_id", "passage_id"]:
                 if field in item and item[field] is not None:
                     item["metadata"][field] = item[field]
-                    if idx < 3:  # 처음 3개 항목만 상세 로깅
-                        metadata_logger.debug(f"항목 {idx}: 필드 '{field}' 메타데이터에 복사됨: {item[field]}")
             
             # 원본 점수 저장
             if "score" in item:
                 item["metadata"]["original_score"] = item["score"]
-                if idx < 3:
-                    metadata_logger.debug(f"항목 {idx}: 원본 점수 저장됨: {item['score']}")
                 
             # 인덱스 저장
             item["position"] = idx
+        
+        # 재랭킹 수행
+        try:
+            logger.info(f"하이브리드 재랭킹 요청 시작: 쿼리='{query}', 결과 수={len(search_results.get('search_result', []))}개")
+            rerank_start_time = datetime.now()
             
-            # 간단한 로깅
-            if idx < 3:  # 처음 3개 항목만 로깅
-                logger.info(f"검색 결과 {idx}번 메타데이터: {json.dumps(item.get('metadata', {}), ensure_ascii=False)}")
-                metadata_logger.info(f"검색 결과 {idx}번 메타데이터 처리 후: {json.dumps(item.get('metadata', {}), ensure_ascii=False)}")
-        
-        # 2. Reranker 서비스 호출 - 하이브리드 재랭킹 사용
-        logger.info(f"Reranker 서비스 호출 준비: endpoint={RERANKER_ENDPOINT}/hybrid-rerank")
-        metadata_logger.info("=== Reranker 서비스 호출 준비 ===")
-        
-        rerank_data = {
-            "query": query,
-            "results": search_results.get("search_result", [])
-        }
-        
-        # 메타데이터 추적을 위한 상세 로깅
-        metadata_logger.debug(f"Reranker 요청 데이터 구조: {json.dumps({k: type(v).__name__ for k, v in rerank_data.items()}, ensure_ascii=False)}")
-        if len(rerank_data['results']) > 0:
-            sample_item = rerank_data['results'][0]
-            metadata_logger.debug(f"Reranker 요청 첫 번째 항목 구조: {json.dumps({k: type(v).__name__ for k, v in sample_item.items()}, ensure_ascii=False)}")
-            metadata_logger.debug(f"Reranker 요청 첫 번째 항목 메타데이터: {json.dumps(sample_item.get('metadata', {}), ensure_ascii=False)}")
-        
-        # 하이브리드 재랭킹 파라미터 설정
-        rerank_params = {
-            "top_k": top_n,
-            "mrc_weight": mrc_weight
-        }
-        
-        logger.info(f"Reranker 요청: params={json.dumps(rerank_params, ensure_ascii=False)}")
-        metadata_logger.info(f"Reranker 요청 파라미터: {json.dumps(rerank_params, ensure_ascii=False)}")
-        
-        # Reranker 요청 시작 시간
-        rerank_start_time = datetime.now()
-        rerank_response = requests.post(
-            f"{RERANKER_ENDPOINT}/hybrid-rerank",
-            params=rerank_params,
-            json=rerank_data
-        )
-        rerank_time = (datetime.now() - rerank_start_time).total_seconds()
-        
-        logger.info(f"Reranker 응답 코드: {rerank_response.status_code}, 소요 시간: {rerank_time:.3f}초")
-        metadata_logger.info(f"Reranker 응답 코드: {rerank_response.status_code}, 소요 시간: {rerank_time:.3f}초")
-        
-        if rerank_response.status_code != 200:
-            logger.error(f"Reranker 오류 응답: {rerank_response.text}")
-            metadata_logger.error(f"Reranker 오류 응답: {rerank_response.text}")
-            return jsonify({"error": "문서 재순위화 중 오류가 발생했습니다"}), 500
+            # 재랭킹 요청 구성
+            rerank_payload = {
+                "query": query,
+                "results": search_results.get("search_result", []),
+                "top_k": top_n,  # 상위 N개 결과만 요청
+                "mrc_weight": mrc_weight  # MRC 가중치 전달
+            }
             
-        reranked_results = rerank_response.json()
-        logger.info(f"재순위화된 문서 수: {len(reranked_results.get('results', []))}")
-        logger.info(f"Reranker 응답 구조: {json.dumps({k: type(v).__name__ for k, v in reranked_results.items()}, ensure_ascii=False)}")
-        
-        # 메타데이터 추적을 위한 상세 로깅
-        metadata_logger.info(f"재순위화된 문서 수: {len(reranked_results.get('results', []))}")
-        metadata_logger.info(f"Reranker 응답 구조: {json.dumps({k: type(v).__name__ for k, v in reranked_results.items()}, ensure_ascii=False)}")
-        
-        # Reranker 결과 샘플 확인
-        metadata_logger.info("=== Reranker 응답 메타데이터 확인 ===")
-        if reranked_results.get("results") and len(reranked_results.get("results")) > 0:
-            sample_result = reranked_results.get("results")[0]
-            logger.info(f"Reranker 결과 샘플: {json.dumps({k: v for k, v in sample_result.items() if k != 'text'}, ensure_ascii=False)}")
-            metadata_logger.info(f"Reranker 결과 샘플: {json.dumps({k: v for k, v in sample_result.items() if k != 'text'}, ensure_ascii=False)}")
-            
-            if "metadata" in sample_result:
-                logger.info(f"metadata 구조: {json.dumps(sample_result['metadata'], ensure_ascii=False)}")
-                metadata_logger.info(f"metadata 구조: {json.dumps(sample_result['metadata'], ensure_ascii=False)}")
-            else:
-                logger.warning("metadata 필드가 Reranker 결과에 없습니다")
-                metadata_logger.warning("metadata 필드가 Reranker 결과에 없습니다 - 메타데이터 누락 문제 발생!")
+            # 재랭킹 요청 전송
+            try:
+                rerank_response = requests.post(
+                    f"{RERANKER_ENDPOINT}/hybrid-rerank",
+                    json=rerank_payload,
+                    timeout=30
+                )
                 
-                # 메타데이터 누락 상황에 대한 상세 로깅
-                metadata_logger.error("=== 메타데이터 누락 문제 발생 ===")
-                metadata_logger.error(f"원본 요청 데이터 구조: {json.dumps({k: type(v).__name__ for k, v in rerank_data.items()}, ensure_ascii=False)}")
-                metadata_logger.error(f"응답 데이터 구조: {json.dumps({k: type(v).__name__ for k, v in reranked_results.items()}, ensure_ascii=False)}")
-                metadata_logger.error(f"첫 번째 결과 항목 구조: {json.dumps({k: type(v).__name__ for k, v in sample_result.items()}, ensure_ascii=False)}")
-                metadata_logger.error(f"첫 번째 결과 항목 내용: {json.dumps(sample_result, ensure_ascii=False)}")
+                # 응답 상태 코드 확인
+                if rerank_response.status_code == 200:
+                    logger.info(f"하이브리드 재랭킹 응답 성공: 상태 코드={rerank_response.status_code}")
+                    reranked_results = rerank_response.json()
+                    
+                    # 재랭킹 결과 검증
+                    if "results" in reranked_results:
+                        result_count = len(reranked_results.get("results", []))
+                        logger.info(f"하이브리드 재랭킹 결과 수: {result_count}개")
+                        
+                        # 재랭킹 타입 및 상태 확인
+                        reranked = reranked_results.get("reranked", False)
+                        reranker_type = reranked_results.get("reranker_type", "unknown")
+                        logger.info(f"재랭킹 상태: reranked={reranked}, reranker_type={reranker_type}")
+                        
+                        # FlashRank 초기화 상태 확인을 위한 추가 로깅
+                        if not reranked:
+                            logger.warning(f"[FLASHRANK-INIT-CHECK] 재랭킹이 수행되지 않았습니다. 재랭커 타입: {reranker_type}")
+                            if "error" in reranked_results:
+                                logger.error(f"[FLASHRANK-INIT-CHECK] 재랭킹 오류 발생: {reranked_results['error']}")
+                        elif reranker_type == "flashrank":
+                            logger.info(f"[FLASHRANK-INIT-CHECK] FlashRank 초기화 성공 확인됨 (재랭커 타입: {reranker_type})")
+                        elif reranker_type == "hybrid":
+                            logger.info(f"[FLASHRANK-INIT-CHECK] FlashRank 및 MRC 초기화 성공 확인됨 (재랭커 타입: {reranker_type})")
+                        elif reranker_type == "mrc":
+                            logger.info(f"[FLASHRANK-INIT-CHECK] MRC만 초기화 성공, FlashRank 초기화 실패 가능성 있음 (재랭커 타입: {reranker_type})")
+                        else:
+                            logger.warning(f"[FLASHRANK-INIT-CHECK] 알 수 없는 재랭커 타입: {reranker_type}")
+                        
+                        # FlashRank 관련 정보 확인
+                        if "error" in reranked_results:
+                            logger.error(f"재랭킹 오류 발생: {reranked_results['error']}")
+                        
+                        # 재랭킹 결과에 FlashRank 점수가 있는지 확인
+                        if result_count > 0:
+                            first_result = reranked_results["results"][0]
+                            has_flashrank = "flashrank_score" in first_result
+                            has_mrc = "mrc_score" in first_result
+                            has_hybrid = "hybrid_score" in first_result
+                            logger.info(f"[FLASHRANK-INIT-CHECK] 점수 필드 확인: flashrank_score={has_flashrank}, mrc_score={has_mrc}, hybrid_score={has_hybrid}")
+                            
+                            # 점수 값 로깅
+                            if has_flashrank:
+                                flashrank_score = first_result.get("flashrank_score", 0)
+                                logger.info(f"[FLASHRANK-INIT-CHECK] 첫 번째 결과의 FlashRank 점수: {flashrank_score}")
+                            if has_mrc:
+                                mrc_score = first_result.get("mrc_score", 0)
+                                logger.info(f"[FLASHRANK-INIT-CHECK] 첫 번째 결과의 MRC 점수: {mrc_score}")
+                            if has_hybrid:
+                                hybrid_score = first_result.get("hybrid_score", 0)
+                                logger.info(f"[FLASHRANK-INIT-CHECK] 첫 번째 결과의 하이브리드 점수: {hybrid_score}")
+                    else:
+                        logger.warning("재랭킹 결과에 'results' 필드가 없습니다")
+                else:
+                    logger.error(f"하이브리드 재랭킹 응답 실패: 상태 코드={rerank_response.status_code}, 응답={rerank_response.text}")
+                    # 실패 시 원본 결과 사용
+                    reranked_results = {
+                        "query": query,
+                        "results": search_results.get("search_result", []),
+                        "total": len(search_results.get("search_result", [])),
+                        "reranked": False,
+                        "reranker_type": "none",
+                        "error": f"재랭킹 서비스 응답 실패: {rerank_response.status_code}"
+                    }
+            except requests.RequestException as e:
+                logger.error(f"하이브리드 재랭킹 요청 실패: {str(e)}")
+                # 요청 실패 시 원본 결과 사용
+                reranked_results = {
+                    "query": query,
+                    "results": search_results.get("search_result", []),
+                    "total": len(search_results.get("search_result", [])),
+                    "reranked": False,
+                    "reranker_type": "none",
+                    "error": f"재랭킹 서비스 요청 실패: {str(e)}"
+                }
+            
+            # 재랭킹 시간 계산
+            rerank_time = (datetime.now() - rerank_start_time).total_seconds()
+            logger.info(f"재랭킹 완료: {rerank_time:.3f}초")
+        except Exception as e:
+            logger.error(f"재랭킹 처리 중 예외 발생: {str(e)}", exc_info=True)
+            # 예외 발생 시 원본 결과 사용
+            reranked_results = {
+                "query": query,
+                "results": search_results.get("search_result", []),
+                "total": len(search_results.get("search_result", [])),
+                "reranked": False,
+                "reranker_type": "none",
+                "error": f"재랭킹 처리 중 예외 발생: {str(e)}"
+            }
+            rerank_time = 0
         
         # 3. 결과 처리 및 응답 포맷팅
         processed_results = []
-        metadata_logger.info("=== 결과 처리 및 응답 포맷팅 시작 ===")
-        
+        logger.info("결과 처리 및 응답 포맷팅 시작")
+
+        # 재랭킹 직후의 결과 수 저장 (임계치 필터링 전)
+        reranked_count = len(reranked_results.get("results", []))
+        logger.info(f"재랭킹 직후 결과 수: {reranked_count}")
+
         # Reranker 결과 처리
         for idx, item in enumerate(reranked_results.get("results", [])):
-            # 메타데이터 추적을 위한 상세 로깅 (처음 3개만)
-            if idx < 3:
-                metadata_logger.debug(f"처리 전 결과 항목 {idx}: {json.dumps({k: v for k, v in item.items() if k != 'text'}, ensure_ascii=False)}")
-                if "metadata" in item:
-                    metadata_logger.debug(f"항목 {idx}의 메타데이터: {json.dumps(item['metadata'], ensure_ascii=False)}")
-                else:
-                    metadata_logger.warning(f"항목 {idx}에 메타데이터 필드가 없습니다")
-            
             # 점수 확인
             rerank_score = item.get("score", 0)
             
             # 임계치 필터링
             if rerank_score < threshold:
                 logger.info(f"임계치({threshold}) 미만 결과 필터링: doc_id={item.get('doc_id', 'unknown')}, score={rerank_score}")
-                metadata_logger.info(f"임계치({threshold}) 미만 결과 필터링: doc_id={item.get('doc_id', 'unknown')}, score={rerank_score}")
                 continue
             
             # 결과 아이템 초기화
@@ -541,94 +539,41 @@ def enhanced_search():
             original_item = None
             if doc_id and doc_id in original_results_by_id:
                 original_item = original_results_by_id[doc_id]
-                # 원본 검색 결과의 모든 필드 복사 (metadata와 점수 관련 필드 제외)
+                # 원본 검색 결과의 모든 필드 복사 (점수 관련 필드 제외)
                 for key, value in original_item.items():
-                    if key not in ["metadata", "score", "flashrank_score", "mrc_score", "hybrid_score"]:
+                    if key not in ["score", "flashrank_score", "mrc_score", "hybrid_score"]:
                         result_item[key] = value
-                logger.debug(f"원본 검색 결과에서 필드 복사: doc_id={doc_id}")
-                
-                if idx < 3:  # 처음 3개 항목만 상세 로깅
-                    metadata_logger.debug(f"원본 검색 결과에서 필드 복사: doc_id={doc_id}, 복사된 필드={[k for k, v in original_item.items() if k not in ['metadata', 'score', 'flashrank_score', 'mrc_score', 'hybrid_score']]}")
             
-            # 2. 재랭킹 결과의 필드 복사 (원본 덮어쓰기, 메타데이터와 점수 관련 필드 제외)
+            # 2. 재랭킹 결과의 필드 복사 (원본 덮어쓰기, 점수 관련 필드 제외)
             for key, value in item.items():
-                if key not in ["metadata", "meta", "score", "flashrank_score", "mrc_score", "hybrid_score", "rerank_score"]:
+                if key not in ["score", "flashrank_score", "mrc_score", "hybrid_score", "rerank_score"]:
                     result_item[key] = value
             
-            # 3. 점수 정보 설정 - 중복 제거하고 명확하게 구분
-            # 하이브리드 점수만 기본 score로 사용 (rerank_score는 별도 필드로)
-            hybrid_score = item.get("score", 0)
-            result_item["score"] = hybrid_score  # 기본 점수는 하이브리드 점수
+            # 3. 중요 메타데이터 필드 명시적으로 복사 (원본 결과에서)
+            if original_item:
+                for important_field in ["title", "author", "domain", "raw_doc_id", "passage_id", "tags", "info"]:
+                    if important_field in original_item:
+                        result_item[important_field] = original_item[important_field]
             
-            # rerank_position은 유지
+            # 4. 점수 정보 설정 - 중복 제거하고 명확하게 구분
+            # 기본 점수 설정
+            result_item["score"] = item.get("score", 0)  # 기본 점수
             result_item["rerank_position"] = idx
             
             # 원본 점수 정보 (있는 경우)
             if original_item and "score" in original_item:
                 result_item["original_score"] = original_item["score"]
             
-            # 중요 점수 정보 처리 - 직접 필드에서 우선 확인
-            # 하이브리드 점수 (score를 hybrid_score로 명확하게 복사)
-            result_item["hybrid_score"] = hybrid_score
-            
-            # FlashRank 점수
-            if "flashrank_score" in item:
-                result_item["flashrank_score"] = item["flashrank_score"]
-                
-            # MRC 점수
-            if "mrc_score" in item:
-                result_item["mrc_score"] = item["mrc_score"]
-                
-            # MRC 관련 필드
-            if "mrc_answer" in item:
-                result_item["mrc_answer"] = item["mrc_answer"]
-            if "mrc_char_ids" in item:
-                result_item["mrc_char_ids"] = item["mrc_char_ids"]
-            
-            # 하이브리드 재랭킹 점수 정보 (메타데이터에 있는 경우)
-            if "metadata" in item:
-                # 메타데이터에서 점수 정보 확인 (직접 필드에 없는 경우에만)
-                if "flashrank_score" in item["metadata"] and "flashrank_score" not in result_item:
-                    result_item["flashrank_score"] = item["metadata"]["flashrank_score"]
-                    logger.info(f"항목 {idx}에 flashrank_score 추가: {item['metadata']['flashrank_score']}")
-                if "mrc_score" in item["metadata"] and "mrc_score" not in result_item:
-                    result_item["mrc_score"] = item["metadata"]["mrc_score"]
-                    logger.info(f"항목 {idx}에 mrc_score 추가: {item['metadata']['mrc_score']}")
-                if "hybrid_score" in item["metadata"] and "hybrid_score" not in result_item:
-                    result_item["hybrid_score"] = item["metadata"]["hybrid_score"]
-                    logger.info(f"항목 {idx}에 hybrid_score 추가: {item['metadata']['hybrid_score']}")
-                
-                # MRC 관련 필드 (메타데이터에 있는 경우)
-                if "mrc_answer" in item["metadata"] and "mrc_answer" not in result_item:
-                    result_item["mrc_answer"] = item["metadata"]["mrc_answer"]
-                if "mrc_char_ids" in item["metadata"] and "mrc_char_ids" not in result_item:
-                    result_item["mrc_char_ids"] = item["metadata"]["mrc_char_ids"]
-                    
-                # 메타데이터 복사
-                result_item["metadata"] = item["metadata"]
-                
-                if idx < 3:  # 처음 3개 항목만 상세 로깅
-                    metadata_logger.debug(f"항목 {idx}에 메타데이터 복사됨: {json.dumps(item['metadata'], ensure_ascii=False)}")
-            else:
-                # 메타데이터가 없는 경우 - 문제 상황
-                metadata_logger.warning(f"항목 {idx}에 메타데이터 필드가 없어 새로 생성합니다")
-                result_item["metadata"] = {}
-                
-                # 기본 필드 복구 시도
-                for field in ["doc_id", "passage_id"]:
-                    if field in item:
-                        result_item["metadata"][field] = item[field]
-                        metadata_logger.debug(f"항목 {idx}에 {field} 필드를 메타데이터로 복구: {item[field]}")
-                
-                # 직접 필드에서 점수 정보 확인 (이미 위에서 처리했으므로 중복 코드 제거)
+            # 재랭킹 점수 정보 복사 (있는 경우에만)
+            for score_field in ["hybrid_score", "flashrank_score", "mrc_score", "mrc_answer", "mrc_char_ids"]:
+                if score_field in item:
+                    result_item[score_field] = item[score_field]
             
             # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
             if "mrc_score" in result_item and "mrc_answer" not in result_item:
                 result_item["mrc_answer"] = ""
-                metadata_logger.debug(f"항목 {idx}에 빈 mrc_answer 필드 추가")
             if "mrc_score" in result_item and "mrc_char_ids" not in result_item:
                 result_item["mrc_char_ids"] = []
-                metadata_logger.debug(f"항목 {idx}에 빈 mrc_char_ids 필드 추가")
             
             # id 필드 처리 - 원본 id만 보존하고 새 id는 생성하지 않음
             if "id" in result_item:
@@ -636,76 +581,11 @@ def enhanced_search():
                 # id 필드 제거 (rerank_position으로 대체)
                 del result_item["id"]
             
-            # 4. 메타데이터 구성 - 원본 검색 결과의 모든 메타데이터 포함
-            metadata = {}
-            
-            # 원본 검색 결과의 메타데이터 필드들
-            metadata_fields = [
-                "title", "author", "domain", "raw_doc_id", "passage_id", 
-                "tags", "info", "created_at", "modified_at", "link", "og_image", "og_author"
-            ]
-            
-            # 원본 검색 결과에서 메타데이터 수집
-            if original_item:
-                # 기본 메타데이터 필드 복사
-                for field in metadata_fields:
-                    if field in original_item:
-                        metadata[field] = original_item[field]
-                
-                # tags와 info는 객체일 수 있으므로 별도 처리
-                for nested_field in ["tags", "info"]:
-                    if nested_field in original_item and isinstance(original_item[nested_field], dict):
-                        metadata[nested_field] = original_item[nested_field]
-                
-                # 원본 메타데이터가 있으면 병합
-                if "metadata" in original_item and isinstance(original_item["metadata"], dict):
-                    for k, v in original_item["metadata"].items():
-                        if k not in ["flashrank_score", "mrc_score", "original_score"]:  # 점수 정보 제외
-                            metadata[k] = v
-            
-            # 최소한의 필수 메타데이터 보장
-            if doc_id:
-                metadata["doc_id"] = doc_id
-            
-            # 5. 주요 필드들을 최상위 레벨로 복사
-            for important_field in ["title", "author", "domain", "raw_doc_id", "passage_id"]:
-                # 원본 결과에서 직접 복사
-                if original_item and important_field in original_item:
-                    result_item[important_field] = original_item[important_field]
-            
-            # 메타데이터가 비어있지 않은 경우에만 설정
-            if metadata:
-                result_item["metadata"] = metadata
-            
-            # 6. meta 필드 제거 (metadata로 통합)
-            if "meta" in result_item:
-                del result_item["meta"]
-            
-            # 7. MRC 관련 필드 추가 (있는 경우)
-            for mrc_field in ["mrc_answer", "mrc_char_ids"]:
-                if mrc_field in item:
-                    result_item[mrc_field] = item[mrc_field]
-            
-            # 메타데이터 처리 로깅
-            if idx < 3:
-                metadata_logger.debug(f"최종 메타데이터 처리 완료: {json.dumps({k: v for k, v in result_item.items() if k in ['metadata', 'title', 'author', 'domain']}, ensure_ascii=False)}")
-            
             # 최종 결과에 추가
             processed_results.append(result_item)
-            
-            # 처리 후 결과 로깅 (처음 3개만)
-            if idx < 3:
-                metadata_logger.debug(f"처리 후 결과 항목 {idx}: {json.dumps({k: v for k, v in result_item.items() if k != 'text'}, ensure_ascii=False)}")
-                if "metadata" in result_item:
-                    metadata_logger.debug(f"처리 후 항목 {idx}의 메타데이터: {json.dumps(result_item['metadata'], ensure_ascii=False)}")
         
-        # 전체 처리 시간 계산
+        # 총 처리 시간 계산
         total_time = (datetime.now() - start_time).total_seconds()
-        
-        # 최종 결과에서 metadata 필드 제거
-        for result in processed_results:
-            if "metadata" in result:
-                del result["metadata"]
         
         # 최종 응답 구성
         response = {
@@ -713,41 +593,31 @@ def enhanced_search():
             "top_m": top_m,
             "top_n": top_n,
             "threshold": threshold,
-            "mrc_weight": reranked_results.get("mrc_weight", mrc_weight),  # 실제 사용된 MRC 가중치
             "search_count": len(search_results.get("search_result", [])),
-            "reranked_count": len(processed_results),
-            "filtered_count": len(processed_results),
-            "results": processed_results,
+            "reranked_count": reranked_count,  # 임계치 필터링 전 결과 수
+            "filtered_count": len(processed_results),  # 임계치 필터링 후 결과 수
+            "mrc_weight": mrc_weight,  # 사용된 MRC 가중치
             "processing_time": {
-                "total": round(total_time, 3),
-                "rag_search": round(rag_time, 3),
-                "reranking": round(rerank_time, 3)
+                "total": total_time,
+                "rag_search": rag_time,
+                "reranking": rerank_time
             },
-            "reranked": True,  # 명확하게 재랭킹 여부 표시
-            "reranker_type": reranked_results.get("reranker_type", "hybrid")
+            "results": processed_results,
+            "reranked": reranked_results.get("reranked", True),  # 재랭커에서 반환된 재랭킹 여부
+            "reranker_type": reranked_results.get("reranker_type", "hybrid")  # 사용된 재랭킹 타입
         }
         
-        # 최종 응답 로깅
-        logger.info(f"향상된 검색 완료: 검색={response['search_count']}, 재랭킹={response['reranked_count']}, 필터링 후={response['filtered_count']}")
-        metadata_logger.info(f"최종 응답: {len(processed_results)}개 결과, 처리 시간: {total_time:.3f}초")
-        metadata_logger.info(f"처리 시간 세부정보: 전체={total_time:.3f}초, RAG={rag_time:.3f}초, Reranker={rerank_time:.3f}초")
+        # 도메인별 결과가 있으면 포함
+        if "domain_results" in search_results:
+            response["domain_results"] = search_results["domain_results"]
         
-        # 메타데이터 추적 로그 마무리
-        metadata_logger.info("=== /prompt/enhanced_search 요청 처리 완료 ===\n")
-        
+        logger.info(f"최종 응답: {len(processed_results)}개 결과, 총 처리 시간: {total_time:.3f}초")
         return jsonify(response)
         
     except Exception as e:
-        logger.error(f"처리 중 예외 발생: {str(e)}", exc_info=True)
-        try:
-            # 예외 상황도 메타데이터 로그에 기록
-            metadata_logger = logging.getLogger("metadata-tracer")
-            metadata_logger.error(f"처리 중 예외 발생: {str(e)}")
-            metadata_logger.error(f"예외 상세 정보: {traceback.format_exc()}")
-            metadata_logger.info("=== /prompt/enhanced_search 요청 처리 실패 ===\n")
-        except:
-            pass
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"처리 중 오류 발생: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": f"처리 중 오류가 발생했습니다: {str(e)}"}), 500
 
 # 챗봇 API - 단순 질의응답용
 @app.route("/prompt/chat", methods=["POST"])

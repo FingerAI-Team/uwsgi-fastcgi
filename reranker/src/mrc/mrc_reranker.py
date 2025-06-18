@@ -60,22 +60,20 @@ class MRCReranker:
         
         # 결과 연결 및 점수 업데이트
         for i, (passage, mrc_result) in enumerate(zip(passages, mrc_results)):
-            # 원본 점수 보존
-            original_score = passage.get('score', 0.0)
-            
             # MRC 결과 저장
+            mrc_score = mrc_result['answerability']
             passage['mrc_answer'] = mrc_result['answer']
             passage['mrc_char_ids'] = mrc_result['char_ids']
-            passage['mrc_score'] = mrc_result['answerability']
+            passage['mrc_score'] = mrc_score
             
-            # 최종 점수 계산 (원본 점수와 MRC 점수의 조합)
-            passage['final_score'] = original_score * 0.3 + mrc_result['answerability'] * 0.7
+            # MRC 방식에서는 MRC 점수를 최종 점수로 사용
+            passage['score'] = mrc_score
             
             # 디버그 로깅
-            logger.debug(f"Passage {i}: original_score={original_score:.4f}, mrc_score={mrc_result['answerability']:.4f}, final_score={passage['final_score']:.4f}")
+            logger.debug(f"Passage {i}: mrc_score={mrc_score:.4f}")
         
         # 최종 점수로 정렬
-        reranked_passages = sorted(passages, key=lambda x: x.get('final_score', 0), reverse=True)
+        reranked_passages = sorted(passages, key=lambda x: x.get('score', 0), reverse=True)
         
         # top_k 적용
         if top_k and isinstance(top_k, int) and top_k > 0:
@@ -211,7 +209,9 @@ class MRCReranker:
             # 하이브리드 점수 계산
             hybrid_score = (flashrank_score * weight_flashrank) + (mrc_score * weight_mrc)
             passage['hybrid_score'] = hybrid_score
-            passage['score'] = hybrid_score  # 기본 score 필드 업데이트
+            
+            # 하이브리드 모드에서는 hybrid_score를 최종 점수로 사용
+            passage['score'] = hybrid_score
             
             # 메타데이터 필드가 없으면 생성
             if 'metadata' not in passage:

@@ -95,6 +95,55 @@ async def rerank_passages(
         raise HTTPException(status_code=500, detail=f"Reranking failed: {str(e)}")
 
 
+@app.post("/hybrid-rerank", response_model=RerankerResponseModel)
+async def hybrid_rerank(
+    data: SearchResultModel,
+    top_k: Optional[int] = Query(None, description="Number of top results to return"),
+    mrc_weight: Optional[float] = Query(0.7, description="Weight for MRC scores in hybrid reranking (0-1)"),
+    service: RerankerService = Depends(get_reranker_service)
+):
+    """
+    Rerank search results using the most appropriate method based on available models
+    
+    This endpoint will:
+    1. Check if both FlashRank and MRC are initialized, and use hybrid reranking if both are available
+    2. Use FlashRank only if MRC is not available
+    3. Use MRC only if FlashRank is not available
+    4. Return original results if neither is available
+    
+    Args:
+        data: Search result containing query and passages to rerank
+        top_k: Number of top results to return
+        mrc_weight: Weight for MRC scores in hybrid reranking (0-1)
+        
+    Returns:
+        Reranked search results
+    """
+    try:
+        # Convert to plain dict
+        results_dict = data.dict()
+        
+        # 임시로 MRC 가중치 설정 (실제 서비스에서는 이 값이 유지되어야 함)
+        if hasattr(service, 'hybrid_weight_mrc'):
+            original_weight = service.hybrid_weight_mrc
+            service.hybrid_weight_mrc = mrc_weight
+        
+        # Process search results - 내부적으로 초기화 상태에 따라 적절한 방법 선택
+        reranked = service.process_search_results(data.query, results_dict, top_k)
+        
+        # 원래 가중치 복원
+        if hasattr(service, 'hybrid_weight_mrc') and 'original_weight' in locals():
+            service.hybrid_weight_mrc = original_weight
+        
+        # Set total value
+        reranked["total"] = len(reranked["results"])
+        
+        return reranked
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reranking failed: {str(e)}")
+
+
 @app.post("/batch_rerank")
 async def batch_rerank(
     queries: List[str] = Body(..., description="List of queries"),
