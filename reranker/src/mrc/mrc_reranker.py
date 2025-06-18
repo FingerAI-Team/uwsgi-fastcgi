@@ -84,12 +84,17 @@ class MRCReranker:
         # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
         for passage in reranked_passages:
             if "metadata" in passage and passage["metadata"] is not None:
-                # metadata 내부의 모든 필드를 상위 레벨로 복사
-                for key, value in passage["metadata"].items():
-                    if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
-                        passage[key] = value
-                # metadata 필드 제거
-                del passage["metadata"]
+                try:
+                    # metadata 내부의 모든 필드를 상위 레벨로 복사
+                    for key, value in passage["metadata"].items():
+                        if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
+                            passage[key] = value
+                    # metadata 필드 제거
+                    del passage["metadata"]
+                except AttributeError:
+                    # metadata가 None이거나 items() 메소드가 없는 경우
+                    logger.warning(f"metadata 필드가 dictionary가 아닙니다: {type(passage['metadata'])}")
+                    passage["metadata"] = {}
             
             # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
             if "mrc_score" in passage and "mrc_answer" not in passage:
@@ -144,12 +149,17 @@ class MRCReranker:
         # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
         for passage in reranked_passages:
             if "metadata" in passage and passage["metadata"] is not None:
-                # metadata 내부의 모든 필드를 상위 레벨로 복사
-                for key, value in passage["metadata"].items():
-                    if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
-                        passage[key] = value
-                # metadata 필드 제거
-                del passage["metadata"]
+                try:
+                    # metadata 내부의 모든 필드를 상위 레벨로 복사
+                    for key, value in passage["metadata"].items():
+                        if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
+                            passage[key] = value
+                    # metadata 필드 제거
+                    del passage["metadata"]
+                except AttributeError:
+                    # metadata가 None이거나 items() 메소드가 없는 경우
+                    logger.warning(f"metadata 필드가 dictionary가 아닙니다: {type(passage['metadata'])}")
+                    passage["metadata"] = {}
             
             # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
             if "mrc_score" in passage and "mrc_answer" not in passage:
@@ -257,12 +267,17 @@ class MRCReranker:
         # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
         for passage in reranked_passages:
             if "metadata" in passage and passage["metadata"] is not None:
-                # metadata 내부의 모든 필드를 상위 레벨로 복사
-                for key, value in passage["metadata"].items():
-                    if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
-                        passage[key] = value
-                # metadata 필드 제거
-                del passage["metadata"]
+                try:
+                    # metadata 내부의 모든 필드를 상위 레벨로 복사
+                    for key, value in passage["metadata"].items():
+                        if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
+                            passage[key] = value
+                    # metadata 필드 제거
+                    del passage["metadata"]
+                except AttributeError:
+                    # metadata가 None이거나 items() 메소드가 없는 경우
+                    logger.warning(f"metadata 필드가 dictionary가 아닙니다: {type(passage['metadata'])}")
+                    passage["metadata"] = {}
             
             # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
             if "mrc_score" in passage and "mrc_answer" not in passage:
@@ -271,7 +286,7 @@ class MRCReranker:
                 passage["mrc_char_ids"] = []
         
         # top_k 적용 (점수 목록도 함께 정렬)
-        if top_k and isinstance(top_k, int) and top_k > 0:
+        if top_k is not None and isinstance(top_k, int) and top_k > 0:
             # 인덱스와 함께 정렬된 패시지 목록 생성
             indexed_passages = [(i, p) for i, p in enumerate(reranked_passages)]
             # top_k까지만 선택

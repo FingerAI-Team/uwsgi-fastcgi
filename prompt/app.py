@@ -571,6 +571,10 @@ def enhanced_search():
                 result_item["mrc_answer"] = ""
             if "mrc_score" in result_item and "mrc_char_ids" not in result_item:
                 result_item["mrc_char_ids"] = []
+                
+            # metadata 필드 제거 (중복 데이터 방지)
+            if "metadata" in result_item:
+                del result_item["metadata"]
             
             # id 필드 처리 - 원본 id만 보존하고 새 id는 생성하지 않음
             if "id" in result_item:
