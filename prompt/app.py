@@ -412,6 +412,7 @@ def enhanced_search():
                 "top_k": int(top_n),  # 상위 N개 결과만 요청 (정수형으로 변환)
                 "mrc_weight": mrc_weight  # MRC 가중치 전달
             }
+            logger.info(f"하이브리드 재랭킹 요청: {rerank_payload}")
             
             # 재랭킹 요청 전송
             try:
