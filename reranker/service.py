@@ -15,6 +15,15 @@ from pydantic import BaseModel
 try:
     import torch
     TORCH_AVAILABLE = True
+    
+    # CUDA 강제 초기화
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.init()
+            print("CUDA 초기화 완료")
+    except Exception as e:
+        print(f"CUDA 초기화 실패: {str(e)}")
+        
 except ImportError as e:
     TORCH_AVAILABLE = False
     print(f"PyTorch 임포트 실패: {str(e)}")

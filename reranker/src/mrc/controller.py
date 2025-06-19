@@ -11,6 +11,14 @@ from .ifv_module import IFVModule, get_model_config, get_model
 # 로깅 설정
 logger = logging.getLogger(__name__)
 
+# CUDA 강제 초기화
+try:
+    if torch.cuda.is_available():
+        torch.cuda.init()
+        logger.info("CUDA 초기화 완료")
+except Exception as e:
+    logger.error(f"CUDA 초기화 실패: {str(e)}")
+
 class MRCController:
     """MRC 모델을 관리하고 추론 기능을 제공하는 컨트롤러"""
     
