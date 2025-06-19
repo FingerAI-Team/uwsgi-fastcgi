@@ -2,6 +2,20 @@
 Reranker FastCGI application with API Gateway functionality
 """
 
+# CUDA 초기화 문제 해결을 위한 설정
+import multiprocessing
+import os
+
+# 환경 변수 설정 - PyTorch가 fork 모드에서도 CUDA를 사용할 수 있게 함
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
+
+# 멀티프로세싱 시작 방식을 'spawn'으로 설정
+try:
+    multiprocessing.set_start_method('spawn', force=True)
+    print("멀티프로세싱 시작 방식을 'spawn'으로 설정했습니다.")
+except RuntimeError as e:
+    print(f"멀티프로세싱 시작 방식 설정 실패: {e}")
+
 import os
 import logging
 import requests

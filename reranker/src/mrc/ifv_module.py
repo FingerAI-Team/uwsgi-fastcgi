@@ -4,13 +4,7 @@ import torch
 import json
 import gdown
 
-# CUDA 강제 초기화
-try:
-    if torch.cuda.is_available():
-        torch.cuda.init()
-        print("CUDA 초기화 완료")
-except Exception as e:
-    print(f"CUDA 초기화 실패: {str(e)}")
+# 기존 CUDA 초기화 코드 제거
 
 import pytorch_lightning as pl
 

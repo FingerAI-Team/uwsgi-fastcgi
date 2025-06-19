@@ -16,14 +16,6 @@ import traceback
 
 import torch
 
-# CUDA 강제 초기화
-try:
-    if torch.cuda.is_available():
-        torch.cuda.init()
-        print("CUDA 초기화 완료")
-except Exception as e:
-    print(f"CUDA 초기화 실패: {str(e)}")
-
 class RerankRequest:
     """ Represents a reranking request with a query and a list of passages. 
     
