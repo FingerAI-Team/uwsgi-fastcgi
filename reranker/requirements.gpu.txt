@@ -8,7 +8,7 @@ MarkupSafe>=2.0.0
 pydantic==1.8.2
 transformers==4.39.3
 tokenizers==0.15.2
-numpy<=1.24.0
+numpy>=1.25.2
 huggingface_hub==0.22.2
 #flashrank==0.2.10
 
@@ -18,7 +18,7 @@ ujson==5.8.0              # 빠른 JSON 파싱
 
 # PyTorch 명시적 설치
 --extra-index-url https://download.pytorch.org/whl/cu118
-torch==2.0.1
+torch==2.1.2
 # torchtext는 Dockerfile에서 --no-deps 옵션으로 별도 설치
 
 # Additional dependencies
