@@ -14,6 +14,8 @@ import logging
 import time
 import traceback
 
+import torch
+
 class RerankRequest:
     """ Represents a reranking request with a query and a list of passages. 
     
@@ -89,29 +91,30 @@ class Ranker:
         
         # GPU 사용 설정
         try:
-            import torch
             if torch.cuda.is_available():
                 os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # GPU 0 사용
                 self.device = "cuda:0"
                 self.log_with_detail(f"[FLASHRANK-INIT] GPU 사용: {self.device}")
-                self.log_with_detail(f"[FLASHRANK-INIT] GPU 메모리: {torch.cuda.memory_allocated()/1024**2:.2f}MB")
                 
-                # GPU 이름 가져오기 시도 - 오류 발생 가능성이 있는 부분을 try-except로 감싸기
+                # GPU 메모리 정보 안전하게 가져오기
+                try:
+                    self.log_with_detail(f"[FLASHRANK-INIT] GPU 메모리: {torch.cuda.memory_allocated()/1024**2:.2f}MB")
+                except Exception as e:
+                    self.log_with_detail(f"[FLASHRANK-INIT] GPU 메모리 확인 실패: {str(e)}")
+                
+                # GPU 이름 안전하게 가져오기
                 try:
                     self.log_with_detail(f"[FLASHRANK-INIT] GPU 이름: {torch.cuda.get_device_name(0)}")
                 except Exception as e:
                     self.log_with_detail(f"[FLASHRANK-INIT] GPU 이름 확인 실패: {str(e)}")
-                    self.log_with_detail("[FLASHRANK-INIT] GPU 이름 확인 실패했지만 계속 진행합니다.")
+                    self.log_with_detail("[FLASHRANK-INIT] GPU 이름을 확인할 수 없지만 계속 진행합니다.")
             else:
                 self.device = "cpu"
-                self.log_with_detail("[FLASHRANK-INIT] GPU 사용 불가, CPU 사용")
-        except ImportError:
-            self.device = "cpu"
-            self.log_with_detail("[FLASHRANK-INIT] PyTorch 없음, CPU 사용")
+                self.log_with_detail("[FLASHRANK-INIT] GPU를 사용할 수 없습니다. CPU 모드로 실행합니다.")
         except Exception as e:
             self.log_with_detail(f"[FLASHRANK-INIT] GPU 초기화 중 오류 발생: {str(e)}")
+            self.log_with_detail("[FLASHRANK-INIT] CPU 모드로 전환합니다.")
             self.device = "cpu"
-            self.log_with_detail("[FLASHRANK-INIT] GPU 초기화 실패로 CPU 사용")
         
         self.llm_model = None
         self.hf_model = None
