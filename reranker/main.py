@@ -635,14 +635,45 @@ def hybrid_rerank():
         # 요청 파라미터 로깅
         log_step("요청 시작")
         
-        # Get top_k parameter from query string
-        top_k = request.args.get('top_k', type=int)
+        # Get request body
+        data = request.get_json()
+        if not data:
+            logger.error("[HYBRID-RERANK] 요청 본문이 비어있음")
+            return jsonify({
+                "error": "No JSON data provided"
+            }), 400
+            
+        # 파라미터 추출: 쿼리 스트링과 JSON 본문 모두 확인
+        # 1. 쿼리 스트링에서 파라미터 추출
+        top_k_query = request.args.get('top_k', type=int)
+        mrc_weight_query = request.args.get('mrc_weight', type=float)
         
-        # Get mrc weight parameter
-        mrc_weight = request.args.get('mrc_weight', type=float)
+        # 2. JSON 본문에서 파라미터 추출
+        top_k_body = data.get('top_k') if isinstance(data, dict) else None
+        mrc_weight_body = data.get('mrc_weight') if isinstance(data, dict) else None
+        
+        # 3. 파라미터 우선순위 결정: 쿼리 스트링 > JSON 본문
+        top_k = top_k_query if top_k_query is not None else top_k_body
+        mrc_weight = mrc_weight_query if mrc_weight_query is not None else mrc_weight_body
+        
+        # 파라미터 타입 변환
+        if top_k is not None and not isinstance(top_k, int):
+            try:
+                top_k = int(top_k)
+            except (ValueError, TypeError):
+                logger.warning(f"[HYBRID-RERANK] top_k 파라미터 타입 변환 실패: {top_k}")
+                top_k = None
+                
+        if mrc_weight is not None and not isinstance(mrc_weight, float):
+            try:
+                mrc_weight = float(mrc_weight)
+            except (ValueError, TypeError):
+                logger.warning(f"[HYBRID-RERANK] mrc_weight 파라미터 타입 변환 실패: {mrc_weight}")
+                mrc_weight = None
         
         # 요청 파라미터 로깅
         logger.info(f"[HYBRID-RERANK] 요청 파라미터: top_k={top_k}, mrc_weight={mrc_weight}")
+        logger.info(f"[HYBRID-RERANK] 파라미터 소스: top_k(쿼리)={top_k_query}, top_k(본문)={top_k_body}, mrc_weight(쿼리)={mrc_weight_query}, mrc_weight(본문)={mrc_weight_body}")
         
         # 하이브리드 방식으로 강제 설정
         os.environ["RERANK_METHOD"] = "hybrid"
@@ -659,21 +690,24 @@ def hybrid_rerank():
         
         log_step("MRC 설정 확인")
         
-        # Get request body
-        data = request.get_json()
-        if not data:
-            logger.error("[HYBRID-RERANK] 요청 본문이 비어있음")
-            return jsonify({
-                "error": "No JSON data provided"
-            }), 400
-        
         # 요청 데이터 크기 로깅
         request_size = len(json.dumps(data).encode('utf-8'))
         logger.info(f"[HYBRID-RERANK] 요청 데이터 크기: {request_size/1024:.2f}KB")
         
-        # Validate input
+        # Validate input - JSON 본문에서 필요한 필드만 추출하여 SearchResultModel 생성
         try:
-            search_result = SearchResultModel(**data)
+            # 필수 필드만 추출
+            search_data = {
+                "query": data.get("query"),
+                "results": data.get("results", [])
+            }
+            
+            # 선택적 필드 추가
+            for field in ["total", "reranked"]:
+                if field in data:
+                    search_data[field] = data[field]
+                    
+            search_result = SearchResultModel(**search_data)
             logger.info(f"[HYBRID-RERANK] 재랭킹 요청: query='{search_result.query}', 결과 수={len(search_result.results)}")
             
             # 첫 번째 패시지 샘플 로깅 (디버깅용)
