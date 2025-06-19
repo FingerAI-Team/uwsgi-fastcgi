@@ -180,6 +180,13 @@ services:
       - MAX_GPU_WORKERS=7
     networks:
       - rag_network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1']  # GPU 0, 1 모두 사용
+              capabilities: [gpu]
     command: uwsgi --ini /reranker/uwsgi.ini
     profiles:
       - all
