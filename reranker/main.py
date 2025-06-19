@@ -9,6 +9,10 @@ import os
 # 환경 변수 설정 - PyTorch가 fork 모드에서도 CUDA를 사용할 수 있게 함
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 
+# CUDA 메모리 관리 최적화 설정
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # GPU 순서 일관성 유지
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"      # 사용할 GPU 지정 (필요에 따라 조정)
+
 # 멀티프로세싱 시작 방식을 'spawn'으로 설정
 try:
     multiprocessing.set_start_method('spawn', force=True)

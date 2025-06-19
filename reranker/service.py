@@ -16,6 +16,20 @@ try:
     import torch
     TORCH_AVAILABLE = True
     
+    # CUDA 사용 가능 여부 확인 및 설정
+    if torch.cuda.is_available():
+        # CUDA 메모리 관리 설정
+        torch.backends.cudnn.benchmark = True  # 성능 향상을 위한 벤치마크 모드
+        torch.backends.cudnn.deterministic = False  # 성능 향상을 위해 비결정적 알고리즘 허용
+        
+        # 메모리 관리 최적화
+        if hasattr(torch.cuda, 'empty_cache'):
+            torch.cuda.empty_cache()  # 캐시 메모리 정리
+            
+        print(f"CUDA 사용 가능: {torch.cuda.device_count()}개 GPU, 현재 장치: {torch.cuda.current_device()}")
+    else:
+        print("CUDA 사용 불가: CPU 모드로 실행")
+        
 except ImportError as e:
     TORCH_AVAILABLE = False
     print(f"PyTorch 임포트 실패: {str(e)}")

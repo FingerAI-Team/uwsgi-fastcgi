@@ -117,10 +117,29 @@ def get_model_config(config_path, plm='koroberta', infer_batch_size=10):
 def get_model(config_args, model_path):
     # load model
     model = IFVModule(config_args)
-    state_dict = torch.load(model_path)['state_dict']
-    model.load_state_dict(state_dict, strict=False)  # strict=False로 설정하여 불일치 키 무시
-    model.to(config_args.device)
-    model.eval()
-    model.to(dtype=torch.float16)  # fp16 precision
-
-    return model 
+    
+    # CPU에서 모델 로드 후 GPU로 이동 (CUDA 초기화 문제 방지)
+    try:
+        map_location = torch.device('cpu')
+        state_dict = torch.load(model_path, map_location=map_location)['state_dict']
+        model.load_state_dict(state_dict, strict=False)  # strict=False로 설정하여 불일치 키 무시
+        
+        # GPU 사용 가능한 경우에만 GPU로 이동
+        if torch.cuda.is_available():
+            model = model.to(config_args.device)
+            model.to(dtype=torch.float16)  # fp16 precision
+        
+        model.eval()
+        return model
+    except Exception as e:
+        print(f"모델 로드 중 오류 발생: {str(e)}")
+        # 오류 발생 시 CPU 모드로 폴백
+        try:
+            print("CPU 모드로 모델 로드 시도...")
+            state_dict = torch.load(model_path, map_location='cpu')['state_dict']
+            model.load_state_dict(state_dict, strict=False)
+            model.eval()
+            return model
+        except Exception as e2:
+            print(f"CPU 모드로도 모델 로드 실패: {str(e2)}")
+            raise e2 
