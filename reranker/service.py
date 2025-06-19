@@ -779,7 +779,8 @@ class RerankerService:
                 # FlashRank 방식만 사용
                 logger.info("[FLASHRANK-STATUS] FlashRank 방식으로 재랭킹 수행 시작")
                 try:
-                    result = self.perform_flashrank_reranking(query, passages, top_k, search_result)
+                    # 튜플 반환값을 올바르게 처리
+                    result, scores, processing_time = self.perform_flashrank_reranking(query, passages, top_k, search_result)
                     logger.info(f"[FLASHRANK-STATUS] FlashRank 재랭킹 성공: {len(result.get('results', []))}개 결과")
                     return result
                 except Exception as e:
@@ -1304,8 +1305,19 @@ class RerankerService:
             logger.error(f"Error in _flashrank_rerank: {str(e)}", exc_info=True)
             return search_result or {"query": query, "results": [], "total": 0, "reranked": False}, [], 0.0
     
-    def perform_flashrank_reranking(self, query: str, passages: List[Dict], top_k: int = None, search_result: Dict = None):
-        """FlashRank를 사용한 재랭킹 수행"""
+    def perform_flashrank_reranking(self, query: str, passages: List[Dict], top_k: int = None, search_result: Dict = None) -> Tuple[Dict, Dict, float]:
+        """
+        FlashRank를 사용한 재랭킹 수행
+        
+        Args:
+            query: 검색 쿼리
+            passages: 재랭킹할 패시지 목록
+            top_k: 반환할 상위 결과 수
+            search_result: 원본 검색 결과 (있는 경우)
+            
+        Returns:
+            Tuple[Dict, Dict, float]: (재랭킹된 결과 딕셔너리, 점수 딕셔너리, 처리 시간)
+        """
         try:
             # 시작 시간 기록
             start_time = time.time()
