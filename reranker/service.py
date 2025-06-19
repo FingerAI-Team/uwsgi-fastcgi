@@ -807,10 +807,8 @@ class RerankerService:
                     except Exception as e:
                         logger.error(f"로그 파일 기록 실패: {str(e)}")
                     
+                    # 튜플 언패킹 오류 수정 - 튜플 대신 직접 변수 할당
                     flashrank_result, flashrank_scores, flashrank_time = self._flashrank_rerank(query, passages, None, search_result)
-                    
-                    # FlashRank 처리 시간 계산
-                    flashrank_time = time.time() - flashrank_start_time
                     logger.info(f"[HYBRID-DETAIL] FlashRank 재랭킹 완료: {flashrank_time:.3f}초")
                     
                     # flashrank_result가 딕셔너리인지 리스트인지 확인
@@ -1095,7 +1093,7 @@ class RerankerService:
             # 오류 발생 시 원본 결과 반환
             return search_result
     
-    def _flashrank_rerank(self, query: str, passages: List[dict], top_k: int = None, search_result: Dict = None) -> Tuple[List[dict], Dict, float]:
+    def _flashrank_rerank(self, query: str, passages: List[dict], top_k: int = None, search_result: Dict = None) -> Tuple[Dict, List[float], float]:
         """
         Rerank passages using FlashRank
         
@@ -1106,15 +1104,15 @@ class RerankerService:
             search_result: 원본 검색 결과 (있는 경우)
             
         Returns:
-            Tuple of (reranked passages, scores dict, processing time)
+            Tuple of (reranked search result dictionary, flashrank scores, processing time)
         """
         if not self.ranker:
             logger.warning("FlashRank reranker not initialized, returning original passages")
-            return passages, {}, 0.0
+            return search_result or {"query": query, "results": passages, "total": len(passages), "reranked": False}, [], 0.0
         
         if not passages:
             logger.warning("No passages to rerank")
-            return [], {}, 0.0
+            return search_result or {"query": query, "results": [], "total": 0, "reranked": False}, [], 0.0
         
         start_time = time.time()
         
@@ -1254,34 +1252,43 @@ class RerankerService:
             reranked_results.sort(key=lambda x: x.get("score", 0), reverse=True)
             
             # top_k가 지정된 경우 결과 제한
-            if top_k is not None and top_k > 0:
+            if top_k is not None and top_k > 0 and len(reranked_results) > top_k:
                 reranked_results = reranked_results[:top_k]
             
             # 결과 포맷팅
             if search_result:
+                # 원본 결과의 필드 보존
+                original_results = search_result["results"]
+                
+                # 원본 메타데이터 매핑 준비
+                original_metadata = {}
+                for orig_passage in original_results:
+                    passage_id = orig_passage.get("passage_id") or orig_passage.get("id")
+                    if passage_id:
+                        original_metadata[passage_id] = orig_passage
+                
+                # 재랭킹된 결과에 원본 메타데이터 추가
+                for passage in reranked_results:
+                    passage_id = passage.get("passage_id") or passage.get("id")
+                    if passage_id and passage_id in original_metadata:
+                        orig = original_metadata[passage_id]
+                        # 중요 메타데이터 필드 복사
+                        for key in ["author", "domain", "info", "tags", "title", "doc_id"]:
+                            if key in orig and key not in passage:
+                                passage[key] = orig[key]
+                        
+                        # MRC 관련 필드 복사 (있는 경우)
+                        for key in ["mrc_score", "mrc_answer", "mrc_char_ids"]:
+                            if key in orig and key not in passage:
+                                passage[key] = orig[key]
+                
                 search_result["results"] = reranked_results
                 search_result["total"] = len(reranked_results)
                 search_result["reranked"] = True
                 search_result["reranker_type"] = "flashrank"
                 search_result["processing_time"] = processing_time
                 
-                # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
-                for passage in search_result["results"]:
-                    if "metadata" in passage:
-                        # metadata 내부의 모든 필드를 상위 레벨로 복사
-                        for key, value in passage["metadata"].items():
-                            if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
-                                passage[key] = value
-                        # metadata 필드 제거
-                        del passage["metadata"]
-                    
-                    # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
-                    if "mrc_answer" not in passage and passage.get("mrc_score") is not None:
-                        passage["mrc_answer"] = ""
-                    if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
-                        passage["mrc_char_ids"] = []
-                
-                return search_result
+                return search_result, flashrank_scores, processing_time
             else:
                 result = {
                     "query": query,
@@ -1292,26 +1299,10 @@ class RerankerService:
                     "processing_time": processing_time
                 }
                 
-                # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
-                for passage in result["results"]:
-                    if "metadata" in passage:
-                        # metadata 내부의 모든 필드를 상위 레벨로 복사
-                        for key, value in passage["metadata"].items():
-                            if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
-                                passage[key] = value
-                        # metadata 필드 제거
-                        del passage["metadata"]
-                    
-                    # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
-                    if "mrc_answer" not in passage and passage.get("mrc_score") is not None:
-                        passage["mrc_answer"] = ""
-                    if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
-                        passage["mrc_char_ids"] = []
-                
-                return result
+                return result, [], processing_time
         except Exception as e:
             logger.error(f"Error in _flashrank_rerank: {str(e)}", exc_info=True)
-            return passages, {}, 0.0
+            return search_result or {"query": query, "results": [], "total": 0, "reranked": False}, [], 0.0
     
     def perform_flashrank_reranking(self, query: str, passages: List[Dict], top_k: int = None, search_result: Dict = None):
         """FlashRank를 사용한 재랭킹 수행"""
@@ -1473,7 +1464,7 @@ class RerankerService:
                     if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
                         passage["mrc_char_ids"] = []
                 
-                return search_result
+                return search_result, scores_dict, processing_time
             else:
                 result = {
                     "query": query,
@@ -1502,7 +1493,7 @@ class RerankerService:
                     if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
                         passage["mrc_char_ids"] = []
                 
-                return result
+                return result, scores_dict, processing_time
         except Exception as e:
             logger.error(f"[FLASHRANK-ERROR] FlashRank 재랭킹 중 오류 발생: {str(e)}", exc_info=True)
             # 오류 상세 정보 로깅
@@ -1518,6 +1509,6 @@ class RerankerService:
                 search_result["reranked"] = False
                 search_result["reranker_type"] = "none"
                 search_result["error"] = f"FlashRank 재랭킹 실패: {str(e)}"
-                return search_result
+                return search_result, {}, 0.0
             else:
-                return passages
+                return passages, {}, 0.0
