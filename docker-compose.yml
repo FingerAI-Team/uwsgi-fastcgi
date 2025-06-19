@@ -185,7 +185,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0', '1']  # GPU 0, 1 모두 사용
+              count: ${GPU_COUNT:-all}  # GPU_COUNT 환경변수로 제어, 기본값은 all
               capabilities: [gpu]
     command: uwsgi --ini /reranker/uwsgi.ini
     profiles:
@@ -257,7 +257,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0', '1']  # GPU 0, 1 모두 사용
+              count: ${GPU_COUNT:-all}  # GPU_COUNT 환경변수로 제어, 기본값은 all
               capabilities: [gpu]
     profiles:
       - gpu-only

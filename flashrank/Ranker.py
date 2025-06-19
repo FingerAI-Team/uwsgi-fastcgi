@@ -95,13 +95,23 @@ class Ranker:
                 self.device = "cuda:0"
                 self.log_with_detail(f"[FLASHRANK-INIT] GPU 사용: {self.device}")
                 self.log_with_detail(f"[FLASHRANK-INIT] GPU 메모리: {torch.cuda.memory_allocated()/1024**2:.2f}MB")
-                self.log_with_detail(f"[FLASHRANK-INIT] GPU 이름: {torch.cuda.get_device_name(0)}")
+                
+                # GPU 이름 가져오기 시도 - 오류 발생 가능성이 있는 부분을 try-except로 감싸기
+                try:
+                    self.log_with_detail(f"[FLASHRANK-INIT] GPU 이름: {torch.cuda.get_device_name(0)}")
+                except Exception as e:
+                    self.log_with_detail(f"[FLASHRANK-INIT] GPU 이름 확인 실패: {str(e)}")
+                    self.log_with_detail("[FLASHRANK-INIT] GPU 이름 확인 실패했지만 계속 진행합니다.")
             else:
                 self.device = "cpu"
                 self.log_with_detail("[FLASHRANK-INIT] GPU 사용 불가, CPU 사용")
         except ImportError:
             self.device = "cpu"
             self.log_with_detail("[FLASHRANK-INIT] PyTorch 없음, CPU 사용")
+        except Exception as e:
+            self.log_with_detail(f"[FLASHRANK-INIT] GPU 초기화 중 오류 발생: {str(e)}")
+            self.device = "cpu"
+            self.log_with_detail("[FLASHRANK-INIT] GPU 초기화 실패로 CPU 사용")
         
         self.llm_model = None
         self.hf_model = None
