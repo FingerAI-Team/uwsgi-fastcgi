@@ -15,9 +15,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     wget \
     curl \
-    python3 \
-    python3-pip \
-    python3-dev \
     libjemalloc2 \
     libjemalloc-dev \
     && apt-get clean \
@@ -25,7 +22,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Python 환경 설정
 ENV PYTHONPATH=/usr/local/lib/python3.10/site-packages:$PYTHONPATH
-ENV PATH=/usr/local/bin:$PATH
 
 # Python 버전은 기본 제공되므로 conda로 다시 설치하지 않음
 RUN mkdir -p /var/log/reranker
@@ -33,9 +29,12 @@ RUN mkdir -p /var/log/reranker
 # 현재 PyTorch 버전 확인
 RUN python -c "import torch; print(f'현재 PyTorch 버전: {torch.__version__}')"
 
-# 나머지 요구사항 설치 (의존성 충돌 방지를 위해 --no-deps 옵션 사용)
+# 요구사항 설치 (torchtext 제외)
 COPY requirements.txt /reranker/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+
+# torchtext 별도 설치 (의존성 검사 무시)
+RUN pip install --no-cache-dir --no-deps torchtext==0.15.1
 
 # flashrank 기본 패키지 설치
 RUN pip install flashrank
