@@ -844,17 +844,6 @@ def chatbot():
                 rerank_threshold=rerank_threshold
             )
         
-        # 세션 관리 명령 처리
-        if data.get("clear_session", False):
-            result = rag_chat_service.clear_session(session_id)
-            logger.info(f"세션 초기화: {session_id}")
-            return jsonify(result)
-            
-        if data.get("cleanup_sessions", False):
-            result = rag_chat_service.cleanup_expired_sessions()
-            logger.info("만료된 세션 정리 완료")
-            return jsonify(result)
-        
         # 추가 검색 파라미터 추출
         search_params = {}
         for param in ["domains", "domain", "author", "start_date", "end_date", "title", "info_filter", "tags_filter"]:
@@ -884,6 +873,121 @@ def chatbot():
     except Exception as e:
         logger.error(f"RAG 챗봇 처리 중 오류 발생: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+# 세션 관리 API - 세션 초기화
+@app.route("/prompt/session/clear", methods=["POST"])
+def clear_session():
+    global rag_chat_service
+    
+    try:
+        data = request.json
+        session_id = data.get("session_id")
+        
+        if not session_id:
+            return jsonify({"error": "세션 ID가 필요합니다"}), 400
+        
+        # RAG 챗봇 서비스 초기화 (필요한 경우)
+        if rag_chat_service is None:
+            _initialize_rag_service()
+        
+        result = rag_chat_service.clear_session(session_id)
+        logger.info(f"세션 초기화: {session_id}")
+        return jsonify(result)
+    
+    except Exception as e:
+        logger.error(f"세션 초기화 중 오류 발생: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+# 세션 관리 API - 만료된 세션 정리
+@app.route("/prompt/session/cleanup", methods=["POST"])
+def cleanup_sessions():
+    global rag_chat_service
+    
+    try:
+        # RAG 챗봇 서비스 초기화 (필요한 경우)
+        if rag_chat_service is None:
+            _initialize_rag_service()
+        
+        result = rag_chat_service.cleanup_expired_sessions()
+        logger.info("만료된 세션 정리 완료")
+        return jsonify(result)
+    
+    except Exception as e:
+        logger.error(f"만료된 세션 정리 중 오류 발생: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+# 세션 관리 API - 세션 목록 조회
+@app.route("/prompt/session/list", methods=["GET"])
+def list_sessions():
+    global rag_chat_service
+    
+    try:
+        # RAG 챗봇 서비스 초기화 (필요한 경우)
+        if rag_chat_service is None:
+            _initialize_rag_service()
+        
+        session_ids = rag_chat_service.session_manager.get_all_sessions()
+        return jsonify({"sessions": session_ids, "count": len(session_ids)})
+    
+    except Exception as e:
+        logger.error(f"세션 목록 조회 중 오류 발생: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+# 세션 관리 API - 세션 내용 조회
+@app.route("/prompt/session/get", methods=["GET"])
+def get_session():
+    global rag_chat_service
+    
+    try:
+        session_id = request.args.get("session_id")
+        
+        if not session_id:
+            return jsonify({"error": "세션 ID가 필요합니다"}), 400
+        
+        # RAG 챗봇 서비스 초기화 (필요한 경우)
+        if rag_chat_service is None:
+            _initialize_rag_service()
+        
+        # 세션 데이터 로드
+        session_data = rag_chat_service.session_manager.load_session(session_id)
+        
+        # 응답 데이터 구성
+        response_data = {
+            "session_id": session_id,
+            "history": session_data.get("history", []),
+            "created_at": session_data.get("created_at"),
+            "last_updated": session_data.get("last_updated"),
+            "message_count": len(session_data.get("history", [])),
+            "exists": rag_chat_service.session_manager.session_exists(session_id)
+        }
+        
+        return jsonify(response_data)
+    
+    except Exception as e:
+        logger.error(f"세션 내용 조회 중 오류 발생: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+# 서비스 초기화 헬퍼 함수
+def _initialize_rag_service():
+    global rag_chat_service
+    
+    summaryAgent = AgentService(config_path)
+    default_model = summaryAgent.default_model
+    search_top = summaryAgent.search_top
+    rerank_top = summaryAgent.rerank_top
+    rerank_threshold = summaryAgent.rerank_threshold
+    
+    logger.info(f"RAG 챗봇 서비스 초기화: model={default_model}, search_top={search_top}, rerank_top={rerank_top}")
+    rag_chat_service = RagChatService(
+        memory_dir=MEMORY_DIR,
+        ollama_endpoint=OLLAMA_ENDPOINT,
+        rag_endpoint=RAG_ENDPOINT,
+        reranker_endpoint=RERANKER_ENDPOINT,
+        default_model=default_model,
+        search_top=search_top,
+        rerank_top=rerank_top,
+        rerank_threshold=rerank_threshold
+    )
 
 if __name__ == "__main__":
     # 개발 환경에서만 사용

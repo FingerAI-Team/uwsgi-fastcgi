@@ -227,19 +227,6 @@ class SessionManager:
         self.save_session(session_data)
         return session_data
     
-    def calculate_tokens(self, session_data: Dict[str, Any]) -> Dict[str, int]:
-        """세션 데이터의 토큰 수를 계산합니다."""
-        # 대화 기록 토큰 수
-        history_tokens = sum(count_tokens(msg["message"]) for msg in session_data["history"])
-        
-        # 총 토큰 수
-        total_tokens = history_tokens
-        
-        return {
-            "history_tokens": history_tokens,
-            "total_tokens": total_tokens
-        }
-    
     def clear_session(self, session_id: str) -> None:
         """세션을 초기화합니다."""
         session_path = self._get_session_path(session_id)
