@@ -13,6 +13,11 @@ WORKDIR /prompt
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# 추가 의존성 설치 (tiktoken 등)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
 # uwsgi 설치 - pip를 통해 설치하여 Python 3.10과 호환되도록 함
 RUN pip install uwsgi
 

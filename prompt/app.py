@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Any
 import traceback
+from services.rag_chat_service import RagChatService
 
 # 로깅 설정
 logging.basicConfig(
@@ -27,8 +28,11 @@ config_path = os.environ.get("PROMPT_CONFIG", "/prompt/config.json")
 # 환경 변수 설정
 RAG_ENDPOINT = os.environ.get("RAG_ENDPOINT", "http://nginx/rag")
 RERANKER_ENDPOINT = os.environ.get("RERANKER_ENDPOINT", "http://nginx/reranker")
+OLLAMA_ENDPOINT = os.environ.get("OLLAMA_ENDPOINT", "http://ollama:11434")
+MEMORY_DIR = os.environ.get("MEMORY_DIR", "./memory")
 
-OLLAMA_ENDPOINT = os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434")
+# 전역 RAG 챗봇 서비스 인스턴스
+rag_chat_service = None
 
 class AgentService:
     def __init__(self, config_path:str=None):
@@ -412,7 +416,6 @@ def enhanced_search():
                 "top_k": int(top_n),  # 상위 N개 결과만 요청 (정수형으로 변환)
                 "mrc_weight": mrc_weight  # MRC 가중치 전달
             }
-            logger.info(f"하이브리드 재랭킹 요청: {rerank_payload}")
             
             # 재랭킹 요청 전송
             try:
@@ -798,6 +801,88 @@ def list_models():
             
     except Exception as e:
         logger.error(f"모델 목록 처리 중 오류 발생: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+# RAG 챗봇 API - 파일 기반 세션 관리 멀티턴 대화
+@app.route("/prompt/chatbot", methods=["POST"])
+def chatbot():
+    global rag_chat_service
+    
+    try:
+        # 요청 데이터 파싱
+        data = request.json
+        query = data.get("query")
+        session_id = data.get("session_id")
+        stream = data.get("stream", False)
+        model = data.get("model")
+        
+        # 필수 파라미터 검증
+        if not query:
+            return jsonify({"error": "질문이 필요합니다"}), 400
+        if not session_id:
+            return jsonify({"error": "세션 ID가 필요합니다"}), 400
+        
+        logger.info(f"RAG 챗봇 요청: 세션={session_id}, 쿼리='{query}', 스트리밍={stream}")
+        
+        # RAG 챗봇 서비스 초기화 (필요한 경우)
+        if rag_chat_service is None:
+            summaryAgent = AgentService(config_path)
+            default_model = model or summaryAgent.default_model
+            search_top = summaryAgent.search_top
+            rerank_top = summaryAgent.rerank_top
+            rerank_threshold = summaryAgent.rerank_threshold
+            
+            logger.info(f"RAG 챗봇 서비스 초기화: model={default_model}, search_top={search_top}, rerank_top={rerank_top}")
+            rag_chat_service = RagChatService(
+                memory_dir=MEMORY_DIR,
+                ollama_endpoint=OLLAMA_ENDPOINT,
+                rag_endpoint=RAG_ENDPOINT,
+                reranker_endpoint=RERANKER_ENDPOINT,
+                default_model=default_model,
+                search_top=search_top,
+                rerank_top=rerank_top,
+                rerank_threshold=rerank_threshold
+            )
+        
+        # 세션 관리 명령 처리
+        if data.get("clear_session", False):
+            result = rag_chat_service.clear_session(session_id)
+            logger.info(f"세션 초기화: {session_id}")
+            return jsonify(result)
+            
+        if data.get("cleanup_sessions", False):
+            result = rag_chat_service.cleanup_expired_sessions()
+            logger.info("만료된 세션 정리 완료")
+            return jsonify(result)
+        
+        # 추가 검색 파라미터 추출
+        search_params = {}
+        for param in ["domains", "domain", "author", "start_date", "end_date", "title", "info_filter", "tags_filter"]:
+            if param in data:
+                search_params[param] = data[param]
+        
+        # 스트리밍 모드에 따라 다른 처리
+        if stream:
+            def generate():
+                for chunk in rag_chat_service.generate_response(
+                    session_id, query, model=model, stream=True, **search_params
+                ):
+                    yield f"data: {chunk}\n\n"
+            
+            response = Response(stream_with_context(generate()), mimetype='text/event-stream')
+            response.headers['Cache-Control'] = 'no-cache, no-transform'
+            response.headers['X-Accel-Buffering'] = 'no'  # nginx에서 버퍼링 방지
+            response.headers['Connection'] = 'keep-alive'  # 연결 유지
+            return response
+        else:
+            # 비스트리밍 모드
+            result = rag_chat_service.generate_response(
+                session_id, query, model=model, stream=False, **search_params
+            )
+            return jsonify(result)
+            
+    except Exception as e:
+        logger.error(f"RAG 챗봇 처리 중 오류 발생: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":

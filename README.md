@@ -719,3 +719,65 @@ scp [로컬경로]/models/bge-m3/pytorch_model.bin [서버계정]@[서버경로]
 cd /home/jsh0630/uwsgi-fastcgi
 ./scripts/setup.sh
 ```
+
+# RAG 챗봇 서비스
+
+## 개요
+이 프로젝트는 RAG(Retrieval-Augmented Generation) 기반 챗봇 시스템으로, 문서 검색, 재랭킹, LLM 응답 생성을 통합하여 멀티턴 대화가 가능한 챗봇을 제공합니다.
+
+## 주요 기능
+- 파일 기반 세션 관리를 통한 멀티턴 대화 지원
+- RAG 검색 및 재랭킹을 통한 문서 기반 응답 생성
+- 토큰 제한 관리 및 대화 요약 기능
+- 스트리밍/비스트리밍 응답 지원
+
+## 서비스 구조
+- **prompt**: 프롬프트 처리 및 LLM 통합 서비스
+  - **app.py**: 메인 Flask 애플리케이션
+  - **services/**: 비즈니스 로직 모듈
+    - **session_manager.py**: 파일 기반 세션 관리
+    - **rag_chat_service.py**: RAG 챗봇 비즈니스 로직
+    - **async_summarizer.py**: 비동기 대화 요약 처리
+  - **templates/**: 프롬프트 템플릿
+- **rag**: 벡터 검색 서비스
+- **reranker**: 검색 결과 재랭킹 서비스
+- **nginx**: 프록시 및 라우팅
+
+## API 엔드포인트
+- `/prompt/chatbot`: RAG 챗봇 API (멀티턴 대화)
+- `/prompt/summarize`: 문서 검색 및 요약 API
+- `/prompt/enhanced_search`: 향상된 검색 API
+- `/prompt/chat`: 단순 챗봇 API
+- `/prompt/models`: 사용 가능한 모델 목록 API
+- `/prompt/health`: 상태 확인 API
+
+## 데이터 흐름
+1. 사용자 질문 수신
+2. 세션 관리 (로드/생성)
+3. RAG 검색 및 재랭킹
+4. 프롬프트 구성 (시스템 프롬프트+요약+대화 기록+RAG 컨텍스트)
+5. LLM 응답 생성
+6. 응답 저장 및 반환
+7. 비동기 토큰 관리 및 요약
+
+## 토큰 관리
+- 최대 컨텍스트 토큰: 7,500 (기본값)
+- 토큰 초과 시 대화 요약 처리
+- 요약 청크 크기: 20턴
+- 비동기 처리로 사용자 응답 지연 방지
+
+## 환경 변수
+- `OLLAMA_ENDPOINT`: Ollama API 엔드포인트 (기본값: http://localhost:11434)
+- `RAG_ENDPOINT`: RAG 검색 엔드포인트 (기본값: http://nginx/rag)
+- `RERANKER_ENDPOINT`: 재랭킹 엔드포인트 (기본값: http://nginx/reranker)
+- `MEMORY_DIR`: 세션 메모리 저장 디렉토리 (기본값: ./memory)
+- `DEFAULT_MODEL`: 기본 LLM 모델 (기본값: gemma3:12b)
+
+## 설치 및 실행
+```bash
+# Docker Compose로 전체 서비스 실행
+docker-compose up -d
+
+# 개별 서비스 재시작
+docker-compose restart prompt
+```
