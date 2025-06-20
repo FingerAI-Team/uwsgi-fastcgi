@@ -751,20 +751,26 @@ cd /home/jsh0630/uwsgi-fastcgi
 - `/prompt/models`: 사용 가능한 모델 목록 API
 - `/prompt/health`: 상태 확인 API
 
+### 세션 관리 API
+- `/prompt/session/clear`: 세션 초기화 API
+- `/prompt/session/cleanup`: 만료된 세션 정리 API
+- `/prompt/session/list`: 세션 목록 조회 API
+- `/prompt/session/get`: 세션 내용 조회 API
+
 ## 데이터 흐름
 1. 사용자 질문 수신
 2. 세션 관리 (로드/생성)
 3. RAG 검색 및 재랭킹
-4. 프롬프트 구성 (시스템 프롬프트+요약+대화 기록+RAG 컨텍스트)
+4. 프롬프트 구성 (시스템 프롬프트+대화 기록+RAG 컨텍스트)
 5. LLM 응답 생성
 6. 응답 저장 및 반환
-7. 비동기 토큰 관리 및 요약
 
-## 토큰 관리
-- 최대 컨텍스트 토큰: 7,500 (기본값)
-- 토큰 초과 시 대화 요약 처리
-- 요약 청크 크기: 20턴
-- 비동기 처리로 사용자 응답 지연 방지
+## 세션 관리 정책
+- 세션 TTL은 24시간이지만 자동 삭제는 없음
+- 세션 정리는 API 호출을 통해서만 수행 (`/prompt/session/cleanup`)
+- 세션 ID는 안전한 파일명 형식으로 자동 변환됨
+- 파일 잠금은 타임아웃과 재시도 메커니즘으로 안전하게 구현
+- 컨텍스트 제한을 위해 최근 5턴(10개 메시지)만 포함
 
 ## 환경 변수
 - `OLLAMA_ENDPOINT`: Ollama API 엔드포인트 (기본값: http://localhost:11434)

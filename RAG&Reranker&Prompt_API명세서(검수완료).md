@@ -34,6 +34,11 @@
 | 19 | [/prompt/models](#19-promptmodels) | 모델 목록 |
 | 20 | [/vision/health](#20-visionhealth) | Vision 상태 |
 | 21 | [/vision/analyze](#21-visionanalyze) | 이미지 분석 |
+| 22 | [/prompt/chatbot](#22-promptchatbot) | RAG 챗봇 (멀티턴 대화) |
+| 23 | [/prompt/session/clear](#23-promptsessionclear) | 세션 초기화 |
+| 24 | [/prompt/session/cleanup](#24-promptsessioncleanup) | 만료된 세션 정리 |
+| 25 | [/prompt/session/list](#25-promptsessionlist) | 세션 목록 조회 |
+| 26 | [/prompt/session/get](#26-promptsessionget) | 세션 내용 조회 |
 
 > **모든 URL** 는 `http://localhost` 기준이며, 실제 배포 시 호스트/포트를 맞춰 수정하세요.
 
@@ -1763,6 +1768,267 @@ curl -X POST http://localhost/vision/analyze \
 ```json
 {
   "error": "이미지 분석에 실패했습니다"
+}
+```
+
+---
+
+## 22. /prompt/chatbot
+### 기본 정보
+| 항목 | 내용 |
+|------|------|
+| Method | **POST** |
+| URL | `/prompt/chatbot` |
+| Content‑Type | `application/json` |
+| 설명 | RAG 챗봇 API (멀티턴 대화) |
+
+### 요청 파라미터 (Body)
+| 이름 | 필수 | Type | 설명 |
+|------|------|------|------|
+| query | Y | String | 질문 내용 |
+| session_id | Y | String | 세션 ID (대화 기록 유지용) |
+| model | N | String | 사용할 모델 (기본값: 서버 설정) |
+| stream | N | Boolean | 스트리밍 모드 활성화 여부 (기본값: false) |
+| domains | N | Array | 검색할 도메인 배열 |
+| domain | N | String | 검색할 단일 도메인 |
+| author | N | String | 작성자 필터 |
+| start_date | N | String | 시작일 `YYYYMMDD` |
+| end_date | N | String | 종료일 `YYYYMMDD` |
+| title | N | String | 제목 검색 |
+
+### 요청 예시 (일반 모드)
+```bash
+curl -X POST http://localhost/prompt/chatbot \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "메타버스란 무엇인가요?",
+    "session_id": "user123_session",
+    "model": "mistral",
+    "domain": "tech"
+  }'
+```
+
+### 요청 예시 (스트리밍 모드)
+```bash
+curl -X POST http://localhost/prompt/chatbot \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{
+    "query": "메타버스란 무엇인가요?",
+    "session_id": "user123_session",
+    "model": "mistral",
+    "stream": true
+  }'
+```
+
+### 성공 응답 예시 (일반 모드)
+```json
+{
+  "query": "메타버스란 무엇인가요?",
+  "session_id": "user123_session",
+  "model": "mistral",
+  "response": "메타버스는 가상과 현실이 융합된 디지털 공간입니다. 사용자들은 아바타를 통해 이 공간에서 상호작용하고, 다양한 활동을 할 수 있습니다. 최근에는 게임, 교육, 비즈니스 미팅 등 다양한 분야에서 활용되고 있으며, 특히 코로나19 이후 비대면 환경에서 더욱 주목받고 있습니다."
+}
+```
+
+### 스트리밍 모드 응답
+스트리밍 모드 활성화(`stream=true`) 시:
+- 응답은 `text/event-stream` 형식으로 반환됩니다
+- 응답은 생성되는 텍스트 조각들이 실시간으로 전송됩니다
+- 클라이언트는 이를 순차적으로 수신하여 사용자에게 표시할 수 있습니다
+
+### 실패 응답 예시
+```json
+{
+  "error": "질문이 필요합니다"
+}
+```
+
+또는
+
+```json
+{
+  "error": "세션 ID가 필요합니다"
+}
+```
+
+---
+
+## 23. /prompt/session/clear
+### 기본 정보
+| 항목 | 내용 |
+|------|------|
+| Method | **POST** |
+| URL | `/prompt/session/clear` |
+| Content‑Type | `application/json` |
+| 설명 | 특정 세션을 초기화 (대화 기록 삭제) |
+
+### 요청 파라미터 (Body)
+| 이름 | 필수 | Type | 설명 |
+|------|------|------|------|
+| session_id | Y | String | 초기화할 세션 ID |
+
+### 요청 예시
+```bash
+curl -X POST http://localhost/prompt/session/clear \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "user123_session"
+  }'
+```
+
+### 성공 응답 예시
+```json
+{
+  "status": "success",
+  "message": "세션 user123_session가 초기화되었습니다"
+}
+```
+
+### 실패 응답 예시
+```json
+{
+  "error": "세션 ID가 필요합니다"
+}
+```
+
+---
+
+## 24. /prompt/session/cleanup
+### 기본 정보
+| 항목 | 내용 |
+|------|------|
+| Method | **POST** |
+| URL | `/prompt/session/cleanup` |
+| Content‑Type | `application/json` |
+| 설명 | 만료된 모든 세션 파일 정리 |
+
+### 요청 파라미터
+없음
+
+### 요청 예시
+```bash
+curl -X POST http://localhost/prompt/session/cleanup \
+  -H "Content-Type: application/json"
+```
+
+### 성공 응답 예시
+```json
+{
+  "status": "success",
+  "message": "5개의 만료된 세션이 정리되었습니다"
+}
+```
+
+### 실패 응답 예시
+```json
+{
+  "error": "만료된 세션 정리 중 오류가 발생했습니다: 파일 접근 권한 없음"
+}
+```
+
+---
+
+## 25. /prompt/session/list
+### 기본 정보
+| 항목 | 내용 |
+|------|------|
+| Method | **GET** |
+| URL | `/prompt/session/list` |
+| 설명 | 모든 세션 목록 조회 |
+
+### 요청 파라미터
+없음
+
+### 요청 예시
+```bash
+curl -X GET http://localhost/prompt/session/list
+```
+
+### 성공 응답 예시
+```json
+{
+  "sessions": [
+    "user123_session",
+    "user456_session",
+    "admin_test_session"
+  ],
+  "count": 3
+}
+```
+
+### 실패 응답 예시
+```json
+{
+  "error": "세션 목록 조회 중 오류가 발생했습니다: 디렉토리 접근 실패"
+}
+```
+
+---
+
+## 26. /prompt/session/get
+### 기본 정보
+| 항목 | 내용 |
+|------|------|
+| Method | **GET** |
+| URL | `/prompt/session/get` |
+| 설명 | 특정 세션의 내용 조회 |
+
+### 요청 파라미터 (Query)
+| 이름 | 필수 | Type | 설명 |
+|------|------|------|------|
+| session_id | Y | String | 조회할 세션 ID |
+
+### 요청 예시
+```bash
+curl -X GET "http://localhost/prompt/session/get?session_id=user123_session"
+```
+
+### 성공 응답 예시
+```json
+{
+  "session_id": "user123_session",
+  "history": [
+    {
+      "role": "user",
+      "message": "메타버스란 무엇인가요?",
+      "timestamp": "2024-04-22T15:30:45.123Z"
+    },
+    {
+      "role": "bot",
+      "message": "메타버스는 가상과 현실이 융합된 디지털 공간입니다...",
+      "timestamp": "2024-04-22T15:30:50.456Z"
+    },
+    {
+      "role": "user",
+      "message": "메타버스의 주요 기술은 무엇인가요?",
+      "timestamp": "2024-04-22T15:31:20.789Z"
+    },
+    {
+      "role": "bot",
+      "message": "메타버스의 주요 기술로는 VR(가상현실), AR(증강현실), MR(혼합현실) 등이 있습니다...",
+      "timestamp": "2024-04-22T15:31:25.123Z"
+    }
+  ],
+  "created_at": "2024-04-22T15:30:40.000Z",
+  "last_updated": "2024-04-22T15:31:25.123Z",
+  "message_count": 4,
+  "exists": true
+}
+```
+
+### 실패 응답 예시
+```json
+{
+  "error": "세션 ID가 필요합니다"
+}
+```
+
+또는
+
+```json
+{
+  "error": "세션 내용 조회 중 오류가 발생했습니다: 세션 파일을 찾을 수 없음"
 }
 ```
 
