@@ -11,7 +11,6 @@ from langchain_community.llms import Ollama
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from .session_manager import SessionManager
-from .async_summarizer import AsyncSummarizer
 
 # 로깅 설정
 logger = logging.getLogger("rag-chat-service")
@@ -60,18 +59,8 @@ class RagChatService:
             max_context_tokens=max_context_tokens
         )
         
-        # 비동기 요약 처리기 초기화
-        self.async_summarizer = AsyncSummarizer(
-            session_manager=self.session_manager,
-            ollama_endpoint=ollama_endpoint,
-            default_model=default_model
-        )
-        
         # 시스템 프롬프트 로드
         self.system_prompt = self._load_system_prompt()
-        
-        # 요약 프롬프트 로드
-        self.summary_prompt = self._load_summary_prompt()
         
         # LangChain LLM 초기화
         self.llm = Ollama(
@@ -168,23 +157,6 @@ class RagChatService:
 5. 사용자가 이해하기 쉽게 설명하세요.
 
 문서에 제공된 메타데이터(작성자, 날짜, 링크 등)는 답변에 활용할 수 있습니다."""
-    
-    def _load_summary_prompt(self) -> str:
-        """요약 프롬프트를 로드합니다."""
-        template_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "summary.txt")
-        try:
-            with open(template_path, "r", encoding="utf-8") as f:
-                return f.read()
-        except FileNotFoundError:
-            logger.error(f"요약 템플릿 파일을 찾을 수 없습니다: {template_path}")
-            # 기본 요약 프롬프트
-            return """아래 대화 내용을 1000자 이내로 간결하게 요약해주세요.
-요약은 대화의 주요 주제, 질문, 해결책을 포함해야 합니다.
-중요한 정보나 결정사항이 있다면 반드시 포함해주세요.
-
-{conversation}
-
-요약:"""
     
     def _perform_enhanced_search(self, query: str, **kwargs) -> List[Dict]:
         """enhanced_search API를 통해 문서 검색 및 재랭킹을 수행합니다."""
@@ -340,9 +312,6 @@ class RagChatService:
             # 3. 봇 응답 저장
             self.session_manager.add_bot_message(session_id, response_text)
             
-            # 4. 비동기 요약 처리 시작
-            self.async_summarizer.start_async_summarization(session_id, model)
-            
             logger.info(f"[성능] 총 응답 생성 시간: {(datetime.now() - start_time).total_seconds():.3f}초")
             
             return {
@@ -415,9 +384,6 @@ class RagChatService:
                 
                 # 스트림 종료 후 메모리에 저장
                 self.session_manager.add_bot_message(session_id, accumulated_response)
-                
-                # 비동기 요약 처리 시작
-                self.async_summarizer.start_async_summarization(session_id, model)
                 
                 # 성능 로깅
                 logger.info(f"[성능] 스트리밍 LLM 응답 완료: {(datetime.now() - llm_start).total_seconds():.3f}초, 응답 길이: {len(accumulated_response)}")

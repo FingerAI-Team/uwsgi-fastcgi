@@ -3,6 +3,8 @@ import json
 import time
 import logging
 import re
+import fcntl  # 파일 잠금을 위한 모듈
+import errno
 from datetime import datetime
 import tiktoken
 from typing import List, Dict, Any, Optional, Tuple
@@ -19,6 +21,56 @@ def count_tokens(text: str) -> int:
         return 0
     return len(tokenizer.encode(text))
 
+class FileLock:
+    """파일 잠금 클래스"""
+    
+    def __init__(self, file_path, timeout=30, delay=0.1):
+        self.file_path = file_path
+        self.timeout = timeout
+        self.delay = delay
+        self.lock_file = f"{file_path}.lock"
+        self.fd = None
+        
+    def acquire(self):
+        """잠금을 획득합니다."""
+        start_time = time.time()
+        
+        while True:
+            try:
+                # 잠금 파일 생성 시도
+                self.fd = os.open(self.lock_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                break
+            except OSError as e:
+                if e.errno != errno.EEXIST:
+                    raise
+                
+                # 타임아웃 확인
+                if (time.time() - start_time) >= self.timeout:
+                    raise TimeoutError(f"파일 잠금 획득 시간 초과: {self.file_path}")
+                
+                # 잠시 대기 후 재시도
+                time.sleep(self.delay)
+                
+        # 잠금 파일에 PID 기록
+        os.write(self.fd, str(os.getpid()).encode())
+        
+    def release(self):
+        """잠금을 해제합니다."""
+        if self.fd:
+            os.close(self.fd)
+            try:
+                os.unlink(self.lock_file)
+            except OSError:
+                pass
+            self.fd = None
+            
+    def __enter__(self):
+        self.acquire()
+        return self
+        
+    def __exit__(self, type, value, traceback):
+        self.release()
+
 class SessionManager:
     """파일 기반 세션 관리 클래스"""
     
@@ -26,9 +78,6 @@ class SessionManager:
                  memory_dir: str = "./memory", 
                  max_total_tokens: int = 10000,
                  max_context_tokens: int = 7500,
-                 system_prompt_tokens: int = 500,
-                 user_input_tokens: int = 2000,
-                 summary_chunk_size: int = 20,
                  session_ttl: int = 86400):  # 24시간
         """
         세션 관리자 초기화
@@ -36,18 +85,12 @@ class SessionManager:
         Args:
             memory_dir: 메모리 파일 저장 디렉토리
             max_total_tokens: 전체 입력 최대 토큰 수
-            max_context_tokens: 문맥 유지 최대 토큰 수 (요약 + 대화 기록)
-            system_prompt_tokens: 시스템 프롬프트 예상 토큰 수
-            user_input_tokens: 사용자 입력 예상 최대 토큰 수
-            summary_chunk_size: 한 번에 요약할 대화 턴 수
+            max_context_tokens: 문맥 유지 최대 토큰 수
             session_ttl: 세션 유효 시간(초)
         """
         self.memory_dir = memory_dir
         self.max_total_tokens = max_total_tokens
         self.max_context_tokens = max_context_tokens
-        self.system_prompt_tokens = system_prompt_tokens
-        self.user_input_tokens = user_input_tokens
-        self.summary_chunk_size = summary_chunk_size
         self.session_ttl = session_ttl
         
         # 메모리 디렉토리 생성
@@ -87,16 +130,18 @@ class SessionManager:
         
         if os.path.exists(session_path):
             try:
-                with open(session_path, 'r', encoding='utf-8') as f:
-                    session_data = json.load(f)
+                # 파일 잠금 사용
+                with FileLock(session_path):
+                    with open(session_path, 'r', encoding='utf-8') as f:
+                        session_data = json.load(f)
                     
-                # 세션 유효성 검사
-                if self._is_session_expired(session_data):
-                    logger.info(f"세션 {session_id} 만료됨, 새 세션 생성")
-                    return self._create_new_session(session_id)
-                
-                logger.debug(f"세션 {session_id} 로드 완료: 대화 턴 수={len(session_data.get('history', []))}")
-                return session_data
+                    # 세션 유효성 검사
+                    if self._is_session_expired(session_data):
+                        logger.info(f"세션 {session_id} 만료됨, 새 세션 생성")
+                        return self._create_new_session(session_id)
+                    
+                    logger.debug(f"세션 {session_id} 로드 완료: 대화 턴 수={len(session_data.get('history', []))}")
+                    return session_data
             except Exception as e:
                 logger.error(f"세션 {session_id} 로드 중 오류: {str(e)}")
                 return self._create_new_session(session_id)
@@ -119,7 +164,6 @@ class SessionManager:
         """새 세션 데이터를 생성합니다."""
         return {
             "session_id": session_id,
-            "summarized_chunks": [],
             "history": [],
             "last_updated": datetime.now().isoformat(),
             "created_at": datetime.now().isoformat()
@@ -138,18 +182,20 @@ class SessionManager:
             # 디렉토리 존재 확인
             os.makedirs(os.path.dirname(session_path), exist_ok=True)
             
-            # 임시 파일에 먼저 저장 후 이름 변경 (파일 손상 방지)
-            temp_path = f"{session_path}.tmp"
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                json.dump(session_data, f, ensure_ascii=False, indent=2)
-            
-            # 임시 파일을 실제 파일로 이름 변경
-            if os.path.exists(session_path):
-                os.replace(temp_path, session_path)
-            else:
-                os.rename(temp_path, session_path)
+            # 파일 잠금 사용
+            with FileLock(session_path):
+                # 임시 파일에 먼저 저장 후 이름 변경 (파일 손상 방지)
+                temp_path = f"{session_path}.tmp"
+                with open(temp_path, 'w', encoding='utf-8') as f:
+                    json.dump(session_data, f, ensure_ascii=False, indent=2)
                 
-            logger.debug(f"세션 {session_id} 저장 완료")
+                # 임시 파일을 실제 파일로 이름 변경
+                if os.path.exists(session_path):
+                    os.replace(temp_path, session_path)
+                else:
+                    os.rename(temp_path, session_path)
+                    
+                logger.debug(f"세션 {session_id} 저장 완료")
         except Exception as e:
             logger.error(f"세션 {session_id} 저장 중 오류: {str(e)}")
     
@@ -183,60 +229,16 @@ class SessionManager:
     
     def calculate_tokens(self, session_data: Dict[str, Any]) -> Dict[str, int]:
         """세션 데이터의 토큰 수를 계산합니다."""
-        # 요약 청크 토큰 수
-        summary_tokens = sum(count_tokens(chunk) for chunk in session_data["summarized_chunks"])
-        
         # 대화 기록 토큰 수
         history_tokens = sum(count_tokens(msg["message"]) for msg in session_data["history"])
         
         # 총 토큰 수
-        total_tokens = summary_tokens + history_tokens
+        total_tokens = history_tokens
         
         return {
-            "summary_tokens": summary_tokens,
             "history_tokens": history_tokens,
             "total_tokens": total_tokens
         }
-    
-    def needs_summarization(self, session_data: Dict[str, Any], additional_tokens: int = 0) -> bool:
-        """세션이 요약이 필요한지 확인합니다."""
-        tokens = self.calculate_tokens(session_data)
-        total_with_system = tokens["total_tokens"] + self.system_prompt_tokens + additional_tokens
-        
-        logger.debug(f"토큰 사용량: {total_with_system}/{self.max_context_tokens} (요약={tokens['summary_tokens']}, 대화={tokens['history_tokens']}, 시스템={self.system_prompt_tokens}, 추가={additional_tokens})")
-        
-        return total_with_system > self.max_context_tokens
-    
-    def get_chunk_for_summary(self, session_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """요약할 대화 청크를 가져옵니다."""
-        history = session_data["history"]
-        
-        # 대화 기록이 충분하지 않으면 요약하지 않음
-        if len(history) < self.summary_chunk_size:
-            return []
-        
-        # 앞부분부터 chunk_size만큼 가져옴
-        return history[:self.summary_chunk_size]
-    
-    def format_messages_for_summary(self, messages: List[Dict[str, Any]]) -> str:
-        """요약을 위한 메시지 포맷팅"""
-        formatted = ""
-        for idx, msg in enumerate(messages, 1):
-            role = "사용자" if msg["role"] == "user" else "봇"
-            formatted += f"{idx}. {role}: {msg['message']}\n\n"
-        return formatted
-    
-    def update_with_summary(self, session_data: Dict[str, Any], summary: str) -> Dict[str, Any]:
-        """요약 결과로 세션을 업데이트합니다."""
-        # 요약된 청크 추가
-        session_data["summarized_chunks"].append(summary)
-        
-        # 요약된 메시지 제거
-        session_data["history"] = session_data["history"][self.summary_chunk_size:]
-        
-        logger.info(f"세션 {session_data['session_id']} 요약 완료: 요약 수={len(session_data['summarized_chunks'])}, 남은 대화 턴={len(session_data['history'])}")
-        
-        return session_data
     
     def clear_session(self, session_id: str) -> None:
         """세션을 초기화합니다."""
@@ -244,8 +246,10 @@ class SessionManager:
         
         if os.path.exists(session_path):
             try:
-                os.remove(session_path)
-                logger.info(f"세션 {session_id} 삭제됨")
+                # 파일 잠금 사용
+                with FileLock(session_path):
+                    os.remove(session_path)
+                    logger.info(f"세션 {session_id} 삭제됨")
             except Exception as e:
                 logger.error(f"세션 {session_id} 삭제 중 오류: {str(e)}")
     
@@ -274,9 +278,11 @@ class SessionManager:
                     # 파일 수정 시간 확인
                     mtime = os.path.getmtime(file_path)
                     if now - mtime > self.session_ttl:
-                        os.remove(file_path)
-                        count += 1
-                        logger.info(f"만료된 세션 파일 삭제: {filename}")
+                        # 파일 잠금 사용
+                        with FileLock(file_path):
+                            os.remove(file_path)
+                            count += 1
+                            logger.info(f"만료된 세션 파일 삭제: {filename}")
                 except Exception as e:
                     logger.error(f"세션 파일 {filename} 정리 중 오류: {str(e)}")
         
@@ -288,20 +294,16 @@ class SessionManager:
         # 시스템 프롬프트
         prompt = system_prompt + "\n\n"
         
-        # 요약된 청크
-        if session_data["summarized_chunks"]:
-            prompt += "이전 대화 요약:\n"
-            for idx, chunk in enumerate(session_data["summarized_chunks"], 1):
-                prompt += f"요약 {idx}: {chunk}\n\n"
-        
         # RAG 컨텍스트 (있는 경우)
         if rag_context:
             prompt += "관련 문서 정보:\n" + rag_context + "\n\n"
         
-        # 대화 기록
+        # 대화 기록 - 최근 5턴만 포함
         if session_data["history"]:
             prompt += "최근 대화:\n"
-            for msg in session_data["history"]:
+            # 최대 5턴(10개 메시지)만 포함
+            recent_history = session_data["history"][-10:] if len(session_data["history"]) > 10 else session_data["history"]
+            for msg in recent_history:
                 role = "사용자" if msg["role"] == "user" else "AI"
                 prompt += f"{role}: {msg['message']}\n\n"
         
