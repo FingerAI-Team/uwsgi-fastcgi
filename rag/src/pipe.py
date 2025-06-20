@@ -148,10 +148,19 @@ class InteractManager:
     def get_collection(self, collection_name):
         """
         컬렉션을 효율적으로 관리합니다.
-        - 이미 로드된 컬렉션은 캐시에서 반환
-        - 접근 횟수를 추적하여 LRU(Least Recently Used) 방식으로 캐시 관리
-        - 메모리 최적화를 위한 캐시 크기 제한
-        - 스레드 안전성 보장
+        - 이미 로드된 컬렉션은 캐시에서 반환하여 로드 시간 단축
+        - LRU(Least Recently Used) 방식으로 최대 10개 컬렉션 캐싱
+        - 컬렉션 로드 상태 확인 및 필요시 자동 재로드
+        - 스레드 안전성 보장으로 동시 접근 처리
+        
+        Args:
+            collection_name (str): 로드할 컬렉션(도메인) 이름
+            
+        Returns:
+            Collection: 로드된 컬렉션 객체
+            
+        Raises:
+            Exception: 컬렉션 로드 실패 시 발생
         """
         with self._collection_cache_lock:  # 캐시 접근 동기화
             # 접근 카운트 증가
@@ -228,7 +237,17 @@ class InteractManager:
     
     def create_domain(self, domain_name):
         '''
-        domain = collection
+        새로운 도메인(컬렉션)을 생성합니다.
+        
+        - 필요한 모든 필드 스키마 자동 생성
+        - 벡터 검색을 위한 인덱스 자동 생성
+        - 샤딩 설정으로 분산 처리 지원
+        
+        Args:
+            domain_name (str): 생성할 도메인(컬렉션) 이름
+            
+        Returns:
+            Collection: 생성된 컬렉션 객체
         '''
         # 각 passage의 고유 식별자
         data_passage_uid = self.vectorenv.create_field_schema('passage_uid', dtype='VARCHAR', is_primary=True, max_length=1024)
@@ -252,11 +271,18 @@ class InteractManager:
     def delete_data(self, domain, doc_id):
         """
         특정 도메인에서 doc_id에 해당하는 모든 passage를 삭제합니다.
-        대용량 데이터를 효율적으로 처리하기 위해 배치 단위로 삭제합니다.
+        
+        - 대용량 데이터를 효율적으로 처리하기 위한 배치 단위 삭제
+        - 자동 해시 ID 감지 및 처리
+        - 삭제 실패 시 대체 전략 자동 적용
+        - 상세 로깅으로 삭제 과정 추적
         
         Args:
             domain (str): 삭제할 도메인
-            doc_id (str): 삭제할 문서 ID
+            doc_id (str): 삭제할 문서 ID (원본 또는 해시된 ID)
+            
+        Returns:
+            bool: 삭제 성공 여부
         """
         try:
             # 시간 로깅을 위한 로거 설정
@@ -698,7 +724,7 @@ class InteractManager:
         텍스트 검색과 다양한 필터링 조건을 조합하여 검색을 수행합니다.
         
         Args:
-            query (str): 검색할 텍스트 (필수)
+            query (str): 검색할 텍스트 쿼리 (필수)
             top_k (int): 반환할 결과 개수
             filter_conditions (dict): 필터링 조건
                 - domain: 단일 도메인 검색용
@@ -708,6 +734,11 @@ class InteractManager:
                 - title: 제목 검색어
                 - info: info 필드 내 검색 조건
                 - tags: tags 필드 내 검색 조건
+                
+        Returns:
+            list: 검색 결과 목록 (score 기준 내림차순 정렬)
+                각 결과는 doc_id, raw_doc_id, passage_id, domain, title, author, 
+                text, info, tags, score 필드 포함
         """
         start_time = time.time()
         
@@ -870,10 +901,32 @@ class InteractManager:
 
     def get_document_passages(self, doc_id, domains):
         """
-        특정 문서의 모든 패시지를 가져옴
-        - doc_id: 문서 ID
-        - domains: 검색할 도메인 리스트
-        - 도메인별 문서 정보와 패시지 리스트 반환
+        특정 문서의 모든 패시지를 가져옵니다.
+        
+        - 여러 도메인에서 동시에 문서 검색
+        - 자동 해시 ID 감지 및 처리
+        - 패시지 정렬 및 도메인별 그룹화
+        - JSON 필드 자동 파싱
+        
+        Args:
+            doc_id (str): 문서 ID (원본 또는 해시된 ID)
+            domains (list): 검색할 도메인 리스트
+            
+        Returns:
+            dict: 문서 정보와 도메인별 패시지 리스트
+                {
+                    "doc_id": 해시된 문서 ID,
+                    "raw_doc_id": 원본 문서 ID,
+                    "domain_results": {
+                        도메인명: {
+                            "title": 제목,
+                            "author": 작성자,
+                            "passages": [패시지 목록]
+                        },
+                        ...
+                    }
+                }
+            또는 None (문서를 찾을 수 없는 경우)
         """
         if not doc_id:
             print("[WARNING] Empty doc_id")
@@ -968,7 +1021,33 @@ class InteractManager:
     def get_specific_passage(self, doc_id, passage_id, domains):
         """
         doc_id와 passage_id로 특정 패시지를 조회합니다.
-        지정된 도메인에서만 검색을 수행합니다.
+        
+        - 여러 도메인에서 순차적으로 검색
+        - 자동 해시 ID 감지 및 처리
+        - passage_id 형식 자동 변환 (문자열 → 정수)
+        - JSON 필드 자동 파싱
+        
+        Args:
+            doc_id (str): 문서 ID (원본 또는 해시된 ID)
+            passage_id (str 또는 int): 패시지 ID (p123 형식 또는 정수)
+            domains (list): 검색할 도메인 리스트
+            
+        Returns:
+            dict: 패시지 정보
+                {
+                    "doc_id": 문서 ID,
+                    "raw_doc_id": 원본 문서 ID,
+                    "passage_id": 패시지 ID,
+                    "text": 패시지 텍스트,
+                    "position": 패시지 위치,
+                    "metadata": {
+                        "domain": 도메인,
+                        "title": 제목,
+                        "info": 추가 정보,
+                        "tags": 태그 정보
+                    }
+                }
+            또는 None (패시지를 찾을 수 없는 경우)
         """
         try:
             print(f"[DEBUG] get_specific_passage called with doc_id: {doc_id}, passage_id: {passage_id}")
@@ -1682,11 +1761,18 @@ class InteractManager:
         """
         청크 데이터에 임베딩을 추가하여 삽입 준비를 합니다.
         
+        - 임베딩 배치 처리를 통한 GPU 자원 효율적 사용
+        - 텍스트 길이 제한 및 자동 조정 (최대 9500자)
+        - passage_uid 자동 생성 (없는 경우)
+        - Future 기반 비동기 처리로 병렬성 확보
+        
         Args:
             chunk_data (dict): 임베딩할 청크 데이터
-            
+                필수 필드: 'text'
+                
         Returns:
             dict: 임베딩이 추가된 청크 데이터 또는 None (오류 시)
+                추가 필드: 'text_emb', 'passage_uid'(없는 경우)
         """
         try:
             # 인서트 로거 확인 및 설정
@@ -1867,10 +1953,16 @@ class InteractManager:
         """
         준비된 데이터 배치를 지정된 도메인에 삽입합니다.
         
+        - 필수 필드 검증 및 누락 필드 자동 추가
+        - 문서별 청크 그룹화로 동일 문서 청크들 함께 처리
+        - 대용량 배치 처리 시 자동 분할 처리
+        - 오류 발생 시 개별 항목 재시도 메커니즘
+        
         Args:
             domain (str): 삽입할 도메인 이름
             data_batch (list): 삽입할 데이터 항목의 리스트
-            
+                각 항목은 passage_uid, doc_id, passage_id, text, text_emb 필수
+                
         Returns:
             bool: 삽입 성공 여부
         """
@@ -2031,7 +2123,23 @@ class InteractManager:
             return False
 
     def chunk_document(self, text):
-        """문서를 청크로 나누는 메서드"""
+        """
+        문서를 청크로 나누는 메서드
+        
+        - 문서 내용을 의미 단위로 분할
+        - 딕셔너리 입력 자동 처리 (text 필드 추출)
+        - 청크 크기 최적화 및 중복 방지
+        - 각 청크에 인덱스 자동 할당
+        
+        Args:
+            text (str 또는 dict): 청킹할 텍스트 또는 text 필드를 포함한 딕셔너리
+            
+        Returns:
+            list: (청크 텍스트, 인덱스) 튜플의 리스트
+            
+        Raises:
+            TypeError: 입력이 문자열이 아닌 경우
+        """
         try:
             # 입력이 딕셔너리일 경우 text 필드 추출
             if isinstance(text, dict) and 'text' in text:
@@ -2079,7 +2187,21 @@ class InteractManager:
         return chunks
 
     def check_duplicates(self, doc_ids, domain):
-        """중복 문서 체크 - 리스트 형태로 중복된 doc_id만 반환"""
+        """
+        중복 문서 체크 - 효율적인 배치 처리 방식
+        
+        - IN 연산자를 활용한 단일 쿼리로 다수 문서 중복 검사
+        - 배치 처리로 대용량 문서 세트 효율적 처리
+        - 해시된 doc_id 형식 자동 검증
+        - 상세 로깅으로 문제 추적 용이
+        
+        Args:
+            doc_ids (list): 검사할 문서 ID 목록
+            domain (str): 검사할 도메인
+                
+        Returns:
+            list: 중복된 doc_id만 포함된 리스트
+        """
         try:
             if not doc_ids:
                 print(f"[DUPLICATION_CHECK] 경고: 검사할 문서가 없습니다 (도메인: {domain})")
@@ -2422,10 +2544,15 @@ class InteractManager:
         """
         글로벌 배치 큐에 데이터를 추가합니다.
         
+        - 배치 워커 자동 시작 (필요시)
+        - 필수 필드 자동 검증 및 보완
+        - passage_uid 자동 생성 (없는 경우)
+        - 도메인별 큐 관리로 도메인 간 격리
+        
         Args:
             data (dict 또는 list): 추가할 데이터 항목 또는 항목 리스트
             domain (str): 도메인
-            
+                
         Returns:
             bool: 성공 여부
         """
@@ -2534,7 +2661,14 @@ class InteractManager:
 
     @classmethod
     def flush_all_batches(cls):
-        """모든 도메인의 남은 배치 데이터를 처리합니다."""
+        """
+        모든 도메인의 남은 배치 데이터를 처리합니다.
+        
+        - 모든 도메인의 큐에 있는 데이터 일괄 처리
+        - 배치 삽입 실패 시 개별 항목 재시도
+        - 앱 종료 시 데이터 손실 방지
+        - 도메인별 처리 상태 로깅
+        """
         try:
             import logging
             logger = logging.getLogger('rag-backend')
@@ -2589,7 +2723,14 @@ class InteractManager:
 
     @classmethod
     def start_embedding_worker(cls):
-        """임베딩 배치 처리 워커 스레드를 시작합니다."""
+        """
+        임베딩 배치 처리 워커 스레드를 시작합니다.
+        
+        - 백그라운드 데몬 스레드로 실행
+        - 임베딩 처리 배치화로 GPU 자원 효율적 사용
+        - 비동기 Future 기반 결과 처리
+        - 배치 워커와 연동하여 임베딩 후 자동 배치 삽입
+        """
         if cls.embedding_worker_thread is None or not cls.embedding_worker_running:
             cls.embedding_worker_running = True
             cls.embedding_worker_thread = threading.Thread(target=cls._embedding_worker_loop, daemon=True)
@@ -2717,11 +2858,19 @@ class InteractManager:
         """
         청크를 임베딩 배치 큐에 추가하고 Future 객체를 반환합니다.
         
+        - 임베딩 워커 자동 시작 (필요시)
+        - 비동기 Future 기반 결과 처리
+        - 배치 처리로 GPU 자원 효율적 사용
+        - 타임아웃 처리로 무한 대기 방지
+        
         Args:
             chunk_data (dict): 임베딩할 청크 데이터
+                필수 필드: 'text'
             
         Returns:
             concurrent.futures.Future: 임베딩 완료 후 결과를 받을 Future 객체
+                성공 시 Future.result()는 임베딩이 추가된 청크 데이터 반환
+                실패 시 Future.exception()으로 오류 확인 가능
         """
         # 임베딩 워커 시작 확인
         if not cls.embedding_worker_running:

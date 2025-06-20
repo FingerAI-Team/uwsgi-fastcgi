@@ -83,7 +83,14 @@ interact_manager = InteractManager(data_p=env_manager.data_p, vectorenv=milvus_d
 
 # 자주 사용하는 컬렉션을 미리 로드하는 함수
 def load_common_collections():
-    """자주 사용하는 컬렉션을 미리 로드합니다."""
+    """
+    자주 사용하는 컬렉션을 미리 로드하여 시스템 성능을 향상시킵니다.
+    
+    - 사용 가능한 모든 컬렉션 목록을 조회
+    - 자주 사용하는 컬렉션만 선택적으로 로드
+    - LRU 캐시를 통한 효율적인 메모리 관리
+    - 로드 시간 측정 및 로깅
+    """
     logger.info("Preloading common collections...")
     
     try:
@@ -250,6 +257,17 @@ def show_data():
 
 @app.route('/rag/search', methods=['POST'])
 def search_data():
+    """
+    텍스트 쿼리와 다양한 필터링 조건을 기반으로 유사 문서를 검색합니다.
+    
+    - 여러 도메인(컬렉션)에서 병렬 검색 지원
+    - 날짜 범위, 작성자, 제목 등 다양한 필터링 조건 적용
+    - 결과 통합 및 스코어 기반 재정렬
+    - 성능 메트릭 수집 및 응답에 포함
+    
+    Returns:
+        JSON: 검색 결과와 성능 메트릭을 포함한 응답
+    """
     # 전체 API 실행 시간 측정 시작
     start_time = time.time()
     
@@ -471,7 +489,16 @@ def search_data():
 
 @app.route('/rag/insert', methods=['POST'])
 def insert_data():
-    '''
+    """
+    문서를 자동으로 청킹하여 벡터 데이터베이스에 삽입합니다.
+    
+    - 문서 자동 청킹 및 임베딩 처리
+    - 중복 문서 감지 및 처리 (무시 또는 대체)
+    - 배치 처리를 통한 성능 최적화
+    - 병렬 처리로 대용량 문서 효율적 처리
+    
+    Request Body:
+    ```json
     {
         "documents": [
             {
@@ -489,9 +516,13 @@ def insert_data():
                 }
             }
         ],
-        "ignore": true
+        "ignore": true  // 중복 시 무시 여부 (false면 삭제 후 재삽입)
     }
-    '''
+    ```
+    
+    Returns:
+        JSON: 삽입 결과 요약 및 각 문서별 처리 결과
+    """
     # API 전체 실행 시간 측정 시작
     api_start_time = time.time()
     logger.info("=== INSERT API START ===")
@@ -1285,8 +1316,16 @@ def insert_data():
 
 @app.route('/rag/insert/raw', methods=['POST'])
 def insert_raw_data():
-    '''
-    텍스트를 분할하지 않고 그대로 저장하는 API
+    """
+    텍스트를 분할하지 않고 그대로 저장하는 API입니다.
+    
+    - 사용자 지정 doc_id와 passage_id 사용
+    - 자동 청킹 없이 원본 텍스트 그대로 저장
+    - 중복 문서 감지 및 처리 (무시 또는 대체)
+    - 배치 처리를 통한 성능 최적화
+    
+    Request Body:
+    ```json
     {
         "documents": [
             {
@@ -1308,7 +1347,11 @@ def insert_raw_data():
         ],
         "ignore": true  # true: 중복 시 건너뜀, false: 중복 시 삭제 후 재생성
     }
-    '''
+    ```
+    
+    Returns:
+        JSON: 삽입 결과 요약 및 각 문서별 처리 결과
+    """
     # 로그 시작 표시 - 요청 수신 즉시
     logger.info("=== RAW INSERT API 요청 수신 시작 ===")
     
@@ -1689,12 +1732,21 @@ def insert_raw_data():
 
 @app.route('/rag/delete', methods=['DELETE'])
 def delete_data():
-    '''
-    data: {
-        "domain": "news",  # 도메인(컬렉션) 이름
-        "doc_id": "20220804-메타버스 뉴스-삼성전자"  # 문서 ID
-    }
-    '''
+    """
+    지정된 문서를 벡터 데이터베이스에서 삭제합니다.
+    
+    - 문서 ID 기반 모든 패시지 일괄 삭제
+    - 원본 ID 또는 해시된 ID 모두 지원
+    - 배치 처리를 통한 대용량 데이터 효율적 삭제
+    - 삭제 결과 검증 및 상세 로깅
+    
+    Query Parameters:
+        domain (str): 도메인(컬렉션) 이름
+        doc_id (str): 삭제할 문서 ID
+        
+    Returns:
+        JSON: 삭제 결과 정보
+    """
     doc_id = request.args.get('doc_id')
     doc_domain = request.args.get('domain')
     
@@ -1729,17 +1781,25 @@ def delete_data():
 
 @app.route('/rag/document', methods=['POST'])
 def get_document():
-    '''
-    문서 조회 API
+    """
+    문서 조회 API - 문서 ID 기반으로 전체 문서 또는 특정 패시지를 조회합니다.
+    
+    - 여러 도메인에서 동시에 문서 검색
+    - 전체 문서 또는 특정 패시지 조회 모드 지원
+    - 원본 ID 또는 해시된 ID 모두 지원
+    - JSON 필드 자동 파싱 및 변환
     
     Request Body:
+    ```json
     {
         "doc_id": "문서ID",
         "domains": ["도메인1", "도메인2"],  # 검색할 도메인 리스트
         "passage_id": 1  # optional, 특정 passage만 조회할 경우
     }
+    ```
     
     Response Body (전체 문서 조회 시):
+    ```json
     {
         "doc_id": "해시된 문서ID",
         "raw_doc_id": "원본 문서ID",
@@ -1766,8 +1826,10 @@ def get_document():
             }
         }
     }
+    ```
     
     Response Body (특정 패시지 조회 시):
+    ```json
     {
         "doc_id": "문서ID",
         "raw_doc_id": "원본 문서ID",
@@ -1780,9 +1842,12 @@ def get_document():
             "info": {},
             "tags": {}
         }
-
     }
-    '''
+    ```
+    
+    Returns:
+        JSON: 문서 또는 패시지 정보
+    """
     try:
         request_data = request.get_json()
         if not request_data:
@@ -1865,8 +1930,25 @@ def get_domains():
     """
     시스템에 등록된 모든 도메인(컬렉션) 목록을 반환합니다.
     
+    - 모든 도메인(컬렉션) 목록 조회
+    - 각 도메인별 엔티티 수 및 고유 문서 수 계산
+    - 도메인별 상세 정보 수집
+    - 오류 발생 시에도 기본 정보 제공
+    
     Returns:
-        JSON: 도메인 목록과 각 도메인의 엔티티 수를 포함한 응답
+        JSON: 도메인 목록과 각 도메인의 상세 정보를 포함한 응답
+        {
+            "result_code": "S000000",
+            "message": "도메인 목록을 성공적으로 조회했습니다.",
+            "domains": [
+                {
+                    "name": "도메인명",
+                    "entity_count": 엔티티 수,
+                    "document_count": 고유 문서 수
+                },
+                ...
+            ]
+        }
     """
     try:
         # 모든 컬렉션(도메인) 목록 가져오기
@@ -1920,7 +2002,11 @@ def get_domains():
 def calculate_domain_document_count(collection, domain_name):
     """
     Query Iterator를 사용하여 도메인(컬렉션)의 고유 문서 개수를 계산합니다.
-    대용량 컬렉션에서도 효율적으로 작동합니다.
+    
+    - 대용량 컬렉션에서도 효율적으로 작동
+    - 배치 처리로 메모리 사용량 최적화
+    - 고유 doc_id 기반으로 중복 제거된 문서 수 계산
+    - 오류 발생 시 그레이스풀 디그레이데이션
     
     Args:
         collection: 컬렉션 객체
@@ -2018,15 +2104,34 @@ def calculate_domain_document_count(collection, domain_name):
 def delete_domains():
     """
     지정된 도메인(컬렉션)을 완전히 삭제합니다.
-    단일 도메인 또는 도메인 목록을 받아 해당 도메인의 모든 엔티티와 컬렉션 자체를 삭제합니다.
+    
+    - 단일 도메인 또는 도메인 목록 삭제 지원
+    - 도메인 존재 여부 자동 검증
+    - 도메인별 삭제 결과 개별 추적
+    - 부분 실패 시에도 가능한 작업 완료
     
     Request Body:
+    ```json
     {
         "domains": ["도메인1", "도메인2"] 또는 "도메인명"
     }
+    ```
     
     Returns:
         JSON: 삭제 결과 정보
+        {
+            "result_code": "S000000" 또는 오류 코드,
+            "status": "success", "partial", "error" 또는 "not_found",
+            "message": "삭제 결과 요약",
+            "results": [
+                {
+                    "name": "도메인명",
+                    "status": "success", "error" 또는 "not_found",
+                    "message": "상세 결과 메시지"
+                },
+                ...
+            ]
+        }
     """
     try:
         request_data = request.get_json()
