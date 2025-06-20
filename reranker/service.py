@@ -112,11 +112,33 @@ ENABLE_PROFILING = os.getenv("ENABLE_PROFILING", "0") == "1"
 PROFILE_OUTPUT_DIR = os.getenv("PROFILE_OUTPUT_DIR", "/reranker/profiles")
 
 def get_cache_key(query: str, passages_hash: str) -> str:
-    """캐시 키 생성"""
+    """
+    캐시 키 생성
+    
+    쿼리와 패시지 해시를 결합하여 캐시 키를 생성합니다.
+    
+    Args:
+        query (str): 검색 쿼리
+        passages_hash (str): 패시지 목록의 해시 값
+        
+    Returns:
+        str: 캐시 키 문자열 (형식: "query:passages_hash")
+    """
     return f"{query}:{passages_hash}"
 
 def hash_passages(passages: List[Dict]) -> str:
-    """패시지 리스트의 해시 생성"""
+    """
+    패시지 리스트의 해시 생성
+    
+    패시지 목록을 식별하기 위한 해시 값을 생성합니다.
+    각 패시지의 텍스트 앞부분을 사용하여 해시를 계산합니다.
+    
+    Args:
+        passages (List[Dict]): 패시지 목록
+        
+    Returns:
+        str: 패시지 목록의 해시 값
+    """
     try:
         passage_texts = [p.get('text', '')[:100] for p in passages]  # 각 패시지의 앞부분만 사용
         return str(hash(tuple(passage_texts)))
@@ -126,7 +148,15 @@ def hash_passages(passages: List[Dict]) -> str:
 
 # GPU 메모리 상태 로깅 함수 추가
 def log_gpu_memory(tag: str = ""):
-    """GPU 메모리 사용량 로깅"""
+    """
+    GPU 메모리 사용량 로깅
+    
+    현재 GPU 메모리 사용량을 로그에 기록합니다.
+    CUDA가 사용 가능한 경우에만 메모리 정보를 기록합니다.
+    
+    Args:
+        tag (str, optional): 로그 메시지에 추가할 태그
+    """
     if torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated() / (1024 * 1024)  # MB
         reserved = torch.cuda.memory_reserved() / (1024 * 1024)    # MB
@@ -527,7 +557,13 @@ class RerankerService:
             raise
     
     def _log_system_info(self):
-        """시스템 정보 로깅"""
+        """
+        시스템 정보 로깅
+        
+        현재 시스템 환경에 대한 정보를 로그에 기록합니다.
+        Python 버전, PyTorch 버전, CUDA 가용성 및 GPU 정보 등을 포함합니다.
+        디버깅 및 문제 해결을 위한 기초 정보로 사용됩니다.
+        """
         logger.info("=== System Information ===")
         
         # Python 버전
@@ -555,7 +591,15 @@ class RerankerService:
         logger.info("========================")
     
     def _get_batch_size(self) -> int:
-        """환경에 맞는 배치 크기 결정"""
+        """
+        환경에 맞는 배치 크기 결정
+        
+        현재 실행 환경(CPU/GPU)에 따라 최적의 배치 크기를 결정합니다.
+        설정 파일에서 배치 크기를 가져오거나, 기본값을 사용합니다.
+        
+        Returns:
+            int: 결정된 배치 크기
+        """
         # 기본 배치 크기
         default_batch_size = {
             "cpu": 32,
@@ -580,13 +624,21 @@ class RerankerService:
     
     def _load_config(self, config_path: str = None) -> Dict[str, Any]:
         """
-        Load configuration from file or use defaults
+        설정 파일 로드 또는 기본값 사용
+        
+        지정된 경로에서 설정 파일을 로드합니다. 파일이 없거나 로드에 실패하면
+        기본 설정값을 사용합니다. 환경 변수를 통한 설정 오버라이드도 지원합니다.
         
         Args:
-            config_path: Path to config file
+            config_path (str, optional): 설정 파일 경로
             
         Returns:
-            Configuration dictionary
+            Dict[str, Any]: 설정 딕셔너리
+                - model_name: 모델 이름
+                - cache_dir: 모델 캐시 디렉토리
+                - max_length: 최대 토큰 길이
+                - batch_size: 배치 크기 (CPU/GPU 별로 다름)
+                - mrc: MRC 관련 설정
         """
         default_batch_size = {
             "cpu": 32,
@@ -671,15 +723,28 @@ class RerankerService:
     
     def process_search_results(self, query: str, search_result: Dict[str, Any], top_k: int = 5) -> Dict[str, Any]:
         """
-        Process search results with reranking
+        검색 결과에 재랭킹 적용
+        
+        검색 결과를 쿼리와의 관련성에 따라 재정렬합니다.
+        사용 가능한 재랭커(FlashRank, MRC)에 따라 적절한 방식을 선택합니다.
         
         Args:
-            query: Search query
-            search_result: Search results to rerank
-            top_k: Number of top results to return
+            query (str): 검색 쿼리
+            search_result (Dict[str, Any]): 재랭킹할 검색 결과
+                - query: 검색 쿼리
+                - results: 패시지 목록
+                - total: 전체 결과 수 (선택 사항)
+                - reranked: 이미 재랭킹되었는지 여부 (선택 사항)
+            top_k (int, optional): 반환할 상위 결과 수. 기본값은 5입니다.
             
         Returns:
-            Reranked search results
+            Dict[str, Any]: 재랭킹된 검색 결과
+                - query: 검색 쿼리
+                - results: 재랭킹된 패시지 목록
+                - total: 결과 수
+                - reranked: 재랭킹 여부 (항상 True)
+                - reranker_type: 사용된 재랭커 유형 (flashrank, mrc, hybrid)
+                - processing_time: 처리 시간
         """
         try:
             # 성능 측정 시작
@@ -1096,16 +1161,22 @@ class RerankerService:
     
     def _flashrank_rerank(self, query: str, passages: List[dict], top_k: int = None, search_result: Dict = None) -> Tuple[Dict, List[float], float]:
         """
-        Rerank passages using FlashRank
+        FlashRank를 사용하여 패시지 재랭킹
+        
+        FlashRank 모델을 사용하여 패시지의 순위를 재조정합니다.
+        배치 처리를 통해 대량의 패시지를 효율적으로 처리합니다.
         
         Args:
-            query: Query string
-            passages: List of passages to rerank
-            top_k: Number of top passages to return, if None, return all
-            search_result: 원본 검색 결과 (있는 경우)
+            query (str): 검색 쿼리
+            passages (List[dict]): 재랭킹할 패시지 목록
+            top_k (int, optional): 반환할 상위 결과 수. None이면 모든 결과 반환
+            search_result (Dict, optional): 원본 검색 결과. 제공되면 이 구조를 유지하며 결과 업데이트
             
         Returns:
-            Tuple of (reranked search result dictionary, flashrank scores, processing time)
+            Tuple[Dict, List[float], float]: 
+                - 재랭킹된 검색 결과 딕셔너리
+                - FlashRank 점수 목록
+                - 처리 시간(초)
         """
         if not self.ranker:
             logger.warning("FlashRank reranker not initialized, returning original passages")
@@ -1309,14 +1380,20 @@ class RerankerService:
         """
         FlashRank를 사용한 재랭킹 수행
         
+        FlashRank 모델을 사용하여 패시지를 재랭킹하고 결과를 후처리합니다.
+        _flashrank_rerank 메서드의 확장 버전으로, 추가적인 결과 처리와 에러 처리를 포함합니다.
+        
         Args:
-            query: 검색 쿼리
-            passages: 재랭킹할 패시지 목록
-            top_k: 반환할 상위 결과 수
-            search_result: 원본 검색 결과 (있는 경우)
+            query (str): 검색 쿼리
+            passages (List[Dict]): 재랭킹할 패시지 목록
+            top_k (int, optional): 반환할 상위 결과 수. None이면 모든 결과 반환
+            search_result (Dict, optional): 원본 검색 결과. 제공되면 이 구조를 유지하며 결과 업데이트
             
         Returns:
-            Tuple[Dict, Dict, float]: (재랭킹된 결과 딕셔너리, 점수 딕셔너리, 처리 시간)
+            Tuple[Dict, Dict, float]: 
+                - 재랭킹된 결과 딕셔너리
+                - 점수 딕셔너리 (패시지 ID를 키로 하는 점수 맵)
+                - 처리 시간(초)
         """
         try:
             # 시작 시간 기록

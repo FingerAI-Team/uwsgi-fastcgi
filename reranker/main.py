@@ -184,7 +184,15 @@ def add_header(response):
 
 
 def get_reranker_service():
-    """Get reranker service instance"""
+    """
+    RerankerService의 싱글톤 인스턴스를 가져오는 함수
+    
+    환경 변수나 기본 경로에서 설정 파일을 찾아 RerankerService를 초기화하고,
+    실패 시 DummyReranker를 반환합니다.
+    
+    Returns:
+        RerankerService 또는 DummyReranker 인스턴스
+    """
     try:
         # 절대 경로로 설정된 환경 변수 확인
         config_path = os.environ.get("RERANKER_CONFIG", "/reranker/config.json")
@@ -242,7 +250,14 @@ def initialize_service():
 
 @app.route("/reranker/health")
 def health_check():
-    """Health check endpoint"""
+    """
+    서비스 상태 확인 엔드포인트
+    
+    서비스가 정상적으로 실행 중인지 확인하는 간단한 상태 체크 API입니다.
+    
+    Returns:
+        JSON 응답: {"status": "ok", "service": "reranker"}
+    """
     return Response(
         json.dumps({"status": "ok", "service": "reranker"}, ensure_ascii=False),
         mimetype='application/json; charset=utf-8'
@@ -253,6 +268,18 @@ def health_check():
 def enhanced_search():
     """
     통합 검색 API: RAG 검색 결과를 Reranker로 순위를 다시 매기는 기능
+    
+    RAG 서비스에서 검색 결과를 가져온 후, Reranker를 사용하여 결과의 순위를 재조정합니다.
+    검색 결과가 없는 경우 빈 결과를 반환합니다.
+    
+    Query Parameters:
+        query_text (str): 검색 쿼리 (필수)
+        top_k (int): 반환할 상위 결과 수 (기본값: 5)
+        raw_results (int): RAG 서비스에서 가져올 결과 수 (기본값: 20)
+        domain, author, start_date, end_date, title: 선택적 필터링 파라미터
+        
+    Returns:
+        JSON 응답: 재랭킹된 검색 결과와 메타데이터
     """
     try:
         # 전체 요청 처리 시간 측정 시작
@@ -390,7 +417,23 @@ def enhanced_search():
 @app.route("/reranker/rerank", methods=['POST'])
 def rerank():
     """
-    Rerank passages endpoint
+    패시지 재랭킹 엔드포인트
+    
+    주어진 쿼리와 패시지 목록에 대해 재랭킹을 수행합니다.
+    재랭킹 방식은 쿼리 파라미터 'type'에 따라 결정됩니다.
+    
+    Query Parameters:
+        top_k (int, optional): 반환할 상위 결과 수
+        type (str, optional): 재랭킹 방식 (flashrank, mrc, hybrid, auto)
+        
+    Request Body:
+        query (str): 검색 쿼리
+        results (List[Dict]): 재랭킹할 패시지 목록
+        total (int, optional): 전체 결과 수
+        reranked (bool, optional): 이미 재랭킹되었는지 여부
+        
+    Returns:
+        JSON 응답: 재랭킹된 패시지 목록과 메타데이터
     """
     try:
         # 전체 요청 처리 시간 측정 시작
@@ -457,7 +500,22 @@ def rerank():
 @app.route("/reranker/mrc-rerank", methods=['POST'])
 def mrc_rerank():
     """
-    MRC 기반 재랭킹 엔드포인트
+    MRC(기계 독해) 기반 재랭킹 엔드포인트
+    
+    주어진 쿼리와 패시지 목록에 대해 MRC 모델을 사용하여 재랭킹을 수행합니다.
+    MRC 모델은 질문에 대한 답변 가능성을 기준으로 패시지의 순위를 결정합니다.
+    
+    Query Parameters:
+        top_k (int, optional): 반환할 상위 결과 수
+        
+    Request Body:
+        query (str): 검색 쿼리
+        results (List[Dict]): 재랭킹할 패시지 목록
+        total (int, optional): 전체 결과 수
+        reranked (bool, optional): 이미 재랭킹되었는지 여부
+        
+    Returns:
+        JSON 응답: MRC 모델로 재랭킹된 패시지 목록과 메타데이터
     """
     try:
         # 전체 요청 처리 시간 측정 시작
@@ -520,7 +578,21 @@ def mrc_rerank():
 
 # MRC 설정 확인 함수
 def check_mrc_configuration():
-    """MRC 모델 설정 및 파일 존재 여부 확인"""
+    """
+    MRC 모델 설정 및 파일 존재 여부 확인
+    
+    MRC 모델의 활성화 상태, 설정 파일 및 모델 파일의 존재 여부를 확인합니다.
+    절대 경로와 상대 경로 모두에서 파일 존재 여부를 검사합니다.
+    
+    Returns:
+        Dict: MRC 설정 상태 정보를 담은 딕셔너리
+            - mrc_enabled: MRC 기능 활성화 여부
+            - mrc_reranker_loaded: MRC 재랭커 로드 여부
+            - config_path: 설정 파일 경로
+            - model_path: 모델 파일 경로
+            - config_exists: 설정 파일 존재 여부
+            - model_exists: 모델 파일 존재 여부
+    """
     try:
         service = get_reranker_service()
         mrc_enabled = service.mrc_enabled if hasattr(service, 'mrc_enabled') else False
@@ -583,7 +655,18 @@ def check_mrc_configuration():
 
 @app.route("/reranker/mrc-status", methods=['GET'])
 def mrc_status():
-    """MRC 모듈 상태 확인 API"""
+    """
+    MRC 모듈 상태 확인 API
+    
+    MRC 모듈의 현재 상태를 확인하는 엔드포인트입니다.
+    MRC 모델의 활성화 여부, 설정 파일 및 모델 파일의 존재 여부 등을 반환합니다.
+    
+    Returns:
+        JSON 응답: MRC 모듈 상태 정보
+            - status: 상태 코드 ("ok" 또는 "error")
+            - mrc_configuration: MRC 설정 상태 정보
+            - timestamp: 응답 생성 시간 (UNIX 타임스탬프)
+    """
     try:
         # MRC 설정 확인
         mrc_status = check_mrc_configuration()
@@ -605,6 +688,29 @@ def mrc_status():
 def hybrid_rerank():
     """
     하이브리드 재랭킹 엔드포인트 (FlashRank + MRC)
+    
+    FlashRank와 MRC 모델을 함께 사용하여 재랭킹을 수행하는 엔드포인트입니다.
+    두 모델의 점수를 가중치에 따라 결합하여 최종 순위를 결정합니다.
+    
+    Query Parameters:
+        top_k (int, optional): 반환할 상위 결과 수
+        mrc_weight (float, optional): MRC 점수의 가중치 (0~1 사이 값)
+        
+    Request Body:
+        query (str): 검색 쿼리
+        results (List[Dict]): 재랭킹할 패시지 목록
+        total (int, optional): 전체 결과 수
+        reranked (bool, optional): 이미 재랭킹되었는지 여부
+        top_k (int, optional): 반환할 상위 결과 수 (쿼리 파라미터 우선)
+        mrc_weight (float, optional): MRC 점수의 가중치 (쿼리 파라미터 우선)
+        
+    Returns:
+        JSON 응답: 하이브리드 방식으로 재랭킹된 패시지 목록과 메타데이터
+            - 각 패시지에는 flashrank_score, mrc_score, hybrid_score 포함
+            - processing_time: 전체 처리 시간
+            - flashrank_time: FlashRank 처리 시간
+            - mrc_time: MRC 처리 시간
+            - mrc_weight: 사용된 MRC 가중치
     """
     try:
         # 전체 요청 처리 시간 측정 시작
@@ -859,10 +965,26 @@ def hybrid_rerank():
 @app.route("/reranker/batch_rerank", methods=["POST"])
 def batch_rerank():
     """
-    Batch rerank multiple queries and their passages
+    여러 쿼리와 패시지를 일괄 재랭킹하는 엔드포인트
+    
+    여러 쿼리와 각 쿼리에 대한 패시지 목록을 한 번에 처리합니다.
+    대량의 재랭킹 요청을 효율적으로 처리하기 위한 배치 처리 API입니다.
+    
+    Query Parameters:
+        top_k (int, optional): 각 쿼리별로 반환할 상위 결과 수
+        
+    Request Body:
+        List[Dict]: 각 쿼리별 재랭킹 요청 목록
+            - query (str): 검색 쿼리
+            - results (List[Dict]): 재랭킹할 패시지 목록
+            - total (int, optional): 전체 결과 수
+            - reranked (bool, optional): 이미 재랭킹되었는지 여부
     
     Returns:
-        List of reranked results for each query
+        JSON 응답: 배치 처리 결과
+            - results: 각 쿼리별 재랭킹 결과 목록
+            - total_processing_time: 전체 처리 시간
+            - query_count: 처리된 쿼리 수
     """
     try:
         # 전체 요청 처리 시간 측정 시작
