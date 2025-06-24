@@ -199,6 +199,9 @@ class MRCReranker:
         """
         logger.info(f"하이브리드 재랭킹 시작: query='{query}', passages={len(passages)}, weight_mrc={weight_mrc}")
         
+        # 입력 데이터 로깅 - original_id 값 확인
+        logger.info(f"[DEBUG] 입력 패시지 original_id 샘플: {[p.get('original_id', 'N/A') for p in passages[:5]]}")
+        
         # MRC 입력 생성 및 추론
         samples = []
         for passage in passages:
@@ -259,19 +262,32 @@ class MRCReranker:
                 passage['metadata']['hybrid_score'] = hybrid_score
                 passage['metadata']['mrc_weight'] = weight_mrc
             
-            logger.debug(f"Passage {i}: flashrank={flashrank_score:.4f}, mrc={mrc_score:.4f}, hybrid={passage['hybrid_score']:.4f}")
+            # original_id 값 로깅
+            if i < 5 or i >= len(passages) - 5:  # 처음 5개와 마지막 5개만 로깅
+                logger.info(f"[DEBUG] Passage {i}: original_id={passage.get('original_id', 'N/A')}, flashrank={flashrank_score:.4f}, mrc={mrc_score:.4f}, hybrid={passage['hybrid_score']:.4f}")
         
         # 하이브리드 점수로 정렬
         reranked_passages = sorted(passages, key=lambda x: x.get('hybrid_score', 0), reverse=True)
         
+        # 정렬 후 original_id 값 로깅
+        logger.info(f"[DEBUG] 정렬 후 original_id 샘플: {[p.get('original_id', 'N/A') for p in reranked_passages[:5]]}")
+        if len(reranked_passages) > 5:
+            logger.info(f"[DEBUG] 정렬 후 마지막 항목들 original_id: {[p.get('original_id', 'N/A') for p in reranked_passages[-5:]]}")
+        
         # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
-        for passage in reranked_passages:
+        for i, passage in enumerate(reranked_passages):
             if "metadata" in passage and passage["metadata"] is not None:
                 try:
                     # metadata 내부의 모든 필드를 상위 레벨로 복사
                     for key, value in passage["metadata"].items():
                         if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
                             passage[key] = value
+                    
+                    # 중요 메타데이터 필드 로깅 (처음 5개와 마지막 5개만)
+                    if i < 5 or i >= len(reranked_passages) - 5:
+                        meta_keys = list(passage["metadata"].keys())
+                        logger.info(f"[DEBUG] Passage {i} 메타데이터 키: {meta_keys[:10]}{'...' if len(meta_keys) > 10 else ''}")
+                    
                     # metadata 필드 제거
                     del passage["metadata"]
                 except AttributeError:
@@ -288,11 +304,33 @@ class MRCReranker:
         # top_k 적용 (점수 목록도 함께 정렬)
         if top_k is not None and isinstance(top_k, int) and top_k > 0:
             # 원본 인덱스 정보를 유지하면서 상위 결과 선택
+            logger.info(f"[DEBUG] top_k 적용 전 결과 수: {len(reranked_passages)}")
+            logger.info(f"[DEBUG] top_k={top_k} 적용")
+            
+            # top_k 적용 전 마지막 항목 original_id 로깅
+            if len(reranked_passages) > 0:
+                logger.info(f"[DEBUG] top_k 적용 전 마지막 항목: original_id={reranked_passages[-1].get('original_id', 'N/A')}")
+            
             reranked_passages = reranked_passages[:top_k]
+            
+            # top_k 적용 후 마지막 항목 original_id 로깅
+            if len(reranked_passages) > 0:
+                logger.info(f"[DEBUG] top_k 적용 후 마지막 항목: original_id={reranked_passages[-1].get('original_id', 'N/A')}")
             
             # 같은 순서로 mrc_scores 재정렬 (필요한 경우)
             if return_mrc_scores:
                 mrc_scores = mrc_scores[:top_k]
+        
+        # 최종 결과의 original_id 값 로깅
+        logger.info(f"[DEBUG] 최종 결과 original_id: {[p.get('original_id', 'N/A') for p in reranked_passages]}")
+        
+        # 최종 결과의 주요 필드 로깅
+        if len(reranked_passages) > 0:
+            last_passage = reranked_passages[-1]
+            logger.info(f"[DEBUG] 마지막 항목 필드: {list(last_passage.keys())}")
+            logger.info(f"[DEBUG] 마지막 항목 title: {last_passage.get('title', 'N/A')}")
+            logger.info(f"[DEBUG] 마지막 항목 author: {last_passage.get('author', 'N/A')}")
+            logger.info(f"[DEBUG] 마지막 항목 tags: {last_passage.get('tags', 'N/A')}")
         
         logger.info(f"하이브리드 재랭킹 완료: {len(reranked_passages)} 결과 반환")
         

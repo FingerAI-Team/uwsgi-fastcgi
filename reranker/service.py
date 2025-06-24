@@ -925,13 +925,12 @@ class RerankerService:
                     mrc_processing_time = time.time() - hybrid_start_time
                     logger.info(f"[HYBRID-DETAIL] MRC 하이브리드 재랭킹 완료, 소요 시간: {mrc_processing_time:.3f}초, 결과 수: {len(reranked_passages)}")
                     
-                    # MRC 점수 확인
-                    if mrc_scores:
-                        # 점수 분포 로깅
-                        min_score = min(mrc_scores)
-                        max_score = max(mrc_scores)
-                        avg_score = sum(mrc_scores) / len(mrc_scores)
-                        logger.info(f"[HYBRID-DETAIL] MRC 점수 분포: 최소={min_score:.4f}, 최대={max_score:.4f}, 평균={avg_score:.4f}")
+                    # 결과 확인 로그 추가
+                    logger.info(f"[DEBUG-SERVICE] 재랭킹 결과 수: {len(reranked_passages)}")
+                    if len(reranked_passages) > 0:
+                        logger.info(f"[DEBUG-SERVICE] 첫 번째 항목 original_id: {reranked_passages[0].get('original_id', 'N/A')}")
+                        logger.info(f"[DEBUG-SERVICE] 마지막 항목 original_id: {reranked_passages[-1].get('original_id', 'N/A')}")
+                        logger.info(f"[DEBUG-SERVICE] 마지막 항목 필드: {list(reranked_passages[-1].keys())}")
                     
                     # 결과에 세부 점수 추가
                     logger.info("[HYBRID-DETAIL] 결과에 세부 점수 추가 시작")
@@ -965,6 +964,14 @@ class RerankerService:
                         
                         # 메타데이터 업데이트
                         passage["metadata"] = metadata
+                        
+                        # 디버깅을 위한 로그 추가 (첫 번째와 마지막 항목만)
+                        if i == 0 or i == len(reranked_passages) - 1:
+                            logger.info(f"[DEBUG-SERVICE] 항목 {i} 처리: original_id={passage.get('original_id', 'N/A')}")
+                            logger.info(f"[DEBUG-SERVICE] 항목 {i} 필드: {list(passage.keys())}")
+                            logger.info(f"[DEBUG-SERVICE] 항목 {i} title: {passage.get('title', 'N/A')}")
+                            logger.info(f"[DEBUG-SERVICE] 항목 {i} author: {passage.get('author', 'N/A')}")
+                            logger.info(f"[DEBUG-SERVICE] 항목 {i} domain: {passage.get('domain', 'N/A')}")
                     
                     # 결과 포맷팅
                     result = {
@@ -991,6 +998,16 @@ class RerankerService:
                         result["filtered_count"] = original_count
                         result["returned_count"] = top_k
                         logger.info(f"[HYBRID-DETAIL] 최종 응답 필터링: 전체 {original_count}개 중 상위 {top_k}개만 반환")
+                        
+                        # 최종 결과 확인 로그 추가
+                        logger.info(f"[DEBUG-SERVICE] 최종 결과 수: {len(reranked_passages)}")
+                        if len(reranked_passages) > 0:
+                            logger.info(f"[DEBUG-SERVICE] 최종 첫 번째 항목 original_id: {reranked_passages[0].get('original_id', 'N/A')}")
+                            logger.info(f"[DEBUG-SERVICE] 최종 마지막 항목 original_id: {reranked_passages[-1].get('original_id', 'N/A')}")
+                            logger.info(f"[DEBUG-SERVICE] 최종 마지막 항목 필드: {list(reranked_passages[-1].keys())}")
+                            logger.info(f"[DEBUG-SERVICE] 최종 마지막 항목 title: {reranked_passages[-1].get('title', 'N/A')}")
+                            logger.info(f"[DEBUG-SERVICE] 최종 마지막 항목 author: {reranked_passages[-1].get('author', 'N/A')}")
+                            logger.info(f"[DEBUG-SERVICE] 최종 마지막 항목 domain: {reranked_passages[-1].get('domain', 'N/A')}")
                     
                     return result
                     
