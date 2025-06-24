@@ -71,7 +71,7 @@ class AgentService:
         default_config = {
             "search_top": int(os.getenv("RAG_SEARCH_TOP_K", "100")),
             "rerank_top": int(os.getenv("RERANKER_TOP_K", "20")),
-            "default_model": os.getenv("DEFAULT_MODEL", "mistral"),
+            "default_model": os.getenv("DEFAULT_MODEL", "gemma3:12b"),
             "rerank_threshold": float(os.getenv("RERANK_THRESHOLD", "0.1"))
         }
         

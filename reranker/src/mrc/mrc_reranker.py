@@ -287,8 +287,9 @@ class MRCReranker:
         for i, passage in enumerate(reranked_passages):
             # original_id 값이 있는지 확인하고 로깅
             has_original_id = 'original_id' in passage
+            original_id_value = passage.get('original_id', 'N/A')
             if i < 5 or i >= len(reranked_passages) - 5:  # 처음 5개와 마지막 5개만 로깅
-                logger.info(f"[DEBUG-ORIGINAL-ID] 메타데이터 처리 전 항목 {i}: original_id 존재={has_original_id}, 값={passage.get('original_id', 'N/A')}")
+                logger.info(f"[DEBUG-ORIGINAL-ID] 메타데이터 처리 전 항목 {i}: original_id 존재={has_original_id}, 값={original_id_value}")
                 
             if "metadata" in passage and passage["metadata"] is not None:
                 try:

@@ -1317,8 +1317,8 @@ class RerankerService:
                         original_id = original_passage.get("passage_id") or original_passage.get("id")
                         logger.info(f"[DEBUG-BATCH-MAPPING] 배치 항목 매핑: 임시ID={passage_id}, 원본ID={original_id}, 필드={list(original_passage.keys())}")
                         
-                        # 원본 ID 보존을 위한 필드 추가
-                        if original_id and "original_id" not in original_passage:
+                        # 원본 ID 보존을 위한 필드 추가 - 0인 경우도 처리
+                        if original_id is not None and "original_id" not in original_passage:
                             original_passage["original_id"] = original_id
                             logger.info(f"[DEBUG-BATCH-MAPPING] 원본ID 보존: {original_id}")
                         
@@ -1395,12 +1395,13 @@ class RerankerService:
                     
                     # 로그 추가 - 매핑 과정 추적
                     if idx < 5 or idx >= len(reranked_results) - 5:  # 처음 5개와 마지막 5개만 로깅
-                        logger.info(f"[DEBUG-MAPPING] 항목 {idx}: passage_id={passage_id}, 매핑 가능={passage_id in original_metadata if passage_id else False}")
+                        logger.info(f"[DEBUG-MAPPING] 항목 {idx}: passage_id={passage_id}, 매핑 가능={passage_id in original_metadata if passage_id is not None else False}")
                         logger.info(f"[DEBUG-MAPPING] 항목 {idx} 필드: {list(passage.keys())}")
                         if "original_id" in passage:
                             logger.info(f"[DEBUG-MAPPING] 항목 {idx} original_id: {passage.get('original_id')}")
                     
-                    if passage_id and passage_id in original_metadata:
+                    # passage_id가 0인 경우에도 처리되도록 is not None 조건 사용
+                    if passage_id is not None and passage_id in original_metadata:
                         orig = original_metadata[passage_id]
                         # 중요 메타데이터 필드 복사
                         for key in ["author", "domain", "info", "tags", "title", "doc_id"]:
@@ -1581,8 +1582,8 @@ class RerankerService:
                         original_id = original_passage.get("passage_id") or original_passage.get("id")
                         logger.info(f"[DEBUG-BATCH-MAPPING] 배치 항목 매핑: 임시ID={passage_id}, 원본ID={original_id}, 필드={list(original_passage.keys())}")
                         
-                        # 원본 ID 보존을 위한 필드 추가
-                        if original_id and "original_id" not in original_passage:
+                        # 원본 ID 보존을 위한 필드 추가 - 0인 경우도 처리
+                        if original_id is not None and "original_id" not in original_passage:
                             original_passage["original_id"] = original_id
                             logger.info(f"[DEBUG-BATCH-MAPPING] 원본ID 보존: {original_id}")
                         

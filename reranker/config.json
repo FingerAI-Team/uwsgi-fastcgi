@@ -24,6 +24,6 @@
         "model_ckpt_path": "src/mrc/mrc.ckpt",
         "model_config_gdrive_id": "1JSuDygqET5Tg7wFWsqUy2Lgfa9yoTRm0",
         "model_ckpt_gdrive_id": "1KEFpxaBYrp7q8uck4r_m8pJspZGMQodl",
-        "hybrid_weight_mrc": 0.7
+        "hybrid_weight_mrc": 0.5
     }
 } 

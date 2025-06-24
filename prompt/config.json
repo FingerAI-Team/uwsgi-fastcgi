@@ -1,5 +1,6 @@
 {
     "search_top": 100,
     "rerank_top": 10,
-    "default_model": "gemma3:12b"
+    "default_model": "gemma3:12b",
+    "rerank_threshold": 0.1
 } 
