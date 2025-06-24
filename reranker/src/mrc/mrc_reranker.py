@@ -287,19 +287,13 @@ class MRCReranker:
         
         # top_k 적용 (점수 목록도 함께 정렬)
         if top_k is not None and isinstance(top_k, int) and top_k > 0:
-            # 인덱스와 함께 정렬된 패시지 목록 생성
-            indexed_passages = [(i, p) for i, p in enumerate(reranked_passages)]
-            # top_k까지만 선택
-            top_indexed_passages = indexed_passages[:top_k]
-            # 인덱스와 패시지 분리
-            indices, reranked_passages = zip(*top_indexed_passages) if top_indexed_passages else ([], [])
+            # 원본 인덱스 정보를 유지하면서 상위 결과 선택
+            reranked_passages = reranked_passages[:top_k]
+            
             # 같은 순서로 mrc_scores 재정렬 (필요한 경우)
             if return_mrc_scores:
-                mrc_scores = [mrc_scores[i] for i in indices]
-                
-            # 리스트로 변환 (zip 결과는 튜플)
-            reranked_passages = list(reranked_passages)
-            
+                mrc_scores = mrc_scores[:top_k]
+        
         logger.info(f"하이브리드 재랭킹 완료: {len(reranked_passages)} 결과 반환")
         
         if return_mrc_scores:
