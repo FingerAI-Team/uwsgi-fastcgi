@@ -45,6 +45,9 @@ class MRCReranker:
         """
         logger.info(f"MRC 기반 재랭킹 시작: query='{query}', passages={len(passages)}")
         
+        # id 값 확인 로깅
+        logger.info(f"[DEBUG] 입력 패시지 id 샘플: {[p.get('id', 'N/A') for p in passages[:3]]}")
+        
         # MRC 입력 생성
         samples = []
         for i, passage in enumerate(passages):
@@ -199,17 +202,16 @@ class MRCReranker:
         """
         logger.info(f"하이브리드 재랭킹 시작: query='{query}', passages={len(passages)}, weight_mrc={weight_mrc}")
         
-        # 입력 데이터 로깅 - original_id 값 확인
-        logger.info(f"[DEBUG] 입력 패시지 original_id 샘플: {[p.get('original_id', 'N/A') for p in passages[:5]]}")
+        # 입력 데이터 로깅 - id 값 확인
+        logger.info(f"[DEBUG] 입력 패시지 id 샘플: {[p.get('id', 'N/A') for p in passages[:5]]}")
         
-        # original_id 값의 분포 확인
-        original_ids = [p.get('original_id', 'N/A') for p in passages if 'original_id' in p]
-        if original_ids:
-            logger.info(f"[DEBUG-ORIGINAL-ID] original_id 값 존재: {len(original_ids)}/{len(passages)}")
-            logger.info(f"[DEBUG-ORIGINAL-ID] original_id 최소값: {min([oid for oid in original_ids if isinstance(oid, (int, float))], default='N/A')}")
-            logger.info(f"[DEBUG-ORIGINAL-ID] original_id 최대값: {max([oid for oid in original_ids if isinstance(oid, (int, float))], default='N/A')}")
+        # id 값의 분포 확인
+        ids = [p.get('id', 'N/A') for p in passages if 'id' in p]
+        if ids:
+            logger.info(f"[DEBUG-ID] id 값 존재: {len(ids)}/{len(passages)}")
+            logger.info(f"[DEBUG-ID] id 샘플: {ids[:5]}")
         else:
-            logger.info(f"[DEBUG-ORIGINAL-ID] original_id 값이 없음")
+            logger.info(f"[DEBUG-ID] id 값이 없음")
         
         # MRC 입력 생성 및 추론
         samples = []
@@ -273,23 +275,23 @@ class MRCReranker:
             
             # original_id 값 로깅
             if i < 5 or i >= len(passages) - 5:  # 처음 5개와 마지막 5개만 로깅
-                logger.info(f"[DEBUG] Passage {i}: original_id={passage.get('original_id', 'N/A')}, flashrank={flashrank_score:.4f}, mrc={mrc_score:.4f}, hybrid={passage['hybrid_score']:.4f}")
+                logger.info(f"[DEBUG] Passage {i}: id={passage.get('id', 'N/A')}, flashrank={flashrank_score:.4f}, mrc={mrc_score:.4f}, hybrid={passage['hybrid_score']:.4f}")
         
         # 하이브리드 점수로 정렬
         reranked_passages = sorted(passages, key=lambda x: x.get('hybrid_score', 0), reverse=True)
         
-        # 정렬 후 original_id 값 로깅
-        logger.info(f"[DEBUG] 정렬 후 original_id 샘플: {[p.get('original_id', 'N/A') for p in reranked_passages[:5]]}")
+        # 정렬 후 id 값 로깅
+        logger.info(f"[DEBUG] 정렬 후 id 샘플: {[p.get('id', 'N/A') for p in reranked_passages[:5]]}")
         if len(reranked_passages) > 5:
-            logger.info(f"[DEBUG] 정렬 후 마지막 항목들 original_id: {[p.get('original_id', 'N/A') for p in reranked_passages[-5:]]}")
+            logger.info(f"[DEBUG] 정렬 후 마지막 항목들 id: {[p.get('id', 'N/A') for p in reranked_passages[-5:]]}")
         
         # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
         for i, passage in enumerate(reranked_passages):
-            # original_id 값이 있는지 확인하고 로깅
-            has_original_id = 'original_id' in passage
-            original_id_value = passage.get('original_id', 'N/A')
+            # id 값이 있는지 확인하고 로깅
+            has_id = 'id' in passage
+            id_value = passage.get('id', 'N/A')
             if i < 5 or i >= len(reranked_passages) - 5:  # 처음 5개와 마지막 5개만 로깅
-                logger.info(f"[DEBUG-ORIGINAL-ID] 메타데이터 처리 전 항목 {i}: original_id 존재={has_original_id}, 값={original_id_value}")
+                logger.info(f"[DEBUG-ID] 메타데이터 처리 전 항목 {i}: id 존재={has_id}, 값={id_value}")
                 
             if "metadata" in passage and passage["metadata"] is not None:
                 try:
@@ -316,10 +318,10 @@ class MRCReranker:
             if "mrc_score" in passage and "mrc_char_ids" not in passage:
                 passage["mrc_char_ids"] = []
             
-            # original_id 값이 있는지 다시 확인하고 로깅
-            has_original_id_after = 'original_id' in passage
+            # id 값이 있는지 다시 확인하고 로깅
+            has_id_after = 'id' in passage
             if i < 5 or i >= len(reranked_passages) - 5:  # 처음 5개와 마지막 5개만 로깅
-                logger.info(f"[DEBUG-ORIGINAL-ID] 메타데이터 처리 후 항목 {i}: original_id 존재={has_original_id_after}, 값={passage.get('original_id', 'N/A')}")
+                logger.info(f"[DEBUG-ID] 메타데이터 처리 후 항목 {i}: id 존재={has_id_after}, 값={id_value}")
                 
                 # 필드 변화 확인
                 logger.info(f"[DEBUG-FIELDS] 항목 {i} 필드: {list(passage.keys())}")
@@ -330,22 +332,22 @@ class MRCReranker:
             logger.info(f"[DEBUG] top_k 적용 전 결과 수: {len(reranked_passages)}")
             logger.info(f"[DEBUG] top_k={top_k} 적용")
             
-            # top_k 적용 전 마지막 항목 original_id 로깅
+            # top_k 적용 전 마지막 항목 id 로깅
             if len(reranked_passages) > 0:
-                logger.info(f"[DEBUG] top_k 적용 전 마지막 항목: original_id={reranked_passages[-1].get('original_id', 'N/A')}")
+                logger.info(f"[DEBUG] top_k 적용 전 마지막 항목: id={reranked_passages[-1].get('id', 'N/A')}")
             
             reranked_passages = reranked_passages[:top_k]
             
-            # top_k 적용 후 마지막 항목 original_id 로깅
+            # top_k 적용 후 마지막 항목 id 로깅
             if len(reranked_passages) > 0:
-                logger.info(f"[DEBUG] top_k 적용 후 마지막 항목: original_id={reranked_passages[-1].get('original_id', 'N/A')}")
+                logger.info(f"[DEBUG] top_k 적용 후 마지막 항목: id={reranked_passages[-1].get('id', 'N/A')}")
             
             # 같은 순서로 mrc_scores 재정렬 (필요한 경우)
             if return_mrc_scores:
                 mrc_scores = mrc_scores[:top_k]
         
-        # 최종 결과의 original_id 값 로깅
-        logger.info(f"[DEBUG] 최종 결과 original_id: {[p.get('original_id', 'N/A') for p in reranked_passages]}")
+        # 최종 결과의 id 값 로깅
+        logger.info(f"[DEBUG] 최종 결과 id: {[p.get('id', 'N/A') for p in reranked_passages]}")
         
         # 최종 결과의 주요 필드 로깅
         if len(reranked_passages) > 0:

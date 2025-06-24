@@ -580,11 +580,9 @@ def enhanced_search():
             if "metadata" in result_item:
                 del result_item["metadata"]
             
-            # id 필드 처리 - 원본 id만 보존하고 새 id는 생성하지 않음
-            if "id" in result_item:
-                result_item["original_id"] = result_item["id"]
-                # id 필드 제거 (rerank_position으로 대체)
-                del result_item["id"]
+            # id 필드 유지 (원본 id 그대로 사용)
+            # 기존 코드에서는 original_id로 복사하고 id를 삭제했지만,
+            # 이제는 id를 그대로 유지합니다.
             
             # 최종 결과에 추가
             processed_results.append(result_item)

@@ -74,15 +74,19 @@ class RerankerClient:
         processed_results = []
         for result in results:
             processed_result = {
-                "passage_id": result["id"],
+                "id": result.get("id"),  # 고유 식별자 사용
                 "doc_id": result["meta"].get("doc_id", ""),
+                "passage_id": result["meta"].get("passage_id", ""),
                 "text": result["text"],
                 "score": float(result["score"])
             }
 
             # 메타데이터에서 original_score 보존
             if "original_score" in result["meta"]:
-                metadata = {"original_score": result["meta"]["original_score"]}
+                metadata = {
+                    "original_score": result["meta"]["original_score"],
+                    "unique_id": result.get("id")  # 고유 식별자도 메타데이터에 보존
+                }
                 processed_result["metadata"] = metadata
             
             # MRC 관련 필드가 있으면 추가
@@ -145,15 +149,19 @@ class RerankerClient:
         processed_results = []
         for result in results:
             processed_result = {
-                "passage_id": result["id"],
+                "id": result.get("id"),  # 고유 식별자 사용
                 "doc_id": result["meta"].get("doc_id", ""),
+                "passage_id": result["meta"].get("passage_id", ""),
                 "text": result["text"],
                 "score": float(result["score"])
             }
 
             # 메타데이터에서 original_score 보존
             if "original_score" in result["meta"]:
-                metadata = {"original_score": result["meta"]["original_score"]}
+                metadata = {
+                    "original_score": result["meta"]["original_score"],
+                    "unique_id": result.get("id")  # 고유 식별자도 메타데이터에 보존
+                }
                 processed_result["metadata"] = metadata
             
             # MRC 관련 필드가 있으면 추가
@@ -220,15 +228,19 @@ class RerankerClient:
         processed_results = []
         for result in results:
             processed_result = {
-                "passage_id": result["id"],
+                "id": result.get("id"),  # 고유 식별자 사용
                 "doc_id": result["meta"].get("doc_id", ""),
+                "passage_id": result["meta"].get("passage_id", ""),
                 "text": result["text"],
                 "score": float(result["score"])
             }
 
             # 메타데이터에서 original_score 보존
             if "original_score" in result["meta"]:
-                metadata = {"original_score": result["meta"]["original_score"]}
+                metadata = {
+                    "original_score": result["meta"]["original_score"],
+                    "unique_id": result.get("id")  # 고유 식별자도 메타데이터에 보존
+                }
                 processed_result["metadata"] = metadata
             
             # MRC 관련 필드가 있으면 추가
@@ -292,8 +304,9 @@ class RerankerClient:
                 "query": query,
                 "results": [
                     {
-                        "passage_id": result["id"],
+                        "id": result.get("id"),  # 고유 식별자 사용
                         "doc_id": result["meta"].get("doc_id", ""),
+                        "passage_id": result["meta"].get("passage_id", ""),
                         "text": result["text"],
                         "score": float(result["score"])
                     }
