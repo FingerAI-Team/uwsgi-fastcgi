@@ -202,6 +202,15 @@ class MRCReranker:
         # 입력 데이터 로깅 - original_id 값 확인
         logger.info(f"[DEBUG] 입력 패시지 original_id 샘플: {[p.get('original_id', 'N/A') for p in passages[:5]]}")
         
+        # original_id 값의 분포 확인
+        original_ids = [p.get('original_id', 'N/A') for p in passages if 'original_id' in p]
+        if original_ids:
+            logger.info(f"[DEBUG-ORIGINAL-ID] original_id 값 존재: {len(original_ids)}/{len(passages)}")
+            logger.info(f"[DEBUG-ORIGINAL-ID] original_id 최소값: {min([oid for oid in original_ids if isinstance(oid, (int, float))], default='N/A')}")
+            logger.info(f"[DEBUG-ORIGINAL-ID] original_id 최대값: {max([oid for oid in original_ids if isinstance(oid, (int, float))], default='N/A')}")
+        else:
+            logger.info(f"[DEBUG-ORIGINAL-ID] original_id 값이 없음")
+        
         # MRC 입력 생성 및 추론
         samples = []
         for passage in passages:
@@ -276,6 +285,11 @@ class MRCReranker:
         
         # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
         for i, passage in enumerate(reranked_passages):
+            # original_id 값이 있는지 확인하고 로깅
+            has_original_id = 'original_id' in passage
+            if i < 5 or i >= len(reranked_passages) - 5:  # 처음 5개와 마지막 5개만 로깅
+                logger.info(f"[DEBUG-ORIGINAL-ID] 메타데이터 처리 전 항목 {i}: original_id 존재={has_original_id}, 값={passage.get('original_id', 'N/A')}")
+                
             if "metadata" in passage and passage["metadata"] is not None:
                 try:
                     # metadata 내부의 모든 필드를 상위 레벨로 복사
@@ -300,6 +314,14 @@ class MRCReranker:
                 passage["mrc_answer"] = ""
             if "mrc_score" in passage and "mrc_char_ids" not in passage:
                 passage["mrc_char_ids"] = []
+            
+            # original_id 값이 있는지 다시 확인하고 로깅
+            has_original_id_after = 'original_id' in passage
+            if i < 5 or i >= len(reranked_passages) - 5:  # 처음 5개와 마지막 5개만 로깅
+                logger.info(f"[DEBUG-ORIGINAL-ID] 메타데이터 처리 후 항목 {i}: original_id 존재={has_original_id_after}, 값={passage.get('original_id', 'N/A')}")
+                
+                # 필드 변화 확인
+                logger.info(f"[DEBUG-FIELDS] 항목 {i} 필드: {list(passage.keys())}")
         
         # top_k 적용 (점수 목록도 함께 정렬)
         if top_k is not None and isinstance(top_k, int) and top_k > 0:

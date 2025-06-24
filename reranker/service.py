@@ -1313,6 +1313,15 @@ class RerankerService:
                         original_passage = batch_passages[passage_id]
                         score = scored_passage["score"]
                         
+                        # 원본 패시지 ID 추적 로그 추가
+                        original_id = original_passage.get("passage_id") or original_passage.get("id")
+                        logger.info(f"[DEBUG-BATCH-MAPPING] 배치 항목 매핑: 임시ID={passage_id}, 원본ID={original_id}, 필드={list(original_passage.keys())}")
+                        
+                        # 원본 ID 보존을 위한 필드 추가
+                        if original_id and "original_id" not in original_passage:
+                            original_passage["original_id"] = original_id
+                            logger.info(f"[DEBUG-BATCH-MAPPING] 원본ID 보존: {original_id}")
+                        
                         # 원본 패시지에 점수 및 순위 정보 추가
                         flashrank_score = score  # FlashRank 점수 저장
                         original_passage["flashrank_score"] = flashrank_score  # FlashRank 점수 명시적으로 저장
@@ -1338,11 +1347,30 @@ class RerankerService:
             logger.info(f"FlashRank 재랭킹 완료: {processing_time:.3f}초")
             
             # 결과 정렬 및 상위 결과 선택
-            reranked_results.sort(key=lambda x: x.get("score", 0), reverse=True)
-            
-            # top_k가 지정된 경우 결과 제한
-            if top_k is not None and top_k > 0 and len(reranked_results) > top_k:
-                reranked_results = reranked_results[:top_k]
+            if isinstance(reranked_results, list):
+                # 정렬 전 passage_id 로깅
+                logger.info(f"[DEBUG-MAPPING] 정렬 전 passage_id 샘플: {[p.get('passage_id', 'N/A') for p in reranked_results[:3]]}")
+                logger.info(f"[DEBUG-MAPPING] 정렬 전 id 샘플: {[p.get('id', 'N/A') for p in reranked_results[:3]]}")
+                
+                if len(reranked_results) > 0:
+                    last_item = reranked_results[-1]
+                    logger.info(f"[DEBUG-MAPPING] 정렬 전 마지막 항목 passage_id: {last_item.get('passage_id', 'N/A')}")
+                    logger.info(f"[DEBUG-MAPPING] 정렬 전 마지막 항목 id: {last_item.get('id', 'N/A')}")
+                    logger.info(f"[DEBUG-MAPPING] 정렬 전 마지막 항목 필드: {list(last_item.keys())}")
+                
+                # 정렬 수행
+                reranked_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+                logger.info(f"[FLASHRANK-DETAIL] 결과 정렬 완료: {len(reranked_results)}개 결과")
+                
+                # 정렬 후 passage_id 로깅
+                logger.info(f"[DEBUG-MAPPING] 정렬 후 passage_id 샘플: {[p.get('passage_id', 'N/A') for p in reranked_results[:3]]}")
+                logger.info(f"[DEBUG-MAPPING] 정렬 후 id 샘플: {[p.get('id', 'N/A') for p in reranked_results[:3]]}")
+                
+                if len(reranked_results) > 0:
+                    last_item = reranked_results[-1]
+                    logger.info(f"[DEBUG-MAPPING] 정렬 후 마지막 항목 passage_id: {last_item.get('passage_id', 'N/A')}")
+                    logger.info(f"[DEBUG-MAPPING] 정렬 후 마지막 항목 id: {last_item.get('id', 'N/A')}")
+                    logger.info(f"[DEBUG-MAPPING] 정렬 후 마지막 항목 필드: {list(last_item.keys())}")
             
             # 결과 포맷팅
             if search_result:
@@ -1356,21 +1384,54 @@ class RerankerService:
                     if passage_id:
                         original_metadata[passage_id] = orig_passage
                 
+                # 원본 메타데이터 매핑 로그 추가
+                logger.info(f"[DEBUG-MAPPING] 원본 메타데이터 매핑: {len(original_metadata)}개 항목")
+                logger.info(f"[DEBUG-MAPPING] 원본 메타데이터 키 샘플: {list(original_metadata.keys())[:5]}")
+
                 # 재랭킹된 결과에 원본 메타데이터 추가
-                for passage in reranked_results:
-                    passage_id = passage.get("passage_id") or passage.get("id")
+                for idx, passage in enumerate(reranked_results):
+                    # passage_id, id, 또는 original_id 중 하나를 사용하여 매핑
+                    passage_id = passage.get("passage_id") or passage.get("id") or passage.get("original_id")
+                    
+                    # 로그 추가 - 매핑 과정 추적
+                    if idx < 5 or idx >= len(reranked_results) - 5:  # 처음 5개와 마지막 5개만 로깅
+                        logger.info(f"[DEBUG-MAPPING] 항목 {idx}: passage_id={passage_id}, 매핑 가능={passage_id in original_metadata if passage_id else False}")
+                        logger.info(f"[DEBUG-MAPPING] 항목 {idx} 필드: {list(passage.keys())}")
+                        if "original_id" in passage:
+                            logger.info(f"[DEBUG-MAPPING] 항목 {idx} original_id: {passage.get('original_id')}")
+                    
                     if passage_id and passage_id in original_metadata:
                         orig = original_metadata[passage_id]
                         # 중요 메타데이터 필드 복사
                         for key in ["author", "domain", "info", "tags", "title", "doc_id"]:
                             if key in orig and key not in passage:
                                 passage[key] = orig[key]
+                                
+                                # 로그 추가 - 필드 복사 추적 (처음 5개와 마지막 5개만)
+                                if idx < 5 or idx >= len(reranked_results) - 5:
+                                    logger.info(f"[DEBUG-MAPPING] 항목 {idx}: '{key}' 필드 복사됨")
                         
                         # MRC 관련 필드 복사 (있는 경우)
                         for key in ["mrc_score", "mrc_answer", "mrc_char_ids"]:
                             if key in orig and key not in passage:
                                 passage[key] = orig[key]
-                
+                    else:
+                        # 매핑 실패 로그
+                        if idx < 5 or idx >= len(reranked_results) - 5:
+                            logger.warning(f"[DEBUG-MAPPING] 항목 {idx}: 원본 메타데이터 매핑 실패 (passage_id={passage_id})")
+
+                # 최종 결과 확인 로그
+                logger.info(f"[DEBUG-MAPPING] 최종 결과 수: {len(reranked_results)}")
+                if len(reranked_results) > 0:
+                    first_item = reranked_results[0]
+                    last_item = reranked_results[-1]
+                    logger.info(f"[DEBUG-MAPPING] 첫 번째 항목 필드: {list(first_item.keys())}")
+                    logger.info(f"[DEBUG-MAPPING] 마지막 항목 필드: {list(last_item.keys())}")
+                    logger.info(f"[DEBUG-MAPPING] 첫 번째 항목 doc_id: {first_item.get('doc_id', 'N/A')}")
+                    logger.info(f"[DEBUG-MAPPING] 마지막 항목 doc_id: {last_item.get('doc_id', 'N/A')}")
+                    logger.info(f"[DEBUG-MAPPING] 첫 번째 항목 title: {first_item.get('title', 'N/A')}")
+                    logger.info(f"[DEBUG-MAPPING] 마지막 항목 title: {last_item.get('title', 'N/A')}")
+
                 search_result["results"] = reranked_results
                 search_result["total"] = len(reranked_results)
                 search_result["reranked"] = True
@@ -1516,6 +1577,15 @@ class RerankerService:
                         original_passage = batch_passages[passage_id]
                         score = scored_passage["score"]
                         
+                        # 원본 패시지 ID 추적 로그 추가
+                        original_id = original_passage.get("passage_id") or original_passage.get("id")
+                        logger.info(f"[DEBUG-BATCH-MAPPING] 배치 항목 매핑: 임시ID={passage_id}, 원본ID={original_id}, 필드={list(original_passage.keys())}")
+                        
+                        # 원본 ID 보존을 위한 필드 추가
+                        if original_id and "original_id" not in original_passage:
+                            original_passage["original_id"] = original_id
+                            logger.info(f"[DEBUG-BATCH-MAPPING] 원본ID 보존: {original_id}")
+                        
                         # 원본 패시지에 점수 및 순위 정보 추가
                         flashrank_score = score  # FlashRank 점수 저장
                         original_passage["flashrank_score"] = flashrank_score  # FlashRank 점수 명시적으로 저장
@@ -1541,8 +1611,50 @@ class RerankerService:
             
             # 결과 정렬 및 상위 결과 선택
             if isinstance(reranked_results, list):
+                # 정렬 전 passage_id 로깅
+                logger.info(f"[DEBUG-MAPPING] 정렬 전 passage_id 샘플: {[p.get('passage_id', 'N/A') for p in reranked_results[:3]]}")
+                logger.info(f"[DEBUG-MAPPING] 정렬 전 id 샘플: {[p.get('id', 'N/A') for p in reranked_results[:3]]}")
+                
+                if len(reranked_results) > 0:
+                    last_item = reranked_results[-1]
+                    logger.info(f"[DEBUG-MAPPING] 정렬 전 마지막 항목 passage_id: {last_item.get('passage_id', 'N/A')}")
+                    logger.info(f"[DEBUG-MAPPING] 정렬 전 마지막 항목 id: {last_item.get('id', 'N/A')}")
+                    logger.info(f"[DEBUG-MAPPING] 정렬 전 마지막 항목 필드: {list(last_item.keys())}")
+                
+                # 정렬 수행
                 reranked_results.sort(key=lambda x: x.get("score", 0), reverse=True)
                 logger.info(f"[FLASHRANK-DETAIL] 결과 정렬 완료: {len(reranked_results)}개 결과")
+                
+                # 정렬 후 passage_id 로깅
+                logger.info(f"[DEBUG-MAPPING] 정렬 후 passage_id 샘플: {[p.get('passage_id', 'N/A') for p in reranked_results[:3]]}")
+                logger.info(f"[DEBUG-MAPPING] 정렬 후 id 샘플: {[p.get('id', 'N/A') for p in reranked_results[:3]]}")
+                
+                if len(reranked_results) > 0:
+                    last_item = reranked_results[-1]
+                    logger.info(f"[DEBUG-MAPPING] 정렬 후 마지막 항목 passage_id: {last_item.get('passage_id', 'N/A')}")
+                    logger.info(f"[DEBUG-MAPPING] 정렬 후 마지막 항목 id: {last_item.get('id', 'N/A')}")
+                    logger.info(f"[DEBUG-MAPPING] 정렬 후 마지막 항목 필드: {list(last_item.keys())}")
+                
+                # top_k가 지정된 경우 결과 제한
+                if top_k is not None and top_k > 0 and len(reranked_results) > top_k:
+                    # top_k 적용 전 로깅
+                    logger.info(f"[DEBUG-MAPPING] top_k 적용 전 결과 수: {len(reranked_results)}")
+                    if len(reranked_results) > 0:
+                        last_item = reranked_results[-1]
+                        logger.info(f"[DEBUG-MAPPING] top_k 적용 전 마지막 항목 passage_id: {last_item.get('passage_id', 'N/A')}")
+                        logger.info(f"[DEBUG-MAPPING] top_k 적용 전 마지막 항목 id: {last_item.get('id', 'N/A')}")
+                        logger.info(f"[DEBUG-MAPPING] top_k 적용 전 마지막 항목 original_id: {last_item.get('original_id', 'N/A')}")
+                    
+                    # top_k 적용
+                    reranked_results = reranked_results[:top_k]
+                    
+                    # top_k 적용 후 로깅
+                    logger.info(f"[DEBUG-MAPPING] top_k={top_k} 적용 후 결과 수: {len(reranked_results)}")
+                    if len(reranked_results) > 0:
+                        last_item = reranked_results[-1]
+                        logger.info(f"[DEBUG-MAPPING] top_k 적용 후 마지막 항목 passage_id: {last_item.get('passage_id', 'N/A')}")
+                        logger.info(f"[DEBUG-MAPPING] top_k 적용 후 마지막 항목 id: {last_item.get('id', 'N/A')}")
+                        logger.info(f"[DEBUG-MAPPING] top_k 적용 후 마지막 항목 original_id: {last_item.get('original_id', 'N/A')}")
             
             # 결과 포맷팅
             if search_result:
