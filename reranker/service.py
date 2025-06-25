@@ -719,13 +719,14 @@ class RerankerService:
             logger.warning("Using default configuration due to error")
             return default_config
     
-    def _normalize_result_format(self, result):
+    def _normalize_result_format(self, result, position_map=None):
         """
         결과를 반환하기 전에 모든 passage에서 meta와 metadata 필드를 제거하고
         내용을 최상위 레벨로 이동시키는 함수
         
         Args:
             result (dict): 원본 결과 딕셔너리
+            position_map (dict, optional): unique_id와 원본 position을 매핑한 딕셔너리
             
         Returns:
             dict: 정규화된 결과 딕셔너리
@@ -734,6 +735,10 @@ class RerankerService:
             return result
             
         logger.info(f"[POSITION-DEBUG] _normalize_result_format 시작: 결과 항목 수={len(result.get('results', []))}")
+        
+        # position_map이 없으면 빈 딕셔너리로 초기화
+        if position_map is None:
+            position_map = {}
         
         for i, passage in enumerate(result["results"]):
             # position 필드가 있는지 확인하고 저장
@@ -771,8 +776,14 @@ class RerankerService:
                 passage["position"] = position_value
                 logger.info(f"[POSITION-DEBUG] 메타데이터 처리 후 #{i}: position={passage.get('position')}, 타입={type(passage.get('position')).__name__}")
             else:
-                logger.info(f"[POSITION-DEBUG] 메타데이터 처리 후 #{i}: position 값 없음")
-                
+                # position 값이 없으면 매핑 테이블에서 복원 시도
+                unique_id = passage.get("unique_id") or passage.get("id")
+                if unique_id in position_map:
+                    passage["position"] = position_map[unique_id]
+                    logger.info(f"[POSITION-RESTORE] ID {unique_id}의 position 값 복원: {position_map[unique_id]}")
+                else:
+                    logger.info(f"[POSITION-DEBUG] 메타데이터 처리 후 #{i}: position 값 없음")
+        
         logger.info(f"[POSITION-DEBUG] _normalize_result_format 완료")
         return result
 
@@ -851,6 +862,15 @@ class RerankerService:
             # GPU 메모리 초기 상태 로깅
             log_gpu_memory("재랭킹 시작")
                 
+            # position 매핑 테이블 생성 (unique_id -> 원본 position)
+            position_map = {}
+            for idx, result in enumerate(search_result["results"]):
+                doc_id = result.get("doc_id", "")
+                passage_id = result.get("passage_id", "")
+                unique_id = f"{doc_id}_{passage_id}"
+                position_map[unique_id] = idx
+                logger.info(f"[POSITION-MAP] 매핑 생성: unique_id={unique_id}, position={idx}")
+                
             # Convert passages to FlashRank format
             passages = []
             logger.info(f"[POSITION-DEBUG] 검색 결과 항목 수: {len(search_result['results'])}")
@@ -912,15 +932,23 @@ class RerankerService:
                 # MRC 방식만 사용
                 logger.info("MRC 방식으로 재랭킹 수행")
                 result = self.mrc_reranker.process_search_results(query, search_result, top_k)
-                return self._normalize_result_format(result)
+                return self._normalize_result_format(result, position_map)
                 
             elif rerank_method == "flashrank":
                 # FlashRank 방식만 사용
                 logger.info("[FLASHRANK-STATUS] FlashRank 방식으로 재랭킹 수행 시작")
                 try:
                     # 튜플 반환값을 올바르게 처리
-                    result, scores, processing_time = self.perform_flashrank_reranking(query, passages, top_k, search_result)
+                    result, scores, processing_time = self._flashrank_rerank(query, passages, top_k, search_result)
                     logger.info(f"[FLASHRANK-STATUS] FlashRank 재랭킹 성공: {len(result.get('results', []))}개 결과")
+                    
+                    # position 값 복원
+                    for passage in result["results"]:
+                        unique_id = passage.get("unique_id") or passage.get("id")
+                        if unique_id in position_map:
+                            passage["position"] = position_map[unique_id]
+                            logger.info(f"[POSITION-RESTORE] ID {unique_id}의 position 값 복원: {position_map[unique_id]}")
+                    
                     return self._normalize_result_format(result)
                 except Exception as e:
                     logger.error(f"[FLASHRANK-STATUS] FlashRank 재랭킹 실패: {str(e)}", exc_info=True)
@@ -1106,7 +1134,19 @@ class RerankerService:
                         position_value = passage.get("position")
                         logger.info(f"[POSITION-DEBUG] 최종 결과 #{i}: position={position_value}, 타입={type(position_value).__name__}")
                     
-                    return self._normalize_result_format(result)
+                    # position 값 복원
+                    for passage in result["results"]:
+                        unique_id = passage.get("unique_id") or passage.get("id")
+                        if unique_id in position_map:
+                            passage["position"] = position_map[unique_id]
+                            logger.info(f"[POSITION-RESTORE] ID {unique_id}의 position 값 복원: {position_map[unique_id]}")
+                    
+                    # 복원 후 position 값 확인 로그
+                    for i, passage in enumerate(result["results"]):
+                        position_value = passage.get("position")
+                        logger.info(f"[POSITION-FINAL] 최종 결과 #{i}: position={position_value}, 타입={type(position_value).__name__}")
+                    
+                    return self._normalize_result_format(result, position_map)
                     
                 except Exception as e:
                     logger.error(f"[HYBRID-DETAIL] 하이브리드 재랭킹 중 오류 발생: {str(e)}", exc_info=True)
@@ -1297,10 +1337,11 @@ class RerankerService:
         배치 처리를 통해 대량의 패시지를 효율적으로 처리합니다.
         
         Args:
-            query (str): 검색 쿼리
-            passages (List[dict]): 재랭킹할 패시지 목록
-            top_k (int, optional): 반환할 상위 결과 수. None이면 모든 결과 반환
-            search_result (Dict, optional): 원본 검색 결과. 제공되면 이 구조를 유지하며 결과 업데이트
+            query: 검색 쿼리
+            passages: 재랭킹할 패시지 목록
+            top_k: 반환할 상위 결과 수
+            search_result: 원본 검색 결과
+
             
         Returns:
             Tuple[Dict, List[float], float]: 
