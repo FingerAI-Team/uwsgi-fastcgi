@@ -989,7 +989,12 @@ class RerankerService:
                             passage["metadata"] = {}
                         
                         # 원본 메타데이터 유지하면서 세부 점수 추가
-                        metadata = passage.get("metadata", {})
+                        metadata = passage.get("metadata")
+                        
+                        # metadata가 None이면 빈 딕셔너리로 초기화
+                        if metadata is None:
+                            metadata = {}
+                            passage["metadata"] = metadata
                         
                         # 고유 ID 보존
                         unique_id = passage.get("id")
@@ -1153,7 +1158,12 @@ class RerankerService:
                         passage["metadata"] = {}
                     
                     # 원본 메타데이터 유지하면서 세부 점수 추가
-                    metadata = passage.get("metadata", {})
+                    metadata = passage.get("metadata")
+                    
+                    # metadata가 None이면 빈 딕셔너리로 초기화
+                    if metadata is None:
+                        metadata = {}
+                        passage["metadata"] = metadata
                     
                     # FlashRank 점수 추가 - 상위 레벨과 메타데이터 모두에 추가
                     flashrank_score = float(flashrank_scores[i]) if i < len(flashrank_scores) else 0.0
