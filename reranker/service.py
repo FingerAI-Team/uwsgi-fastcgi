@@ -771,18 +771,16 @@ class RerankerService:
                 # metadata 필드 제거
                 del passage["metadata"]
             
-            # position 값이 있었다면 다시 설정 (메타데이터 처리 중 덮어써졌을 수 있음)
-            if position_value is not None:
+            # position_map이 제공된 경우 무조건 해당 값 사용
+            unique_id = passage.get("unique_id") or passage.get("id")
+            if position_map and unique_id in position_map:
+                passage["position"] = position_map[unique_id]
+                logger.info(f"[POSITION-RESTORE] ID {unique_id}의 position 값 강제 설정: {position_map[unique_id]}")
+            elif position_value is not None:
                 passage["position"] = position_value
                 logger.info(f"[POSITION-DEBUG] 메타데이터 처리 후 #{i}: position={passage.get('position')}, 타입={type(passage.get('position')).__name__}")
             else:
-                # position 값이 없으면 매핑 테이블에서 복원 시도
-                unique_id = passage.get("unique_id") or passage.get("id")
-                if unique_id in position_map:
-                    passage["position"] = position_map[unique_id]
-                    logger.info(f"[POSITION-RESTORE] ID {unique_id}의 position 값 복원: {position_map[unique_id]}")
-                else:
-                    logger.info(f"[POSITION-DEBUG] 메타데이터 처리 후 #{i}: position 값 없음")
+                logger.info(f"[POSITION-DEBUG] 메타데이터 처리 후 #{i}: position 값 없음")
         
         logger.info(f"[POSITION-DEBUG] _normalize_result_format 완료")
         return result
