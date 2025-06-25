@@ -733,12 +733,12 @@ class RerankerService:
         if not result or "results" not in result:
             return result
             
-        logger.info(f"[POSITION-TRACE] _normalize_result_format 시작: 결과 항목 수={len(result.get('results', []))}")
+        logger.info(f"[POSITION-DEBUG] _normalize_result_format 시작: 결과 항목 수={len(result.get('results', []))}")
         
         for i, passage in enumerate(result["results"]):
             # position 필드가 있는지 확인하고 저장
             position_value = passage.get("position")
-            logger.info(f"[POSITION-TRACE] 정규화 처리 중 #{i}: 초기 position={position_value}")
+            logger.info(f"[POSITION-DEBUG] 정규화 처리 중 #{i}: 초기 position={position_value}, 타입={type(position_value).__name__}")
             
             # meta 필드가 있으면 최상위 레벨로 이동
             if "meta" in passage:
@@ -753,7 +753,7 @@ class RerankerService:
             
             # position 값 저장 (메타데이터 처리 전)
             position_value = passage.get("position")
-            logger.info(f"[POSITION-TRACE] 메타데이터 처리 전 #{i}: position={position_value}")
+            logger.info(f"[POSITION-DEBUG] 메타데이터 처리 전 #{i}: position={position_value}, 타입={type(position_value).__name__}")
             
             # metadata 필드가 있으면 최상위 레벨로 이동
             if "metadata" in passage:
@@ -769,11 +769,11 @@ class RerankerService:
             # position 값이 있었다면 다시 설정 (메타데이터 처리 중 덮어써졌을 수 있음)
             if position_value is not None:
                 passage["position"] = position_value
-                logger.info(f"[POSITION-TRACE] 메타데이터 처리 후 #{i}: position={passage.get('position')}")
+                logger.info(f"[POSITION-DEBUG] 메타데이터 처리 후 #{i}: position={passage.get('position')}, 타입={type(passage.get('position')).__name__}")
             else:
-                logger.info(f"[POSITION-TRACE] 메타데이터 처리 후 #{i}: position 값 없음")
+                logger.info(f"[POSITION-DEBUG] 메타데이터 처리 후 #{i}: position 값 없음")
                 
-        logger.info(f"[POSITION-TRACE] _normalize_result_format 완료")
+        logger.info(f"[POSITION-DEBUG] _normalize_result_format 완료")
         return result
 
     def process_search_results(self, query: str, search_result: Dict[str, Any], top_k: int = 5) -> Dict[str, Any]:
@@ -853,6 +853,7 @@ class RerankerService:
                 
             # Convert passages to FlashRank format
             passages = []
+            logger.info(f"[POSITION-DEBUG] 검색 결과 항목 수: {len(search_result['results'])}")
             for idx, result in enumerate(search_result["results"]):
                 # doc_id와 passage_id를 조합하여 고유 식별자 생성
                 doc_id = result.get("doc_id", "")
@@ -862,7 +863,7 @@ class RerankerService:
                 # position 값 로깅 - 원본 검색 결과에 position이 있는지 확인
                 orig_position = result.get("position")
                 final_position = result.get("position", idx)
-                logger.info(f"[POSITION-TRACE] 원본 검색 결과 #{idx}: 원본 position={orig_position}, 최종 position={final_position}")
+                logger.info(f"[POSITION-DEBUG] 검색 결과 #{idx}: idx={idx}, 원본 position={orig_position}, 최종 position={final_position}")
                 
                 passage = {
                     "id": unique_id,  # 고유 식별자를 id로 사용
@@ -871,7 +872,7 @@ class RerankerService:
                     "passage_id": passage_id,
                     "unique_id": unique_id,
                     "original_score": result.get("score"),
-                    "position": final_position  # position이 없으면 idx 값 사용
+                    "position": idx  # 항상 idx 값을 position으로 사용
                 }
                 
                 # 기타 메타데이터 필드가 있으면 최상위 레벨에 복사
@@ -1015,7 +1016,7 @@ class RerankerService:
                     for i, passage in enumerate(reranked_passages):
                         # position 값 추적 로그
                         position_value = passage.get("position")
-                        logger.info(f"[POSITION-TRACE] 하이브리드 재랭킹 중 #{i}: position={position_value}")
+                        logger.info(f"[POSITION-DEBUG] 하이브리드 재랭킹 중 #{i}: position={position_value}, 타입={type(position_value).__name__}")
                         
                         # 메타데이터 필드 확인 및 생성
                         if "metadata" not in passage:
@@ -1103,7 +1104,7 @@ class RerankerService:
                     # 최종 결과의 position 값 확인 로그
                     for i, passage in enumerate(result["results"]):
                         position_value = passage.get("position")
-                        logger.info(f"[POSITION-TRACE] 최종 결과 #{i}: position={position_value}")
+                        logger.info(f"[POSITION-DEBUG] 최종 결과 #{i}: position={position_value}, 타입={type(position_value).__name__}")
                     
                     return self._normalize_result_format(result)
                     
@@ -1447,7 +1448,7 @@ class RerankerService:
                         
                         # position 값 추적 로그
                         position_value = original_passage.get("position")
-                        logger.info(f"[POSITION-TRACE] FlashRank 재랭킹 중: ID={result_id}, position={position_value}")
+                        logger.info(f"[POSITION-DEBUG] FlashRank 재랭킹 중: ID={result_id}, position={position_value}, 타입={type(position_value).__name__}")
                             
                         # 원본 패시지에 점수 및 순위 정보 추가
                         flashrank_score = score  # FlashRank 점수 저장

@@ -97,7 +97,7 @@ class PassageModel(BaseModel):
     doc_id: Optional[str] = None
     text: str
     score: Optional[float] = None
-    position: Optional[int] = 0  # 기본값을 None에서 0으로 변경
+    position: Optional[int] = None  # 기본값을 0에서 None으로 변경
     metadata: Optional[Dict[str, Any]] = None
 
 
