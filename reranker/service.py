@@ -750,6 +750,7 @@ class RerankerService:
             
             # position 값 저장 (메타데이터 처리 전)
             position_value = passage.get("position")
+            logger.info(f"[POSITION-DEBUG] 메타데이터 처리 전 position 값: {position_value}")
             
             # metadata 필드가 있으면 최상위 레벨로 이동
             if "metadata" in passage:
@@ -757,7 +758,7 @@ class RerankerService:
                 if metadata is not None:  # metadata가 None이 아닌 경우에만 처리
                     for key, value in metadata.items():
                         # 이미 최상위 레벨에 있는 키는 덮어쓰지 않음
-                        if key not in passage:
+                        if key not in passage or key == "position":  # position은 항상 보존
                             passage[key] = value
                 # metadata 필드 제거
                 del passage["metadata"]
@@ -765,6 +766,7 @@ class RerankerService:
             # position 값이 있었다면 다시 설정 (메타데이터 처리 중 덮어써졌을 수 있음)
             if position_value is not None:
                 passage["position"] = position_value
+                logger.info(f"[POSITION-DEBUG] 메타데이터 처리 후 position 값: {passage.get('position')}")
                 
         return result
 
