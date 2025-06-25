@@ -748,6 +748,9 @@ class RerankerService:
                 # meta 필드 제거
                 del passage["meta"]
             
+            # position 값 저장 (메타데이터 처리 전)
+            position_value = passage.get("position")
+            
             # metadata 필드가 있으면 최상위 레벨로 이동
             if "metadata" in passage:
                 metadata = passage["metadata"]
