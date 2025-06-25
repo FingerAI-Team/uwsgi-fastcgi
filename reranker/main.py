@@ -445,6 +445,9 @@ def rerank():
         # Get reranker type parameter (flashrank, mrc, hybrid)
         rerank_type = request.args.get('type', 'auto').lower()
         
+        # Get mrc_weight parameter from query string
+        mrc_weight = request.args.get('mrc_weight', type=float)
+        
         # Set environment variable for reranker method
         os.environ["RERANK_METHOD"] = rerank_type
         
@@ -464,7 +467,14 @@ def rerank():
             }), 400
             
         # Process reranking
-        reranked = get_reranker_service().process_search_results(
+        reranker_service = get_reranker_service()
+        
+        # MRC 가중치 설정
+        if mrc_weight is not None:
+            logger.info(f"[RERANK] MRC 가중치 설정: {mrc_weight}")
+            reranker_service.hybrid_weight_mrc = mrc_weight
+        
+        reranked = reranker_service.process_search_results(
             search_result.query,
             search_result.dict(),
             top_k
@@ -835,7 +845,7 @@ def hybrid_rerank():
         
         # MRC 가중치 설정
         if mrc_weight is not None:
-            logger.info(f"[HYBRID-RERANK] MRC 가중치 변경: {getattr(reranker_service, 'hybrid_weight_mrc', '기본값')} -> {mrc_weight}")
+            logger.info(f"[RERANK] MRC 가중치 변경: {getattr(reranker_service, 'hybrid_weight_mrc', '기본값')} -> {mrc_weight}")
             reranker_service.hybrid_weight_mrc = mrc_weight
         
         log_step("서비스 초기화")
