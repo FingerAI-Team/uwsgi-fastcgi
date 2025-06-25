@@ -171,7 +171,7 @@ class PassageModel(BaseModel):
     doc_id: Optional[str] = None
     text: str
     score: Optional[float] = None
-    position: Optional[int] = None
+    position: Optional[int] = 0
     metadata: Optional[Dict[str, Any]] = None
 
     class Config:
@@ -737,20 +737,22 @@ class RerankerService:
             # meta 필드가 있으면 최상위 레벨로 이동
             if "meta" in passage:
                 meta = passage["meta"]
-                for key, value in meta.items():
-                    # 이미 최상위 레벨에 있는 키는 덮어쓰지 않음
-                    if key not in passage:
-                        passage[key] = value
+                if meta is not None:  # meta가 None이 아닌 경우에만 처리
+                    for key, value in meta.items():
+                        # 이미 최상위 레벨에 있는 키는 덮어쓰지 않음
+                        if key not in passage:
+                            passage[key] = value
                 # meta 필드 제거
                 del passage["meta"]
             
             # metadata 필드가 있으면 최상위 레벨로 이동
             if "metadata" in passage:
                 metadata = passage["metadata"]
-                for key, value in metadata.items():
-                    # 이미 최상위 레벨에 있는 키는 덮어쓰지 않음
-                    if key not in passage:
-                        passage[key] = value
+                if metadata is not None:  # metadata가 None이 아닌 경우에만 처리
+                    for key, value in metadata.items():
+                        # 이미 최상위 레벨에 있는 키는 덮어쓰지 않음
+                        if key not in passage:
+                            passage[key] = value
                 # metadata 필드 제거
                 del passage["metadata"]
                 
@@ -833,7 +835,7 @@ class RerankerService:
                 
             # Convert passages to FlashRank format
             passages = []
-            for result in search_result["results"]:
+            for idx, result in enumerate(search_result["results"]):
                 # doc_id와 passage_id를 조합하여 고유 식별자 생성
                 doc_id = result.get("doc_id", "")
                 passage_id = result.get("passage_id", "")
@@ -845,7 +847,8 @@ class RerankerService:
                     "doc_id": doc_id,
                     "passage_id": passage_id,
                     "unique_id": unique_id,
-                    "original_score": result.get("score")
+                    "original_score": result.get("score"),
+                    "position": idx  # 원본 검색 결과의 순서(리랭킹 전 순서) 저장
                 }
                 
                 # 기타 메타데이터 필드가 있으면 최상위 레벨에 복사
@@ -1016,8 +1019,9 @@ class RerankerService:
                         combined_scores.append(combined_score)
                         
                         # 하이브리드 점수도 명시적으로 추가 (score 필드와 동일)
-                        passage["hybrid_score"] = passage.get("score", combined_score)
-                        metadata["hybrid_score"] = passage.get("score", combined_score)
+                        passage["hybrid_score"] = combined_score
+                        passage["score"] = combined_score
+                        metadata["hybrid_score"] = combined_score
                         
                         # 메타데이터 업데이트
                         passage["metadata"] = metadata
@@ -1152,6 +1156,7 @@ class RerankerService:
                 # 3. 결과 포맷팅
                 # 결과에 세부 점수 추가
                 logger.info("[HYBRID-DETAIL] 결과에 세부 점수 추가 시작")
+                combined_scores = []
                 for i, passage in enumerate(reranked_passages):
                     # 메타데이터 필드 확인 및 생성
                     if "metadata" not in passage:
@@ -1177,13 +1182,23 @@ class RerankerService:
                     
                     # 최종 점수 계산 (이미 계산되어 있지만 로깅용으로 다시 계산)
                     combined_score = (1.0 - self.hybrid_weight_mrc) * flashrank_score + self.hybrid_weight_mrc * mrc_score
+                    combined_scores.append(combined_score)
                     
                     # 하이브리드 점수도 명시적으로 추가 (score 필드와 동일)
-                    passage["hybrid_score"] = passage.get("score", combined_score)
-                    metadata["hybrid_score"] = passage.get("score", combined_score)
+                    passage["hybrid_score"] = combined_score
+                    passage["score"] = combined_score
+                    metadata["hybrid_score"] = combined_score
                     
                     # 메타데이터 업데이트
                     passage["metadata"] = metadata
+                    
+                    # 디버깅을 위한 로그 추가 (첫 번째와 마지막 항목만)
+                    if i == 0 or i == len(reranked_passages) - 1:
+                        logger.info(f"[DEBUG-SERVICE] 항목 {i} 처리: id={passage.get('id', 'N/A')}")
+                        logger.info(f"[DEBUG-SERVICE] 항목 {i} 필드: {list(passage.keys())}")
+                        logger.info(f"[DEBUG-SERVICE] 항목 {i} title: {passage.get('title', 'N/A')}")
+                        logger.info(f"[DEBUG-SERVICE] 항목 {i} author: {passage.get('author', 'N/A')}")
+                        logger.info(f"[DEBUG-SERVICE] 항목 {i} domain: {passage.get('domain', 'N/A')}")
                 
                 # 결과 포맷팅
                 result = {
@@ -1849,7 +1864,7 @@ class RerankerService:
                 
                 # 메타데이터 중복 제거 - 각 결과 항목에서 metadata 내부의 필드를 상위 레벨로 이동하고 metadata 필드 제거
                 for passage in result["results"]:
-                    if "metadata" in passage:
+                    if "metadata" in passage and passage["metadata"] is not None:
                         # metadata 내부의 모든 필드를 상위 레벨로 복사
                         for key, value in passage["metadata"].items():
                             if key not in passage:  # 이미 존재하는 필드는 덮어쓰지 않음
