@@ -1557,7 +1557,7 @@ class RerankerService:
                 search_result["reranker_type"] = "flashrank"
                 search_result["processing_time"] = processing_time
                 
-                return self._normalize_result_format(search_result), flashrank_scores, processing_time
+                return self._normalize_result_format(search_result), scores_dict, processing_time
             else:
                 result = {
                     "query": query,
@@ -1824,7 +1824,7 @@ class RerankerService:
                     if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
                         passage["mrc_char_ids"] = []
                 
-                return self._normalize_result_format(search_result), flashrank_scores, processing_time
+                return self._normalize_result_format(search_result), scores_dict, processing_time
             else:
                 result = {
                     "query": query,
