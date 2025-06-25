@@ -949,7 +949,7 @@ class RerankerService:
                             passage["position"] = position_map[unique_id]
                             logger.info(f"[POSITION-RESTORE] ID {unique_id}의 position 값 복원: {position_map[unique_id]}")
                     
-                    return self._normalize_result_format(result)
+                    return self._normalize_result_format(result, position_map)
                 except Exception as e:
                     logger.error(f"[FLASHRANK-STATUS] FlashRank 재랭킹 실패: {str(e)}", exc_info=True)
                     # 실패 시 원본 결과 반환
@@ -1134,18 +1134,6 @@ class RerankerService:
                         position_value = passage.get("position")
                         logger.info(f"[POSITION-DEBUG] 최종 결과 #{i}: position={position_value}, 타입={type(position_value).__name__}")
                     
-                    # position 값 복원
-                    for passage in result["results"]:
-                        unique_id = passage.get("unique_id") or passage.get("id")
-                        if unique_id in position_map:
-                            passage["position"] = position_map[unique_id]
-                            logger.info(f"[POSITION-RESTORE] ID {unique_id}의 position 값 복원: {position_map[unique_id]}")
-                    
-                    # 복원 후 position 값 확인 로그
-                    for i, passage in enumerate(result["results"]):
-                        position_value = passage.get("position")
-                        logger.info(f"[POSITION-FINAL] 최종 결과 #{i}: position={position_value}, 타입={type(position_value).__name__}")
-                    
                     return self._normalize_result_format(result, position_map)
                     
                 except Exception as e:
@@ -1302,7 +1290,7 @@ class RerankerService:
                     result["returned_count"] = top_k
                     logger.info(f"[HYBRID-DETAIL] 최종 응답 필터링: 전체 {original_count}개 중 상위 {top_k}개만 반환")
                 
-                return self._normalize_result_format(result)
+                return self._normalize_result_format(result, position_map)
                 
             except Exception as e:
                 logger.error(f"[HYBRID-DETAIL] 하이브리드 재랭킹 중 오류 발생: {str(e)}", exc_info=True)
