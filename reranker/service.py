@@ -719,8 +719,43 @@ class RerankerService:
             logger.warning("Using default configuration due to error")
             return default_config
     
+    def _normalize_result_format(self, result):
+        """
+        결과를 반환하기 전에 모든 passage에서 meta와 metadata 필드를 제거하고
+        내용을 최상위 레벨로 이동시키는 함수
+        
+        Args:
+            result (dict): 원본 결과 딕셔너리
+            
+        Returns:
+            dict: 정규화된 결과 딕셔너리
+        """
+        if not result or "results" not in result:
+            return result
+            
+        for passage in result["results"]:
+            # meta 필드가 있으면 최상위 레벨로 이동
+            if "meta" in passage:
+                meta = passage["meta"]
+                for key, value in meta.items():
+                    # 이미 최상위 레벨에 있는 키는 덮어쓰지 않음
+                    if key not in passage:
+                        passage[key] = value
+                # meta 필드 제거
+                del passage["meta"]
+            
+            # metadata 필드가 있으면 최상위 레벨로 이동
+            if "metadata" in passage:
+                metadata = passage["metadata"]
+                for key, value in metadata.items():
+                    # 이미 최상위 레벨에 있는 키는 덮어쓰지 않음
+                    if key not in passage:
+                        passage[key] = value
+                # metadata 필드 제거
+                del passage["metadata"]
+                
+        return result
 
-    
     def process_search_results(self, query: str, search_result: Dict[str, Any], top_k: int = 5) -> Dict[str, Any]:
         """
         검색 결과에 재랭킹 적용
@@ -807,13 +842,17 @@ class RerankerService:
                 passage = {
                     "id": unique_id,  # 고유 식별자를 id로 사용
                     "text": result["text"],
-                    "meta": {
-                        "doc_id": doc_id,
-                        "passage_id": passage_id,
-                        "unique_id": unique_id,  # 메타데이터에도 고유 식별자 저장
-                        "original_score": result.get("score")
-                    }
+                    "doc_id": doc_id,
+                    "passage_id": passage_id,
+                    "unique_id": unique_id,
+                    "original_score": result.get("score")
                 }
+                
+                # 기타 메타데이터 필드가 있으면 최상위 레벨에 복사
+                for key in ["author", "domain", "info", "tags", "title", "mrc_score", "mrc_answer", "mrc_char_ids"]:
+                    if key in result:
+                        passage[key] = result[key]
+                
                 passages.append(passage)
             
             log_step("데이터 포맷 변환")
@@ -845,7 +884,8 @@ class RerankerService:
             if rerank_method == "mrc":
                 # MRC 방식만 사용
                 logger.info("MRC 방식으로 재랭킹 수행")
-                return self.mrc_reranker.process_search_results(query, search_result, top_k)
+                result = self.mrc_reranker.process_search_results(query, search_result, top_k)
+                return self._normalize_result_format(result)
                 
             elif rerank_method == "flashrank":
                 # FlashRank 방식만 사용
@@ -854,7 +894,7 @@ class RerankerService:
                     # 튜플 반환값을 올바르게 처리
                     result, scores, processing_time = self.perform_flashrank_reranking(query, passages, top_k, search_result)
                     logger.info(f"[FLASHRANK-STATUS] FlashRank 재랭킹 성공: {len(result.get('results', []))}개 결과")
-                    return result
+                    return self._normalize_result_format(result)
                 except Exception as e:
                     logger.error(f"[FLASHRANK-STATUS] FlashRank 재랭킹 실패: {str(e)}", exc_info=True)
                     # 실패 시 원본 결과 반환
@@ -1021,7 +1061,7 @@ class RerankerService:
                             logger.info(f"[DEBUG-SERVICE] 최종 마지막 항목 author: {reranked_passages[-1].get('author', 'N/A')}")
                             logger.info(f"[DEBUG-SERVICE] 최종 마지막 항목 domain: {reranked_passages[-1].get('domain', 'N/A')}")
                     
-                    return result
+                    return self._normalize_result_format(result)
                     
                 except Exception as e:
                     logger.error(f"[HYBRID-DETAIL] 하이브리드 재랭킹 중 오류 발생: {str(e)}", exc_info=True)
@@ -1161,7 +1201,7 @@ class RerankerService:
                     result["returned_count"] = top_k
                     logger.info(f"[HYBRID-DETAIL] 최종 응답 필터링: 전체 {original_count}개 중 상위 {top_k}개만 반환")
                 
-                return result
+                return self._normalize_result_format(result)
                 
             except Exception as e:
                 logger.error(f"[HYBRID-DETAIL] 하이브리드 재랭킹 중 오류 발생: {str(e)}", exc_info=True)
@@ -1351,6 +1391,26 @@ class RerankerService:
                         original_passage["score"] = flashrank_score  # FlashRank 모드에서는 flashrank_score를 최종 점수로 사용
                         original_passage["rank"] = rank + i  # 전체 순위 계산
                         
+                        # meta 필드가 있으면 최상위 레벨로 이동
+                        if "meta" in original_passage:
+                            meta = original_passage["meta"]
+                            for key, value in meta.items():
+                                # 이미 최상위 레벨에 있는 키는 덮어쓰지 않음
+                                if key not in original_passage:
+                                    original_passage[key] = value
+                            # meta 필드 제거
+                            del original_passage["meta"]
+                        
+                        # metadata 필드가 있으면 최상위 레벨로 이동
+                        if "metadata" in original_passage:
+                            metadata = original_passage["metadata"]
+                            for key, value in metadata.items():
+                                # 이미 최상위 레벨에 있는 키는 덮어쓰지 않음
+                                if key not in original_passage:
+                                    original_passage[key] = value
+                            # metadata 필드 제거
+                            del original_passage["metadata"]
+                        
                         # 결과 및 점수 저장
                         reranked_results.append(original_passage)
                         scores_dict[result_id] = flashrank_score  # 고유 식별자를 키로 사용
@@ -1452,6 +1512,28 @@ class RerankerService:
                         for key in ["mrc_score", "mrc_answer", "mrc_char_ids"]:
                             if key in orig and key not in passage:
                                 passage[key] = orig[key]
+                        
+                        # meta 필드가 있으면 최상위 레벨로 이동
+                        if "meta" in orig:
+                            meta = orig["meta"]
+                            for key, value in meta.items():
+                                # 이미 최상위 레벨에 있는 키는 덮어쓰지 않음
+                                if key not in passage:
+                                    passage[key] = value
+                        
+                        # metadata 필드가 있으면 최상위 레벨로 이동
+                        if "metadata" in orig:
+                            metadata = orig["metadata"]
+                            for key, value in metadata.items():
+                                # 이미 최상위 레벨에 있는 키는 덮어쓰지 않음
+                                if key not in passage:
+                                    passage[key] = value
+                        
+                        # meta와 metadata 필드 제거
+                        if "meta" in passage:
+                            del passage["meta"]
+                        if "metadata" in passage:
+                            del passage["metadata"]
                     else:
                         # 매핑 실패 로그
                         if idx < 5 or idx >= len(reranked_results) - 5:
@@ -1475,7 +1557,7 @@ class RerankerService:
                 search_result["reranker_type"] = "flashrank"
                 search_result["processing_time"] = processing_time
                 
-                return search_result, flashrank_scores, processing_time
+                return self._normalize_result_format(search_result), flashrank_scores, processing_time
             else:
                 result = {
                     "query": query,
@@ -1486,7 +1568,7 @@ class RerankerService:
                     "processing_time": processing_time
                 }
                 
-                return result, [], processing_time
+                return self._normalize_result_format(result), [], processing_time
         except Exception as e:
             logger.error(f"Error in _flashrank_rerank: {str(e)}", exc_info=True)
             return search_result or {"query": query, "results": [], "total": 0, "reranked": False}, [], 0.0
@@ -1640,6 +1722,26 @@ class RerankerService:
                         original_passage["score"] = flashrank_score  # FlashRank 모드에서는 flashrank_score를 최종 점수로 사용
                         original_passage["rank"] = rank + i  # 전체 순위 계산
                         
+                        # meta 필드가 있으면 최상위 레벨로 이동
+                        if "meta" in original_passage:
+                            meta = original_passage["meta"]
+                            for key, value in meta.items():
+                                # 이미 최상위 레벨에 있는 키는 덮어쓰지 않음
+                                if key not in original_passage:
+                                    original_passage[key] = value
+                            # meta 필드 제거
+                            del original_passage["meta"]
+                        
+                        # metadata 필드가 있으면 최상위 레벨로 이동
+                        if "metadata" in original_passage:
+                            metadata = original_passage["metadata"]
+                            for key, value in metadata.items():
+                                # 이미 최상위 레벨에 있는 키는 덮어쓰지 않음
+                                if key not in original_passage:
+                                    original_passage[key] = value
+                            # metadata 필드 제거
+                            del original_passage["metadata"]
+                        
                         # 결과 및 점수 저장
                         reranked_results.append(original_passage)
                         scores_dict[result_id] = flashrank_score  # 고유 식별자를 키로 사용
@@ -1722,7 +1824,7 @@ class RerankerService:
                     if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
                         passage["mrc_char_ids"] = []
                 
-                return search_result, scores_dict, processing_time
+                return self._normalize_result_format(search_result), flashrank_scores, processing_time
             else:
                 result = {
                     "query": query,
@@ -1751,7 +1853,7 @@ class RerankerService:
                     if "mrc_char_ids" not in passage and passage.get("mrc_score") is not None:
                         passage["mrc_char_ids"] = []
                 
-                return result, scores_dict, processing_time
+                return self._normalize_result_format(result), scores_dict, processing_time
         except Exception as e:
             logger.error(f"[FLASHRANK-ERROR] FlashRank 재랭킹 중 오류 발생: {str(e)}", exc_info=True)
             # 오류 상세 정보 로깅
@@ -1767,6 +1869,6 @@ class RerankerService:
                 search_result["reranked"] = False
                 search_result["reranker_type"] = "none"
                 search_result["error"] = f"FlashRank 재랭킹 실패: {str(e)}"
-                return search_result, {}, 0.0
+                return self._normalize_result_format(search_result), {}, 0.0
             else:
                 return passages, {}, 0.0

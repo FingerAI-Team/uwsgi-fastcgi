@@ -75,19 +75,19 @@ class RerankerClient:
         for result in results:
             processed_result = {
                 "id": result.get("id"),  # 고유 식별자 사용
-                "doc_id": result["meta"].get("doc_id", ""),
-                "passage_id": result["meta"].get("passage_id", ""),
+                "doc_id": result.get("doc_id", ""),
+                "passage_id": result.get("passage_id", ""),
                 "text": result["text"],
                 "score": float(result["score"])
             }
 
-            # 메타데이터에서 original_score 보존
-            if "original_score" in result["meta"]:
-                metadata = {
-                    "original_score": result["meta"]["original_score"],
-                    "unique_id": result.get("id")  # 고유 식별자도 메타데이터에 보존
-                }
-                processed_result["metadata"] = metadata
+            # 원본 점수 보존
+            if "original_score" in result:
+                processed_result["original_score"] = result["original_score"]
+            
+            # unique_id 보존
+            if "unique_id" in result:
+                processed_result["unique_id"] = result["unique_id"]
             
             # MRC 관련 필드가 있으면 추가
             if "mrc_score" in result:
@@ -150,19 +150,19 @@ class RerankerClient:
         for result in results:
             processed_result = {
                 "id": result.get("id"),  # 고유 식별자 사용
-                "doc_id": result["meta"].get("doc_id", ""),
-                "passage_id": result["meta"].get("passage_id", ""),
+                "doc_id": result.get("doc_id", ""),
+                "passage_id": result.get("passage_id", ""),
                 "text": result["text"],
                 "score": float(result["score"])
             }
 
-            # 메타데이터에서 original_score 보존
-            if "original_score" in result["meta"]:
-                metadata = {
-                    "original_score": result["meta"]["original_score"],
-                    "unique_id": result.get("id")  # 고유 식별자도 메타데이터에 보존
-                }
-                processed_result["metadata"] = metadata
+            # 원본 점수 보존
+            if "original_score" in result:
+                processed_result["original_score"] = result["original_score"]
+            
+            # unique_id 보존
+            if "unique_id" in result:
+                processed_result["unique_id"] = result["unique_id"]
             
             # MRC 관련 필드가 있으면 추가
             if "mrc_score" in result:
@@ -229,19 +229,19 @@ class RerankerClient:
         for result in results:
             processed_result = {
                 "id": result.get("id"),  # 고유 식별자 사용
-                "doc_id": result["meta"].get("doc_id", ""),
-                "passage_id": result["meta"].get("passage_id", ""),
+                "doc_id": result.get("doc_id", ""),
+                "passage_id": result.get("passage_id", ""),
                 "text": result["text"],
                 "score": float(result["score"])
             }
 
-            # 메타데이터에서 original_score 보존
-            if "original_score" in result["meta"]:
-                metadata = {
-                    "original_score": result["meta"]["original_score"],
-                    "unique_id": result.get("id")  # 고유 식별자도 메타데이터에 보존
-                }
-                processed_result["metadata"] = metadata
+            # 원본 점수 보존
+            if "original_score" in result:
+                processed_result["original_score"] = result["original_score"]
+            
+            # unique_id 보존
+            if "unique_id" in result:
+                processed_result["unique_id"] = result["unique_id"]
             
             # MRC 관련 필드가 있으면 추가
             if "mrc_score" in result:
@@ -305,8 +305,8 @@ class RerankerClient:
                 "results": [
                     {
                         "id": result.get("id"),  # 고유 식별자 사용
-                        "doc_id": result["meta"].get("doc_id", ""),
-                        "passage_id": result["meta"].get("passage_id", ""),
+                        "doc_id": result.get("doc_id", ""),
+                        "passage_id": result.get("passage_id", ""),
                         "text": result["text"],
                         "score": float(result["score"])
                     }
