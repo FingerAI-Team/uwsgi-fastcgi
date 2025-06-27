@@ -5,14 +5,16 @@ from .controller import MRCController
 
 # 로거 설정
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)  # INFO 레벨로 설정
+logger.setLevel(logging.DEBUG)  # DEBUG 레벨로 변경하여 더 상세한 로그 출력
 
 # 파일 로그 추가 (볼륨에 저장)
 try:
     file_handler = logging.FileHandler('/var/log/reranker/reranker_detail.log')
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     logger.addHandler(file_handler)
-    logger.info("MRC 리랭커 로그 파일 설정 완료: /var/log/reranker/reranker_detail.log")
+    # 파일 핸들러의 로그 레벨도 DEBUG로 설정
+    file_handler.setLevel(logging.DEBUG)
+    logger.info("MRC 리랭커 로그 파일 설정 완료: /var/log/reranker/reranker_detail.log (DEBUG 레벨)")
 except Exception as e:
     logger.warning(f"MRC 리랭커 로그 파일 설정 실패: {str(e)}")
 
@@ -341,10 +343,35 @@ class MRCReranker:
         score_range = max_final_score - min_final_score
         logger.info(f"[DEBUG-SCALE] 점수 범위: min={min_final_score:.4f}, max={max_final_score:.4f}, range={score_range:.4f}")
         
-        if score_range > 0:
+        # 이론적 최대/최소값 계산
+        flashrank_z_min = normalization_params["flashrank"].get("z_min", -2.62)
+        flashrank_z_max = normalization_params["flashrank"].get("z_max", 1.99)
+        mrc_z_min = normalization_params["mrc"].get("z_min", -0.64)
+        mrc_z_max = normalization_params["mrc"].get("z_max", 4.19)
+        original_z_min = normalization_params["original"].get("z_min", -3.21)
+        original_z_max = normalization_params["original"].get("z_max", 2.02)
+        
+        # 이론적 최대/최소 점수 계산 (MRC 임계치 고려)
+        theoretical_min = (weight_flashrank * flashrank_z_min + 
+                          (weight_mrc * mrc_z_min if mrc_score_threshold == 0 else 0) + 
+                          weight_original * original_z_min)
+        
+        theoretical_max = (weight_flashrank * flashrank_z_max + 
+                          weight_mrc * mrc_z_max + 
+                          weight_original * original_z_max)
+        
+        theoretical_range = theoretical_max - theoretical_min
+        
+        logger.info(f"[DEBUG-THEORY] 이론적 점수 범위: min={theoretical_min:.4f}, max={theoretical_max:.4f}, range={theoretical_range:.4f}")
+        
+        if theoretical_range > 0:
             for passage in passages:
                 raw_score = passage['hybrid_score_raw']
-                scaled_score = (raw_score - min_final_score) / score_range
+                # 이론적 범위 기준으로 스케일링
+                scaled_score = (raw_score - theoretical_min) / theoretical_range
+                # 0-1 범위를 벗어날 수 있으나, 필요하다면 클램핑 가능
+                scaled_score = max(0, min(1, scaled_score))  # 0-1 사이로 클램핑 (선택적)
+                
                 passage['hybrid_score'] = scaled_score
                 passage['score'] = scaled_score  # 최종 점수로 사용
                 
@@ -353,8 +380,8 @@ class MRCReranker:
                 if passage_id in [p.get('id', 'unknown') for p in passages[:5]] or passage_id in [p.get('id', 'unknown') for p in passages[-5:]]:
                     logger.info(f"[DEBUG-SCALE] ID {passage_id}: raw={raw_score:.4f} → scaled={scaled_score:.4f}")
         else:
-            # 모든 점수가 동일한 경우
-            logger.warning(f"[DEBUG-SCALE] 모든 점수가 동일합니다! 기본값 0.5로 설정")
+            # 이론적 범위가 0인 경우 (발생하지 않아야 함)
+            logger.warning(f"[DEBUG-SCALE] 이론적 점수 범위가 0입니다! 기본값 0.5로 설정")
             for passage in passages:
                 passage['hybrid_score'] = 0.5  # 기본값
                 passage['score'] = 0.5
