@@ -195,7 +195,8 @@ class MRCReranker:
         return result
         
     def hybrid_rerank(self, query: str, passages: List[Dict[str, Any]], 
-                      flashrank_scores: List[float], 
+                      flashrank_scores: List[float],
+                      original_scores: List[float] = None,  # 원본 점수 파라미터 추가
                       weight_mrc: float = 0.7,
                       weight_flashrank: float = 0.5,
                       weight_original: float = 0.2,
@@ -204,22 +205,23 @@ class MRCReranker:
                       top_k: Optional[int] = None,
                       return_mrc_scores: bool = False) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], List[float]]]:
         """
-        FlashRank 결과와 MRC 결과를 조합한 하이브리드 재랭킹
+        FlashRank와 MRC 점수를 결합한 하이브리드 재랭킹을 수행합니다.
         
         Args:
-            query: 검색 쿼리
+            query: 사용자 쿼리
             passages: 재랭킹할 패시지 목록
-            flashrank_scores: FlashRank에서 계산한 점수 목록
-            weight_mrc: MRC 점수 가중치
+            flashrank_scores: FlashRank 점수 목록
+            original_scores: 원본 검색 점수 목록 (없으면 passage에서 추출)
             weight_flashrank: FlashRank 점수 가중치
-            weight_original: 원본 검색 점수 가중치
-            normalization_params: 정규화 파라미터 (각 점수 유형별 평균, 표준편차 등)
-            mrc_score_threshold: MRC 점수 임계치 (이 값 이상일 때만 MRC 점수 반영)
-            top_k: 반환할 상위 결과 수
-            return_mrc_scores: MRC 점수 목록도 함께 반환할지 여부
+            weight_mrc: MRC 점수 가중치
+            weight_original: 원본 점수 가중치
+            normalization_params: 정규화 파라미터
+            mrc_score_threshold: MRC 점수 임계값 (이 값 이상일 때만 MRC 점수 반영)
+            top_k: 상위 k개 결과만 반환
+            return_mrc_scores: MRC 점수도 함께 반환할지 여부
             
         Returns:
-            하이브리드 재랭킹된 패시지 목록, 또는 (패시지 목록, MRC 점수 목록) 튜플
+            재랭킹된 패시지 목록 또는 (패시지 목록, MRC 점수 목록) 튜플
         """
         logger.info(f"하이브리드 재랭킹 시작: query='{query}', passages={len(passages)}, "
                    f"weight_flashrank={weight_flashrank}, weight_mrc={weight_mrc}, weight_original={weight_original}")
@@ -271,7 +273,7 @@ class MRCReranker:
             logger.debug(f"MRC 배치 처리: {i//batch_size + 1}/{(total_samples + batch_size - 1)//batch_size} 완료")
         
         mrc_scores = []  # MRC 점수 목록 저장
-        original_scores = []  # 원본 점수 목록 저장
+        # original_scores는 이미 파라미터로 받았으므로 새로 생성하지 않음
         
         # 정규화를 위한 Z-점수 계산 및 스케일링을 위한 최소/최대값 초기화
         max_final_score = float('-inf')
@@ -296,9 +298,16 @@ class MRCReranker:
         # 점수 정규화 및 결과 업데이트
         for i, (passage, mrc_result, flashrank_score) in enumerate(zip(passages, mrc_results, flashrank_scores)):
             # 원본 점수 저장 및 로깅
-            original_score_exists = "original_score" in passage
-            original_score_raw = passage.get("original_score", "없음")
-            original_score = passage.get("original_score", original_mean)
+            if original_scores is not None and i < len(original_scores):
+                # 파라미터로 전달된 original_scores 사용
+                original_score = original_scores[i]
+                original_score_exists = True
+                original_score_raw = original_score
+            else:
+                # 기존 방식대로 passage에서 추출
+                original_score_exists = "original_score" in passage
+                original_score_raw = passage.get("original_score", "없음")
+                original_score = passage.get("original_score", original_mean)
             
             # 로깅 추가 - 처음 5개와 마지막 5개 항목만
             if i < 5 or i >= len(passages) - 5:
@@ -306,8 +315,6 @@ class MRCReranker:
                 logger.info(f"[ORIGINAL-SCORE-DEBUG] 항목 {i} (ID {passage_id}): original_score 존재={original_score_exists}, 원시값={original_score_raw}, 사용값={original_score}")
                 # 전체 passage 구조 로깅
                 logger.info(f"[PASSAGE-DEBUG] 항목 {i}: 키={list(passage.keys())}")
-            
-            original_scores.append(original_score)
             
             # MRC 점수 저장
             mrc_score = mrc_result['answerability']

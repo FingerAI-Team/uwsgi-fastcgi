@@ -1044,11 +1044,17 @@ class RerankerService:
                     # 하이브리드 재랭킹 수행 - 전체 검색 결과 사용 (제한 없이 모든 결과 처리)
                     logger.info(f"[HYBRID-DETAIL] MRC 재랭킹 시작: 총 {len(flashrank_result['results'])}개 항목 처리")
                     
-                    # 모든 결과 처리를 위해 top_k=None으로 설정
+                    # 원본 점수 추출 및 보존
+                    original_scores = [p.get("original_score", p.get("score", 0.0)) for p in passages]
+                    logger.info(f"[HYBRID-DETAIL] 원본 점수 샘플: {original_scores[:5]}")
+                    
+                    # MRC 재랭킹 수행
+                    mrc_start_time = time.time()
                     reranked_passages, mrc_scores = self.mrc_reranker.hybrid_rerank(
                         query, 
-                        flashrank_result["results"], 
-                        flashrank_scores, 
+                        flashrank_result["results"],  # 재랭킹된 결과
+                        flashrank_scores,  # FlashRank 점수
+                        original_scores=original_scores,  # 원본 점수를 별도 파라미터로 전달
                         weight_flashrank=self.hybrid_weight_flashrank,
                         weight_mrc=self.hybrid_weight_mrc,
                         weight_original=self.hybrid_weight_original,
@@ -1369,6 +1375,12 @@ class RerankerService:
                         # 원본 패시지에 점수 및 순위 정보 추가
                         flashrank_score = score  # FlashRank 점수 저장
                         original_passage["flashrank_score"] = flashrank_score  # FlashRank 점수 명시적으로 저장
+                        
+                        # 원본 점수 보존 - 없는 경우에만 score를 original_score로 저장
+                        if "original_score" not in original_passage:
+                            original_passage["original_score"] = original_passage.get("score", 0.0)
+                            logger.info(f"[ORIGINAL-SCORE-PRESERVE] ID={result_id}: original_score 저장, 값={original_passage['original_score']}")
+                        
                         original_passage["score"] = flashrank_score  # FlashRank 모드에서는 flashrank_score를 최종 점수로 사용
                         original_passage["rank"] = rank + i  # 전체 순위 계산
                         
@@ -1714,6 +1726,12 @@ class RerankerService:
                         # 원본 패시지에 점수 및 순위 정보 추가
                         flashrank_score = score  # FlashRank 점수 저장
                         original_passage["flashrank_score"] = flashrank_score  # FlashRank 점수 명시적으로 저장
+                        
+                        # 원본 점수 보존 - 없는 경우에만 score를 original_score로 저장
+                        if "original_score" not in original_passage:
+                            original_passage["original_score"] = original_passage.get("score", 0.0)
+                            logger.info(f"[ORIGINAL-SCORE-PRESERVE] ID={result_id}: original_score 저장, 값={original_passage['original_score']}")
+                        
                         original_passage["score"] = flashrank_score  # FlashRank 모드에서는 flashrank_score를 최종 점수로 사용
                         original_passage["rank"] = rank + i  # 전체 순위 계산
                         
