@@ -425,6 +425,9 @@ def rerank():
     Query Parameters:
         top_k (int, optional): 반환할 상위 결과 수
         type (str, optional): 재랭킹 방식 (flashrank, mrc, hybrid, auto)
+        weight_flashrank (float, optional): FlashRank 점수 가중치
+        weight_mrc (float, optional): MRC 점수 가중치
+        weight_original (float, optional): 원본 검색 점수 가중치
         
     Request Body:
         query (str): 검색 쿼리
@@ -445,8 +448,10 @@ def rerank():
         # Get reranker type parameter (flashrank, mrc, hybrid)
         rerank_type = request.args.get('type', 'auto').lower()
         
-        # Get mrc_weight parameter from query string
-        mrc_weight = request.args.get('mrc_weight', type=float)
+        # Get weight parameters from query string
+        weight_flashrank = request.args.get('weight_flashrank', type=float)
+        weight_mrc = request.args.get('weight_mrc', type=float)
+        weight_original = request.args.get('weight_original', type=float)
         
         # Set environment variable for reranker method
         os.environ["RERANK_METHOD"] = rerank_type
@@ -469,10 +474,18 @@ def rerank():
         # Process reranking
         reranker_service = get_reranker_service()
         
-        # MRC 가중치 설정
-        if mrc_weight is not None:
-            logger.info(f"[RERANK] MRC 가중치 설정: {mrc_weight}")
-            reranker_service.hybrid_weight_mrc = mrc_weight
+        # 가중치 설정
+        if weight_flashrank is not None:
+            logger.info(f"[RERANK] FlashRank 가중치 설정: {weight_flashrank}")
+            reranker_service.hybrid_weight_flashrank = weight_flashrank
+            
+        if weight_mrc is not None:
+            logger.info(f"[RERANK] MRC 가중치 설정: {weight_mrc}")
+            reranker_service.hybrid_weight_mrc = weight_mrc
+            
+        if weight_original is not None:
+            logger.info(f"[RERANK] 원본 점수 가중치 설정: {weight_original}")
+            reranker_service.hybrid_weight_original = weight_original
         
         reranked = reranker_service.process_search_results(
             search_result.query,
@@ -484,6 +497,13 @@ def rerank():
         processing_time = time.time() - total_start_time
         # API 명세에 맞게 processing_time 필드 추가
         reranked["processing_time"] = processing_time
+        
+        # 사용된 가중치 정보 추가
+        reranked["weights"] = {
+            "flashrank": reranker_service.hybrid_weight_flashrank,
+            "mrc": reranker_service.hybrid_weight_mrc,
+            "original": reranker_service.hybrid_weight_original
+        }
         
         logger.info(f"Total rerank endpoint processing time: {processing_time:.3f} seconds")
         

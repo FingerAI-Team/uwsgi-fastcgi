@@ -266,6 +266,24 @@ class RerankerService:
             # 배치 사이즈 설정
             self.batch_size = self._get_batch_size()
             
+            # 하이브리드 점수 계산 설정
+            hybrid_scoring = self.config.get("hybrid_scoring", {})
+            self.normalization = hybrid_scoring.get("normalization", {})
+            self.default_weights = hybrid_scoring.get("default_weights", {
+                "flashrank": 0.5,
+                "mrc": 0.3,
+                "original": 0.2
+            })
+            
+            # 정규화 상수 로깅
+            logger.info("하이브리드 점수 계산을 위한 정규화 상수 로드:")
+            for score_type, norm_params in self.normalization.items():
+                logger.info(f"  - {score_type}: 평균={norm_params.get('mean')}, 표준편차={norm_params.get('std')}")
+                
+            # MRC 점수 임계치 설정
+            self.mrc_score_threshold = self.normalization.get("mrc", {}).get("threshold", 0.1)
+            logger.info(f"MRC 점수 임계치: {self.mrc_score_threshold}")
+            
             # GPU 사용 가능 여부 확인
             try:
                 import torch
@@ -399,6 +417,11 @@ class RerankerService:
             self.mrc_enabled = self.config.get("mrc", {}).get("enabled", False)
             self.mrc_reranker = None
             self.hybrid_weight_mrc = self.config.get("mrc", {}).get("hybrid_weight_mrc", 0.7)
+            
+            # 하이브리드 가중치 초기값 설정
+            self.hybrid_weight_flashrank = self.default_weights.get("flashrank", 0.5)
+            self.hybrid_weight_mrc = self.default_weights.get("mrc", 0.3)
+            self.hybrid_weight_original = self.default_weights.get("original", 0.2)
             
             logger.debug(f"MRC 초기화 시작: enabled={self.mrc_enabled}, MRC_AVAILABLE={MRC_AVAILABLE}")
             logger.debug(f"MRC 설정: {self.config.get('mrc', {})}")
@@ -1018,7 +1041,11 @@ class RerankerService:
                         query, 
                         flashrank_result["results"], 
                         flashrank_scores, 
+                        weight_flashrank=self.hybrid_weight_flashrank,
                         weight_mrc=self.hybrid_weight_mrc,
+                        weight_original=self.hybrid_weight_original,
+                        normalization_params=self.normalization,
+                        mrc_score_threshold=self.mrc_score_threshold,
                         top_k=top_k,  # top_k 파라미터 적용하여 요청한 개수만 반환
                         return_mrc_scores=True  # MRC 점수도 함께 반환
                     )
@@ -1208,7 +1235,11 @@ class RerankerService:
                     query, 
                     flashrank_result["results"], 
                     flashrank_scores, 
+                    weight_flashrank=self.hybrid_weight_flashrank,
                     weight_mrc=self.hybrid_weight_mrc,
+                    weight_original=self.hybrid_weight_original,
+                    normalization_params=self.normalization,
+                    mrc_score_threshold=self.mrc_score_threshold,
                     top_k=top_k,  # top_k 파라미터 적용하여 요청한 개수만 반환
                     return_mrc_scores=True  # MRC 점수도 함께 반환
                 )

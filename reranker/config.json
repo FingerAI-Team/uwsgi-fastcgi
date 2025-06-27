@@ -25,5 +25,39 @@
         "model_config_gdrive_id": "1JSuDygqET5Tg7wFWsqUy2Lgfa9yoTRm0",
         "model_ckpt_gdrive_id": "1KEFpxaBYrp7q8uck4r_m8pJspZGMQodl",
         "hybrid_weight_mrc": 0.5
+    },
+    "hybrid_scoring": {
+        "normalization": {
+            "flashrank": {
+                "mean": 0.6184,
+                "std": 0.0498,
+                "min": 0.4877,
+                "max": 0.7177,
+                "z_min": -2.62,
+                "z_max": 1.99
+            },
+            "mrc": {
+                "mean": 0.0518,
+                "std": 0.0794,
+                "min": 0.0011,
+                "max": 0.3841,
+                "z_min": -0.64,
+                "z_max": 4.19,
+                "threshold": 0.1
+            },
+            "original": {
+                "mean": 0.5872,
+                "std": 0.0407,
+                "min": 0.4566,
+                "max": 0.6693,
+                "z_min": -3.21,
+                "z_max": 2.02
+            }
+        },
+        "default_weights": {
+            "flashrank": 0.5,
+            "mrc": 0.3,
+            "original": 0.2
+        }
     }
 } 

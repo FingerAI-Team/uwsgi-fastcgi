@@ -356,14 +356,19 @@ def enhanced_search():
         top_m = data.get("top_m", summaryAgent.search_top)  # RAG 검색 결과 수
         top_n = data.get("top_n", summaryAgent.rerank_top)  # Reranker 결과 수
         threshold = data.get("threshold", summaryAgent.rerank_threshold)  # Reranker 점수 임계치
-        mrc_weight = data.get("mrc_weight", 0.7)  # MRC 가중치 (기본값 0.7)
+        
+        # 가중치 파라미터
+        weight_flashrank = data.get("weight_flashrank", 0.5)  # FlashRank 가중치 (기본값 0.5)
+        weight_mrc = data.get("weight_mrc", 0.3)  # MRC 가중치 (기본값 0.3)
+        weight_original = data.get("weight_original", 0.2)  # 원본 점수 가중치 (기본값 0.2)
         
         # 파라미터 유효성 검사
         if top_m < top_n:
             logger.warning(f"파라미터 오류: top_m({top_m}) < top_n({top_n}), top_m으로 조정합니다")
             top_n = top_m
             
-        logger.info(f"검색 파라미터: query='{query}', top_m={top_m}, top_n={top_n}, threshold={threshold}, mrc_weight={mrc_weight}")
+        logger.info(f"검색 파라미터: query='{query}', top_m={top_m}, top_n={top_n}, threshold={threshold}")
+        logger.info(f"가중치 파라미터: weight_flashrank={weight_flashrank}, weight_mrc={weight_mrc}, weight_original={weight_original}")
             
         # 1. RAG 서비스 호출하여 문서 검색
         logger.info(f"RAG 서비스 호출 준비: endpoint={RAG_ENDPOINT}/search")
@@ -432,7 +437,8 @@ def enhanced_search():
                 "text": item.get("text", ""),
                 "doc_id": doc_id,
                 "passage_id": item.get("passage_id"),
-                "score": item.get("score", 0)
+                "score": item.get("score", 0),
+                "original_score": item.get("score", 0)  # 원본 점수 저장
             }
             
             # 기타 중요 필드 복사
@@ -458,12 +464,15 @@ def enhanced_search():
             # 재랭킹 파라미터
             rerank_params = {
                 "top_k": int(top_n),  # 상위 N개 결과만 요청 (정수형으로 변환)
-                "mrc_weight": mrc_weight  # MRC 가중치 전달
+                "weight_flashrank": weight_flashrank,
+                "weight_mrc": weight_mrc,
+                "weight_original": weight_original
             }
             
             # 재랭킹 요청 수행
             try:
-                logger.info(f"Reranker 서비스 호출: {len(rerank_passages)}개 결과, top_k={top_n}, mrc_weight={mrc_weight}")
+                logger.info(f"Reranker 서비스 호출: {len(rerank_passages)}개 결과, top_k={top_n}, "
+                           f"weight_flashrank={weight_flashrank}, weight_mrc={weight_mrc}, weight_original={weight_original}")
                 rerank_response = requests.post(
                     f"{RERANKER_ENDPOINT}/rerank",
                     json=rerank_payload,
@@ -495,6 +504,11 @@ def enhanced_search():
                         if "hybrid_score" in first_result:
                             hybrid_score = first_result.get("hybrid_score", 0)
                             logger.info(f"[HYBRID-SCORE-CHECK] 첫 번째 결과의 하이브리드 점수: {hybrid_score}")
+                        
+                        # 원본 점수 확인
+                        if "original_score" in first_result:
+                            original_score = first_result.get("original_score", 0)
+                            logger.info(f"[ORIGINAL-SCORE-CHECK] 첫 번째 결과의 원본 점수: {original_score}")
                 else:
                     logger.error(f"재랭킹 응답 실패: 상태 코드={rerank_response.status_code}, 응답={rerank_response.text}")
                     reranked_results = {
@@ -603,7 +617,11 @@ def enhanced_search():
             "search_count": len(search_results.get("search_result", [])),
             "reranked_count": reranked_count,  # 임계치 필터링 전 결과 수
             "filtered_count": len(processed_results),  # 임계치 필터링 후 결과 수
-            "mrc_weight": mrc_weight,  # 사용된 MRC 가중치
+            "weights": {  # 사용된 가중치 정보
+                "flashrank": weight_flashrank,
+                "mrc": weight_mrc,
+                "original": weight_original
+            },
             "processing_time": {
                 "total": total_time,
                 "rag_search": rag_time,

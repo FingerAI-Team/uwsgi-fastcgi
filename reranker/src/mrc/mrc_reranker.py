@@ -184,6 +184,10 @@ class MRCReranker:
     def hybrid_rerank(self, query: str, passages: List[Dict[str, Any]], 
                       flashrank_scores: List[float], 
                       weight_mrc: float = 0.7,
+                      weight_flashrank: float = 0.5,
+                      weight_original: float = 0.2,
+                      normalization_params: Dict[str, Dict] = None,
+                      mrc_score_threshold: float = 0.1,
                       top_k: Optional[int] = None,
                       return_mrc_scores: bool = False) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], List[float]]]:
         """
@@ -193,14 +197,27 @@ class MRCReranker:
             query: 검색 쿼리
             passages: 재랭킹할 패시지 목록
             flashrank_scores: FlashRank에서 계산한 점수 목록
-            weight_mrc: MRC 점수 가중치 (0~1 사이)
+            weight_mrc: MRC 점수 가중치
+            weight_flashrank: FlashRank 점수 가중치
+            weight_original: 원본 검색 점수 가중치
+            normalization_params: 정규화 파라미터 (각 점수 유형별 평균, 표준편차 등)
+            mrc_score_threshold: MRC 점수 임계치 (이 값 이상일 때만 MRC 점수 반영)
             top_k: 반환할 상위 결과 수
             return_mrc_scores: MRC 점수 목록도 함께 반환할지 여부
             
         Returns:
             하이브리드 재랭킹된 패시지 목록, 또는 (패시지 목록, MRC 점수 목록) 튜플
         """
-        logger.info(f"하이브리드 재랭킹 시작: query='{query}', passages={len(passages)}, weight_mrc={weight_mrc}")
+        logger.info(f"하이브리드 재랭킹 시작: query='{query}', passages={len(passages)}, "
+                   f"weight_flashrank={weight_flashrank}, weight_mrc={weight_mrc}, weight_original={weight_original}")
+        
+        # 정규화 파라미터가 없으면 기본값 사용
+        if normalization_params is None:
+            normalization_params = {
+                "flashrank": {"mean": 0.6184, "std": 0.0498, "min": 0.4877, "max": 0.7177, "z_min": -2.62, "z_max": 1.99},
+                "mrc": {"mean": 0.0518, "std": 0.0794, "min": 0.0011, "max": 0.3841, "z_min": -0.64, "z_max": 4.19},
+                "original": {"mean": 0.5872, "std": 0.0407, "min": 0.4566, "max": 0.6693, "z_min": -3.21, "z_max": 2.02}
+            }
         
         # 입력 데이터 로깅 - id 값 확인
         logger.info(f"[DEBUG] 입력 패시지 id 샘플: {[p.get('id', 'N/A') for p in passages[:5]]}")
@@ -241,10 +258,34 @@ class MRCReranker:
             logger.debug(f"MRC 배치 처리: {i//batch_size + 1}/{(total_samples + batch_size - 1)//batch_size} 완료")
         
         mrc_scores = []  # MRC 점수 목록 저장
+        original_scores = []  # 원본 점수 목록 저장
         
-        # 점수 결합 및 결과 업데이트
-        weight_flashrank = 1.0 - weight_mrc
+        # 정규화를 위한 Z-점수 계산 및 스케일링을 위한 최소/최대값 초기화
+        max_final_score = float('-inf')
+        min_final_score = float('inf')
+        
+        # 디버깅용 로그 카운터
+        log_count = 0
+        
+        # 정규화 파라미터 추출
+        flashrank_mean = normalization_params["flashrank"].get("mean", 0.6184)
+        flashrank_std = normalization_params["flashrank"].get("std", 0.0498)
+        mrc_mean = normalization_params["mrc"].get("mean", 0.0518)
+        mrc_std = normalization_params["mrc"].get("std", 0.0794)
+        original_mean = normalization_params["original"].get("mean", 0.5872)
+        original_std = normalization_params["original"].get("std", 0.0407)
+        
+        # 정규화 파라미터 로깅
+        logger.info(f"[DEBUG-NORM] 정규화 파라미터: flashrank(mean={flashrank_mean:.4f}, std={flashrank_std:.4f}), "
+                   f"mrc(mean={mrc_mean:.4f}, std={mrc_std:.4f}), original(mean={original_mean:.4f}, std={original_std:.4f})")
+        logger.info(f"[DEBUG-NORM] MRC 임계치: {mrc_score_threshold}")
+        
+        # 점수 정규화 및 결과 업데이트
         for i, (passage, mrc_result, flashrank_score) in enumerate(zip(passages, mrc_results, flashrank_scores)):
+            # 원본 점수 저장
+            original_score = passage.get("original_score", 0.0)
+            original_scores.append(original_score)
+            
             # MRC 점수 저장
             mrc_score = mrc_result['answerability']
             mrc_scores.append(mrc_score)
@@ -254,28 +295,58 @@ class MRCReranker:
             passage['mrc_char_ids'] = mrc_result['char_ids']
             passage['mrc_score'] = mrc_score
             passage['flashrank_score'] = flashrank_score
+            passage['original_score'] = original_score
             
-            # 하이브리드 점수 계산
-            hybrid_score = (flashrank_score * weight_flashrank) + (mrc_score * weight_mrc)
-            passage['hybrid_score'] = hybrid_score
+            # Z-점수 정규화
+            flashrank_z = (flashrank_score - flashrank_mean) / flashrank_std if flashrank_std > 0 else 0
+            mrc_z = (mrc_score - mrc_mean) / mrc_std if mrc_std > 0 else 0
+            original_z = (original_score - original_mean) / original_std if original_std > 0 else 0
             
-            # 하이브리드 모드에서는 hybrid_score를 최종 점수로 사용
-            passage['score'] = hybrid_score
+            # MRC 임계치 적용
+            mrc_contribution = weight_mrc * mrc_z if mrc_score >= mrc_score_threshold else 0.0
             
-            # 메타데이터 필드가 없으면 생성
-            if 'metadata' not in passage:
-                passage['metadata'] = {}
+            # 최종 점수 계산
+            final_score = (weight_flashrank * flashrank_z) + mrc_contribution + (weight_original * original_z)
+            
+            # 로그 출력 (처음 5개와 마지막 5개만)
+            if log_count < 5 or log_count >= len(passages) - 5:
+                passage_id = passage.get('id', 'unknown')
+                logger.info(f"[DEBUG-SCORE] ID {passage_id}: "
+                           f"flashrank({flashrank_score:.4f} → z={flashrank_z:.4f}), "
+                           f"mrc({mrc_score:.4f} → z={mrc_z:.4f}, contrib={mrc_contribution:.4f}), "
+                           f"original({original_score:.4f} → z={original_z:.4f}), "
+                           f"final={final_score:.4f}")
+            
+            log_count += 1
+            
+            # 최종 점수 저장
+            passage['hybrid_score_raw'] = final_score
+            
+            # 최대/최소 점수 업데이트
+            max_final_score = max(max_final_score, final_score)
+            min_final_score = min(min_final_score, final_score)
+        
+        # 최종 점수 스케일링 (0~1 범위로)
+        score_range = max_final_score - min_final_score
+        logger.info(f"[DEBUG-SCALE] 점수 범위: min={min_final_score:.4f}, max={max_final_score:.4f}, range={score_range:.4f}")
+        
+        if score_range > 0:
+            for passage in passages:
+                raw_score = passage['hybrid_score_raw']
+                scaled_score = (raw_score - min_final_score) / score_range
+                passage['hybrid_score'] = scaled_score
+                passage['score'] = scaled_score  # 최종 점수로 사용
                 
-            # 메타데이터에도 점수 정보 저장 (중복 저장으로 안전성 확보)
-            if passage['metadata'] is not None:  # metadata가 None이 아닌 경우에만 처리
-                passage['metadata']['mrc_score'] = mrc_score
-                passage['metadata']['flashrank_score'] = flashrank_score
-                passage['metadata']['hybrid_score'] = hybrid_score
-                passage['metadata']['mrc_weight'] = weight_mrc
-            
-            # original_id 값 로깅
-            if i < 5 or i >= len(passages) - 5:  # 처음 5개와 마지막 5개만 로깅
-                logger.info(f"[DEBUG] Passage {i}: id={passage.get('id', 'N/A')}, flashrank={flashrank_score:.4f}, mrc={mrc_score:.4f}, hybrid={passage['hybrid_score']:.4f}")
+                # 첫 5개와 마지막 5개 결과만 로깅
+                passage_id = passage.get('id', 'unknown')
+                if passage_id in [p.get('id', 'unknown') for p in passages[:5]] or passage_id in [p.get('id', 'unknown') for p in passages[-5:]]:
+                    logger.info(f"[DEBUG-SCALE] ID {passage_id}: raw={raw_score:.4f} → scaled={scaled_score:.4f}")
+        else:
+            # 모든 점수가 동일한 경우
+            logger.warning(f"[DEBUG-SCALE] 모든 점수가 동일합니다! 기본값 0.5로 설정")
+            for passage in passages:
+                passage['hybrid_score'] = 0.5  # 기본값
+                passage['score'] = 0.5
         
         # 하이브리드 점수로 정렬
         reranked_passages = sorted(passages, key=lambda x: x.get('hybrid_score', 0), reverse=True)
