@@ -1012,6 +1012,14 @@ class RerankerService:
                             max_score = max(flashrank_scores)
                             avg_score = sum(flashrank_scores) / len(flashrank_scores)
                             logger.info(f"[HYBRID-DETAIL] FlashRank 점수 분포: 최소={min_score:.4f}, 최대={max_score:.4f}, 평균={avg_score:.4f}")
+                        
+                        # original_score 확인 로깅 추가
+                        for i, result in enumerate(flashrank_result["results"]):
+                            if i < 5 or i >= len(flashrank_result["results"]) - 5:  # 처음 5개와 마지막 5개만 로깅
+                                has_original = "original_score" in result
+                                original_value = result.get("original_score", "없음")
+                                logger.info(f"[ORIGINAL-SCORE-CHECK] FlashRank 결과 #{i}: original_score 존재={has_original}, 값={original_value}")
+                                logger.info(f"[ORIGINAL-SCORE-CHECK] FlashRank 결과 #{i} 키: {list(result.keys())}")
                     
                     elif isinstance(flashrank_result, list):
                         # 리스트 형태로 반환된 경우
@@ -1212,6 +1220,14 @@ class RerankerService:
             return search_result or {"query": query, "results": [], "total": 0, "reranked": False}, [], 0.0
         
         start_time = time.time()
+        
+        # 입력 패시지의 original_score 확인 로깅
+        for i, passage in enumerate(passages):
+            if i < 5 or i >= len(passages) - 5:  # 처음 5개와 마지막 5개만 로깅
+                has_original = "original_score" in passage
+                original_value = passage.get("original_score", "없음")
+                logger.info(f"[ORIGINAL-SCORE-INPUT] FlashRank 입력 #{i}: original_score 존재={has_original}, 값={original_value}")
+                logger.info(f"[ORIGINAL-SCORE-INPUT] FlashRank 입력 #{i} 키: {list(passage.keys())}")
         
         try:
             # 모델 디바이스 재확인 (GPU 사용 중인지)

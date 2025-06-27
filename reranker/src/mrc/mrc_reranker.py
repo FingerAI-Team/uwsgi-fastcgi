@@ -295,8 +295,18 @@ class MRCReranker:
         
         # 점수 정규화 및 결과 업데이트
         for i, (passage, mrc_result, flashrank_score) in enumerate(zip(passages, mrc_results, flashrank_scores)):
-            # 원본 점수 저장
-            original_score = passage.get("original_score", 0.0)
+            # 원본 점수 저장 및 로깅
+            original_score_exists = "original_score" in passage
+            original_score_raw = passage.get("original_score", "없음")
+            original_score = passage.get("original_score", original_mean)
+            
+            # 로깅 추가 - 처음 5개와 마지막 5개 항목만
+            if i < 5 or i >= len(passages) - 5:
+                passage_id = passage.get('id', 'unknown')
+                logger.info(f"[ORIGINAL-SCORE-DEBUG] 항목 {i} (ID {passage_id}): original_score 존재={original_score_exists}, 원시값={original_score_raw}, 사용값={original_score}")
+                # 전체 passage 구조 로깅
+                logger.info(f"[PASSAGE-DEBUG] 항목 {i}: 키={list(passage.keys())}")
+            
             original_scores.append(original_score)
             
             # MRC 점수 저장
