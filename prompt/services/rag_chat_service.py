@@ -199,45 +199,68 @@ class RagChatService:
     def format_context(self, documents: List[Dict]) -> str:
         """검색 결과를 컨텍스트 형식으로 포맷팅합니다."""
         if not documents:
-            return "관련 문서를 찾을 수 없습니다."
+            logger.info("검색 결과가 없어 일반 지식 기반 응답 모드로 전환합니다.")
+            return """관련 문서를 찾을 수 없어 제가 학습해둔 일반 지식을 기반으로 답변하겠습니다.
+
+참고사항:
+1. 이 답변은 문서 검색 결과가 아닌 LLM의 일반 지식을 기반으로 합니다.
+2. 최신 정보나 특정 통계 데이터가 필요한 질문은 정확성이 떨어질 수 있습니다.
+3. 가능한 범위 내에서 도움이 되는 정보를 제공하겠습니다.
+4. 정확한 정보가 필요하시면 질문을 더 구체적으로 해주시거나 다른 키워드로 시도해보세요."""
             
-        context = ""
-        for idx, doc in enumerate(documents, 1):
-            context += f"[문서 {idx}]\n"
-            context += f"제목: {doc.get('title', '제목 없음')}\n"
+        try:
+            context = ""
+            logger.info(f"검색 결과 {len(documents)}개 문서를 컨텍스트로 포맷팅합니다.")
             
-            # 작성자 정보 추가
-            if doc.get('author'):
-                context += f"작성자: {doc.get('author')}\n"
+            for idx, doc in enumerate(documents, 1):
+                context += f"[문서 {idx}]\n"
+                context += f"제목: {doc.get('title', '제목 없음')}\n"
+                
+                # 작성자 정보 추가
+                if doc.get('author'):
+                    context += f"작성자: {doc.get('author')}\n"
+                
+                # 날짜 정보 추가
+                if 'tags' in doc and 'date' in doc['tags']:
+                    date = doc['tags']['date']
+                    if len(date) == 8:  # YYYYMMDD 형식인 경우
+                        formatted_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+                        context += f"날짜: {formatted_date}\n"
+                
+                # 도메인 정보 추가
+                if doc.get('domain'):
+                    context += f"출처: {doc.get('domain')}\n"
+                
+                # MRC 정보 추가 (질문에 대한 직접 답변)
+                if doc.get('mrc_answer'):
+                    context += f"핵심 답변: {doc.get('mrc_answer')}\n"
+                    context += f"답변 신뢰도: {doc.get('mrc_score', 0):.2f}\n"
+                
+                # 재랭킹 점수 정보 추가
+                if doc.get('score'):
+                    context += f"관련도: {doc.get('score', 0):.2f}\n"
+                
+                # 링크 정보 추가 - 참고 문헌에서 활용하기 위해 별도 필드로 추가
+                link = ""
+                if 'info' in doc and 'url' in doc['info']:
+                    link = doc['info']['url']
+                    context += f"원문 링크: {link}\n"
+                elif 'info' in doc and 'link' in doc['info']:
+                    link = doc['info']['link']
+                    context += f"원문 링크: {link}\n"
+                
+                # 문서 ID 정보 추가 (디버깅용)
+                if doc.get('doc_id'):
+                    context += f"문서 ID: {doc.get('doc_id')}\n"
+                
+                # 본문 내용
+                context += f"내용: {doc.get('text', '')}\n\n"
             
-            # 날짜 정보 추가
-            if 'tags' in doc and 'date' in doc['tags']:
-                date = doc['tags']['date']
-                if len(date) == 8:  # YYYYMMDD 형식인 경우
-                    formatted_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
-                    context += f"날짜: {formatted_date}\n"
-            
-            # 도메인 정보 추가
-            if doc.get('domain'):
-                context += f"출처: {doc.get('domain')}\n"
-            
-            # MRC 정보 추가 (질문에 대한 직접 답변)
-            if doc.get('mrc_answer'):
-                context += f"핵심 답변: {doc.get('mrc_answer')}\n"
-                context += f"답변 신뢰도: {doc.get('mrc_score', 0):.2f}\n"
-            
-            # 재랭킹 점수 정보 추가
-            if doc.get('score'):
-                context += f"관련도: {doc.get('score', 0):.2f}\n"
-            
-            # 링크 정보 추가
-            if 'info' in doc and 'link' in doc['info']:
-                context += f"원문 링크: {doc['info']['link']}\n"
-            
-            # 본문 내용
-            context += f"내용: {doc.get('text', '')}\n\n"
-        
-        return context
+            return context
+        except Exception as e:
+            logger.error(f"컨텍스트 포맷팅 중 오류 발생: {str(e)}", exc_info=True)
+            # 오류 발생 시 기본 메시지 반환
+            return "검색 결과 처리 중 오류가 발생했습니다. 일반 지식을 기반으로 답변하겠습니다."
     
     def generate_response(self, session_id: str, query: str, model: str = None, stream: bool = False, **kwargs) -> Union[Dict[str, Any], Generator[str, None, None]]:
         """RAG 검색 결과를 기반으로 챗봇 응답을 생성합니다."""
@@ -309,18 +332,116 @@ class RagChatService:
             
             response_text = ollama_response.json().get("response", "")
             
-            # 3. 봇 응답 저장
+            # 응답 파싱 및 구조화
+            structured_response = self.parse_structured_response(response_text)
+            
+            # 3. 봇 응답 저장 (원본 텍스트)
             self.session_manager.add_bot_message(session_id, response_text)
             
             logger.info(f"[성능] 총 응답 생성 시간: {(datetime.now() - start_time).total_seconds():.3f}초")
             
             return {
-                "response": response_text,
-                "model": model_to_use
+                "response": structured_response["answer"],
+                "model": model_to_use,
+                "references": structured_response["references"]
             }
         except requests.exceptions.RequestException as e:
             logger.error(f"Ollama 서비스 연결 오류: {str(e)}")
             return {"error": "Ollama 서비스에 연결할 수 없습니다", "details": str(e)}
+    
+    def parse_structured_response(self, response_text: str) -> Dict[str, Any]:
+        """LLM 응답을 구조화된 형식으로 파싱합니다."""
+        import re
+        
+        result = {
+            "answer": "",
+            "references": []
+        }
+        
+        try:
+            # 정규식 패턴 정의
+            answer_pattern = r'<answer>(.*?)</answer>'
+            references_pattern = r'<references>(.*?)</references>'
+            
+            # 응답 텍스트 파싱
+            answer_match = re.search(answer_pattern, response_text, re.DOTALL)
+            if answer_match:
+                result["answer"] = answer_match.group(1).strip()
+                logger.debug(f"응답 텍스트 파싱 성공: {len(result['answer'])} 문자")
+            else:
+                # 태그가 없는 경우 전체 응답을 answer로 처리
+                result["answer"] = response_text.strip()
+                logger.warning("응답에서 <answer> 태그를 찾을 수 없어 전체 텍스트를 사용합니다.")
+            
+            # 참고 문헌 파싱
+            references_match = re.search(references_pattern, response_text, re.DOTALL)
+            if references_match:
+                references_text = references_match.group(1).strip()
+                logger.debug(f"참고 문헌 텍스트 파싱 성공: {len(references_text)} 문자")
+                
+                # 각 줄을 개별 참고 문헌으로 처리
+                references = []
+                for line in references_text.split('\n'):
+                    line = line.strip()
+                    if line and line != '-':
+                        # [숫자] 패턴 찾기
+                        ref_match = re.search(r'\[(\d+)\](.*)', line)
+                        if ref_match:
+                            ref_num = ref_match.group(1)
+                            ref_text = ref_match.group(2).strip()
+                            
+                            # 제목과 링크 분리
+                            title = ref_text
+                            link = ""
+                            
+                            # 링크 패턴 찾기 (http:// 또는 https://)
+                            link_match = re.search(r'(https?://\S+)', ref_text)
+                            if link_match:
+                                link = link_match.group(1).rstrip(')')  # 닫는 괄호 제거
+                                # 링크를 제외한 부분을 제목으로 설정
+                                title = re.sub(r'\s*\(?\s*https?://\S+\s*\)?\s*', '', ref_text).strip()
+                            else:
+                                # 괄호 안에 있는 텍스트를 링크로 간주
+                                paren_match = re.search(r'\((.*?)\)', ref_text)
+                                if paren_match:
+                                    paren_content = paren_match.group(1)
+                                    if paren_content.startswith('http'):
+                                        link = paren_content
+                                        # 괄호와 내용을 제외한 부분을 제목으로 설정
+                                        title = re.sub(r'\s*\(.*?\)\s*', '', ref_text).strip()
+                            
+                            references.append({
+                                "number": ref_num,
+                                "title": title,
+                                "link": link
+                            })
+                            logger.debug(f"참고 문헌 항목 파싱: 번호={ref_num}, 제목={title}, 링크={link}")
+                        else:
+                            # 패턴이 없는 경우 전체 텍스트 사용
+                            if "관련 문서 없음" in line:
+                                references.append({
+                                    "number": "",
+                                    "title": "관련 문서 없음",
+                                    "link": ""
+                                })
+                                logger.debug("관련 문서 없음 항목 파싱")
+                            else:
+                                references.append({
+                                    "number": "",
+                                    "title": line,
+                                    "link": ""
+                                })
+                                logger.debug(f"형식이 맞지 않는 참고 문헌 항목: {line}")
+                result["references"] = references
+                logger.debug(f"총 {len(references)}개의 참고 문헌 파싱 완료")
+            else:
+                logger.warning("응답에서 <references> 태그를 찾을 수 없습니다.")
+        except Exception as e:
+            logger.error(f"응답 파싱 중 오류 발생: {str(e)}", exc_info=True)
+            # 오류 발생 시 원본 텍스트를 그대로 반환
+            result["answer"] = response_text.strip()
+        
+        return result
     
     def _run_streaming_chain(self, chain_input: Dict[str, Any]) -> Generator[str, None, None]:
         """스트리밍 모드에서 체인을 실행합니다."""
@@ -389,12 +510,16 @@ class RagChatService:
                 logger.info(f"[성능] 스트리밍 LLM 응답 완료: {(datetime.now() - llm_start).total_seconds():.3f}초, 응답 길이: {len(accumulated_response)}")
                 logger.info(f"[성능] 총 응답 생성 시간: {(datetime.now() - start_time).total_seconds():.3f}초")
                 
+                # 스트림 종료 시 구조화된 응답 파싱
+                structured_response = self.parse_structured_response(accumulated_response)
+                
                 # 스트림 종료 응답
                 final_response = {
-                    "response": accumulated_response,
+                    "response": structured_response["answer"],
                     "model": model_to_use,
                     "streaming": False,
-                    "done": True
+                    "done": True,
+                    "references": structured_response["references"]
                 }
                 yield json.dumps(final_response, ensure_ascii=False)
         except Exception as e:
