@@ -1031,7 +1031,7 @@ class RerankerService:
                     hybrid_start_time = time.time()
                     
                     # MRC 가중치 로깅
-                    logger.info(f"[HYBRID-DETAIL] MRC 가중치: {self.hybrid_weight_mrc}, FlashRank 가중치: {1.0 - self.hybrid_weight_mrc}")
+                    logger.info(f"[HYBRID-DETAIL] MRC 가중치: {self.hybrid_weight_mrc}, FlashRank 가중치: {self.hybrid_weight_flashrank}, Original 가중치: {self.hybrid_weight_original}")
                     
                     # 하이브리드 재랭킹 수행 - 전체 검색 결과 사용 (제한 없이 모든 결과 처리)
                     logger.info(f"[HYBRID-DETAIL] MRC 재랭킹 시작: 총 {len(flashrank_result['results'])}개 항목 처리")
@@ -1227,7 +1227,7 @@ class RerankerService:
                 hybrid_start_time = time.time()
                 
                 # MRC 가중치 로깅
-                logger.info(f"[HYBRID-DETAIL] MRC 가중치: {self.hybrid_weight_mrc}, FlashRank 가중치: {1.0 - self.hybrid_weight_mrc}")
+                logger.info(f"[HYBRID-DETAIL] MRC 가중치: {self.hybrid_weight_mrc}, 232FlashRank 가중치: {self.hybrid_weight_flashrank}, Original 가중치: {self.hybrid_weight_original}")
                 
                 # 하이브리드 재랭킹 수행 - 전체 검색 결과 사용 (제한 없이 모든 결과 처리)
                 logger.info(f"[HYBRID-DETAIL] MRC 재랭킹 시작: 총 {len(flashrank_result['results'])}개 항목 처리")

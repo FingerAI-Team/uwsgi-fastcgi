@@ -3,7 +3,18 @@ from typing import List, Dict, Any, Optional, Union, Tuple
 
 from .controller import MRCController
 
+# 로거 설정
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)  # INFO 레벨로 설정
+
+# 파일 로그 추가 (볼륨에 저장)
+try:
+    file_handler = logging.FileHandler('/var/log/reranker/reranker_detail.log')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    logger.addHandler(file_handler)
+    logger.info("MRC 리랭커 로그 파일 설정 완료: /var/log/reranker/reranker_detail.log")
+except Exception as e:
+    logger.warning(f"MRC 리랭커 로그 파일 설정 실패: {str(e)}")
 
 class MRCReranker:
     """MRC 결과를 활용한 재랭킹 기능을 제공하는 클래스"""
