@@ -1098,14 +1098,16 @@ class RerankerService:
                         passage["mrc_score"] = mrc_score
                         metadata["mrc_score"] = mrc_score
                         
-                        # 최종 점수 계산 (이미 계산되어 있지만 로깅용으로 다시 계산)
-                        combined_score = (1.0 - self.hybrid_weight_mrc) * flashrank_score + self.hybrid_weight_mrc * mrc_score
+                        # hybrid_score가 이미 mrc_reranker.hybrid_rerank에서 계산되었으므로 그대로 사용
+                        # 기존 코드: combined_score = (1.0 - self.hybrid_weight_mrc) * flashrank_score + self.hybrid_weight_mrc * mrc_score
+                        combined_score = passage.get("hybrid_score", passage.get("score", 0.0))
                         combined_scores.append(combined_score)
                         
-                        # 하이브리드 점수도 명시적으로 추가 (score 필드와 동일)
-                        passage["hybrid_score"] = combined_score
-                        passage["score"] = combined_score
-                        metadata["hybrid_score"] = combined_score
+                        # 하이브리드 점수 명시적으로 추가 (score 필드와 동일)
+                        if "hybrid_score" not in passage:
+                            passage["hybrid_score"] = combined_score
+                        passage["score"] = passage.get("hybrid_score", combined_score)
+                        metadata["hybrid_score"] = passage.get("hybrid_score", combined_score)
                         
                         # 메타데이터 업데이트
                         passage["metadata"] = metadata
@@ -1273,14 +1275,16 @@ class RerankerService:
                     passage["mrc_score"] = mrc_score
                     metadata["mrc_score"] = mrc_score
                     
-                    # 최종 점수 계산 (이미 계산되어 있지만 로깅용으로 다시 계산)
-                    combined_score = (1.0 - self.hybrid_weight_mrc) * flashrank_score + self.hybrid_weight_mrc * mrc_score
+                    # hybrid_score가 이미 mrc_reranker.hybrid_rerank에서 계산되었으므로 그대로 사용
+                    # 기존 코드: combined_score = (1.0 - self.hybrid_weight_mrc) * flashrank_score + self.hybrid_weight_mrc * mrc_score
+                    combined_score = passage.get("hybrid_score", passage.get("score", 0.0))
                     combined_scores.append(combined_score)
                     
-                    # 하이브리드 점수도 명시적으로 추가 (score 필드와 동일)
-                    passage["hybrid_score"] = combined_score
-                    passage["score"] = combined_score
-                    metadata["hybrid_score"] = combined_score
+                    # 하이브리드 점수 명시적으로 추가 (score 필드와 동일)
+                    if "hybrid_score" not in passage:
+                        passage["hybrid_score"] = combined_score
+                    passage["score"] = passage.get("hybrid_score", combined_score)
+                    metadata["hybrid_score"] = passage.get("hybrid_score", combined_score)
                     
                     # 메타데이터 업데이트
                     passage["metadata"] = metadata
