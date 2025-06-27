@@ -1300,7 +1300,12 @@ class RerankerService:
                         passages=[{
                             "id": p["id"],  # 원본 고유 식별자 사용
                             "text": p["text"],
-                            "meta": p.get("meta", {})
+                            "meta": {
+                                # meta 필드에 original_score 추가
+                                "original_score": p.get("original_score", 0.0),
+                                # 기존 meta 필드가 있으면 병합
+                                **(p.get("meta", {}) or {})
+                            }
                         } for idx, p in enumerate(batch_passages)]
                     )
                     
@@ -1370,6 +1375,11 @@ class RerankerService:
                         # meta 필드가 있으면 최상위 레벨로 이동
                         if "meta" in original_passage:
                             meta = original_passage["meta"]
+                            # original_score 복원 (meta에 저장했던 것)
+                            if "original_score" in meta:
+                                original_passage["original_score"] = meta["original_score"]
+                                logger.info(f"[ORIGINAL-SCORE-RESTORE] ID={result_id}: original_score 복원 성공, 값={meta['original_score']}")
+                            
                             for key, value in meta.items():
                                 # 이미 최상위 레벨에 있는 키는 덮어쓰지 않음
                                 if key not in original_passage:
@@ -1635,7 +1645,12 @@ class RerankerService:
                         passages=[{
                             "id": p["id"],  # 원본 고유 식별자 사용
                             "text": p["text"],
-                            "meta": p.get("meta", {})
+                            "meta": {
+                                # meta 필드에 original_score 추가
+                                "original_score": p.get("original_score", 0.0),
+                                # 기존 meta 필드가 있으면 병합
+                                **(p.get("meta", {}) or {})
+                            }
                         } for idx, p in enumerate(batch_passages)]
                     )
                     
@@ -1705,6 +1720,11 @@ class RerankerService:
                         # meta 필드가 있으면 최상위 레벨로 이동
                         if "meta" in original_passage:
                             meta = original_passage["meta"]
+                            # original_score 복원 (meta에 저장했던 것)
+                            if "original_score" in meta:
+                                original_passage["original_score"] = meta["original_score"]
+                                logger.info(f"[ORIGINAL-SCORE-RESTORE] ID={result_id}: original_score 복원 성공, 값={meta['original_score']}")
+                            
                             for key, value in meta.items():
                                 # 이미 최상위 레벨에 있는 키는 덮어쓰지 않음
                                 if key not in original_passage:
