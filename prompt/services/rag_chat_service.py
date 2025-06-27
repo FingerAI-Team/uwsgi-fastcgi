@@ -206,7 +206,19 @@ class RagChatService:
 1. 이 답변은 문서 검색 결과가 아닌 LLM의 일반 지식을 기반으로 합니다.
 2. 최신 정보나 특정 통계 데이터가 필요한 질문은 정확성이 떨어질 수 있습니다.
 3. 가능한 범위 내에서 도움이 되는 정보를 제공하겠습니다.
-4. 정확한 정보가 필요하시면 질문을 더 구체적으로 해주시거나 다른 키워드로 시도해보세요."""
+4. 정확한 정보가 필요하시면 질문을 더 구체적으로 해주시거나 다른 키워드로 시도해보세요.
+
+중요: 응답 형식은 다음과 같이 작성해야 합니다:
+
+<answer>
+제공된 문서에는 이 질문에 대한 관련 정보가 없습니다. 하지만 일반적인 지식을 기반으로 답변해 드리겠습니다.
+
+(여기에 일반 지식 기반 답변 작성)
+</answer>
+
+<references>
+관련 문서 없음
+</references>"""
             
         try:
             context = ""
@@ -255,6 +267,20 @@ class RagChatService:
                 
                 # 본문 내용
                 context += f"내용: {doc.get('text', '')}\n\n"
+            
+            # 문서가 있는 경우 응답 형식 안내 추가
+            context += """
+중요: 응답 형식은 다음과 같이 작성해야 합니다:
+
+<answer>
+여기에 사용자 질문에 대한 답변을 작성하세요. 문서에서 정보를 인용할 때는 반드시 "📚[숫자]" 형식으로 출처를 표시하세요.
+예: "메타버스는 가상 세계입니다 📚[1]"
+</answer>
+
+<references>
+- [1] 문서 1의 제목 (http://example.com/link1)
+- [2] 문서 2의 제목 (http://example.com/link2)
+</references>"""
             
             return context
         except Exception as e:
@@ -362,6 +388,7 @@ class RagChatService:
             # 정규식 패턴 정의
             answer_pattern = r'<answer>(.*?)</answer>'
             references_pattern = r'<references>(.*?)</references>'
+            citation_pattern = r'📚\[(\d+)\]'  # 인용 패턴 (📚[숫자])
             
             # 응답 텍스트 파싱
             answer_match = re.search(answer_pattern, response_text, re.DOTALL)
@@ -436,6 +463,35 @@ class RagChatService:
                 logger.debug(f"총 {len(references)}개의 참고 문헌 파싱 완료")
             else:
                 logger.warning("응답에서 <references> 태그를 찾을 수 없습니다.")
+                
+                # 태그가 없는 경우, 인용 패턴(📚[숫자])을 찾아 참고 문헌 추출 시도
+                citation_matches = re.findall(citation_pattern, result["answer"])
+                if citation_matches:
+                    logger.info(f"응답에서 {len(set(citation_matches))}개의 인용 패턴을 찾았습니다.")
+                    
+                    # 중복 제거 및 정렬
+                    unique_citations = sorted(set([int(num) for num in citation_matches]))
+                    
+                    # 각 인용에 대한 참고 문헌 생성
+                    for idx, num in enumerate(unique_citations, 1):
+                        references_append = {
+                            "number": str(num),
+                            "title": f"참고 문헌 {num}",
+                            "link": ""
+                        }
+                        result["references"].append(references_append)
+                        logger.debug(f"인용 패턴에서 참고 문헌 생성: 번호={num}")
+                else:
+                    logger.warning("응답에서 인용 패턴(📚[숫자])을 찾을 수 없습니다.")
+                    
+                    # 문서가 있는 경우 기본 참고 문헌 생성
+                    if "관련 문서를 찾을 수 없어" not in result["answer"]:
+                        result["references"].append({
+                            "number": "1",
+                            "title": "참고 문헌",
+                            "link": ""
+                        })
+                        logger.debug("기본 참고 문헌 생성")
         except Exception as e:
             logger.error(f"응답 파싱 중 오류 발생: {str(e)}", exc_info=True)
             # 오류 발생 시 원본 텍스트를 그대로 반환
