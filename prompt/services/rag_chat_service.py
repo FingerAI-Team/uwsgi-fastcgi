@@ -266,12 +266,34 @@ class RagChatService:
                 
                 # 링크 정보 추가 - 참고 문헌에서 활용하기 위해 별도 필드로 추가
                 link = ""
+                
+                # 디버깅을 위해 문서 구조 로깅
+                logger.debug(f"문서 {idx} 구조: {json.dumps(doc, ensure_ascii=False, default=str)}")
+                
+                # 여러 가능한 링크 필드 확인
                 if 'info' in doc and 'url' in doc['info']:
                     link = doc['info']['url']
-                    doc_context += f"원문 링크: {link}\n"
                 elif 'info' in doc and 'link' in doc['info']:
                     link = doc['info']['link']
-                    doc_context += f"원문 링크: {link}\n"
+                elif 'url' in doc:
+                    link = doc['url']
+                elif 'link' in doc:
+                    link = doc['link']
+                elif 'raw_doc_id' in doc and doc['raw_doc_id']:
+                    # raw_doc_id에서 링크 정보 추출 시도
+                    raw_id = doc['raw_doc_id']
+                    if 'http' in raw_id:
+                        link = raw_id
+                elif 'doc_id' in doc and doc['doc_id']:
+                    # doc_id에서 링크 정보 추출 시도
+                    doc_id = doc['doc_id']
+                    if 'http' in doc_id:
+                        link = doc_id
+                
+                # 제목에서 개행 문자 제거
+                title = doc.get('title', '제목 없음').strip()
+                
+                doc_context += f"원문 링크: {link}\n"
                 
                 # 문서 ID 정보 추가 (디버깅용)
                 if doc.get('doc_id'):
@@ -414,27 +436,65 @@ class RagChatService:
             "references": []
         }
         
-        # 📚[숫자] 패턴에서 숫자만 추출
-        citation_pattern = r'📚\[(\d+)\]'
+        # 📚[숫자] 패턴에서 숫자만 추출 (단일 및 복수 모두 처리)
+        citation_pattern = r'📚\[([\d,\s]+)\]'
         citation_matches = re.findall(citation_pattern, response_text)
         
         if citation_matches:
-            logger.info(f"응답에서 {len(set(citation_matches))}개의 인용 패턴을 찾았습니다.")
+            logger.info(f"응답에서 {len(citation_matches)}개의 인용 패턴을 찾았습니다.")
+            
+            # 모든 인용된 숫자들을 추출
+            all_citations = []
+            for match in citation_matches:
+                # 쉼표로 구분된 숫자들을 분리
+                numbers = [int(num.strip()) for num in match.split(',') if num.strip().isdigit()]
+                all_citations.extend(numbers)
             
             # 중복 제거 및 정렬
-            unique_citations = sorted(set([int(num) for num in citation_matches]))
+            unique_citations = sorted(set(all_citations))
+            logger.info(f"추출된 고유 인용 번호: {unique_citations}")
             
             # 실제 검색된 문서와 매핑
             for citation_num in unique_citations:
                 doc_index = citation_num - 1  # 1-based to 0-based
                 if 0 <= doc_index < len(search_results):
                     doc = search_results[doc_index]
+                    
+                    # 링크 추출 로직 개선
+                    link = ""
+                    
+                    # 디버깅을 위해 문서 구조 로깅
+                    logger.debug(f"문서 {citation_num} 구조: {json.dumps(doc, ensure_ascii=False, default=str)}")
+                    
+                    # 여러 가능한 링크 필드 확인
+                    if 'info' in doc and 'url' in doc['info']:
+                        link = doc['info']['url']
+                    elif 'info' in doc and 'link' in doc['info']:
+                        link = doc['info']['link']
+                    elif 'url' in doc:
+                        link = doc['url']
+                    elif 'link' in doc:
+                        link = doc['link']
+                    elif 'raw_doc_id' in doc and doc['raw_doc_id']:
+                        # raw_doc_id에서 링크 정보 추출 시도
+                        raw_id = doc['raw_doc_id']
+                        if 'http' in raw_id:
+                            link = raw_id
+                    elif 'doc_id' in doc and doc['doc_id']:
+                        # doc_id에서 링크 정보 추출 시도
+                        doc_id = doc['doc_id']
+                        if 'http' in doc_id:
+                            link = doc_id
+                    
+                    # 제목에서 개행 문자 제거
+                    title = doc.get('title', '제목 없음').strip()
+                    
                     result["references"].append({
                         "number": str(citation_num),
-                        "title": doc.get('title', '제목 없음'),
-                        "link": doc.get('info', {}).get('url', '')
+                        "title": title,
+                        "link": link
                     })
-                    logger.debug(f"인용 패턴에서 참고 문헌 생성: 번호={citation_num}, 제목={doc.get('title', '제목 없음')}")
+                    logger.debug(f"인용 패턴에서 참고 문헌 생성: 번호={citation_num}, 제목={title}, 링크={link}")
                 else:
                     logger.warning(f"인용된 문서 번호 {citation_num}이 검색 결과 범위를 벗어남 (최대: {len(search_results)})")
         else:
