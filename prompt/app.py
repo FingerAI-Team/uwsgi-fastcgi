@@ -473,6 +473,7 @@ def enhanced_search():
             try:
                 logger.info(f"Reranker 서비스 호출: {len(rerank_passages)}개 결과, top_k={top_n}, "
                            f"weight_flashrank={weight_flashrank}, weight_mrc={weight_mrc}, weight_original={weight_original}")
+                logger.info(f"Reranker 파라미터: {rerank_params}")
                 rerank_response = requests.post(
                     f"{RERANKER_ENDPOINT}/rerank",
                     json=rerank_payload,
@@ -556,13 +557,20 @@ def enhanced_search():
 
         # Reranker 결과 처리
         for idx, item in enumerate(reranked_results.get("results", [])):
-            # 점수 확인
-            rerank_score = item.get("score", 0)
+            # 점수 확인 - 하이브리드 점수를 우선 사용
+            if "hybrid_score" in item:
+                rerank_score = item["hybrid_score"]
+                logger.info(f"[FILTER-DEBUG] 결과 {idx}: 하이브리드 점수 사용 - {rerank_score:.6f}")
+            else:
+                rerank_score = item.get("score", 0)
+                logger.info(f"[FILTER-DEBUG] 결과 {idx}: 기본 점수 사용 - {rerank_score:.6f}")
             
             # 임계치 필터링
             if rerank_score < threshold:
-                logger.info(f"임계치({threshold}) 미만 결과 필터링: doc_id={item.get('doc_id', 'unknown')}, score={rerank_score}")
+                logger.info(f"[FILTER-DEBUG] 임계치({threshold}) 미만 결과 필터링: doc_id={item.get('doc_id', 'unknown')}, score={rerank_score:.6f}")
                 continue
+            else:
+                logger.info(f"[FILTER-DEBUG] 임계치({threshold}) 통과: doc_id={item.get('doc_id', 'unknown')}, score={rerank_score:.6f}")
             
             # 결과 아이템 초기화
             result_item = {}
@@ -583,18 +591,30 @@ def enhanced_search():
                     result_item[key] = value
             
             # 3. 점수 정보 설정 - 중복 제거하고 명확하게 구분
-            # 기본 점수 설정
-            result_item["score"] = item.get("score", 0)  # 기본 점수
+            # 기본 점수 설정 - 하이브리드 점수를 우선 사용
+            if "hybrid_score" in item:
+                result_item["score"] = item["hybrid_score"]
+                result_item["hybrid_score"] = item["hybrid_score"]
+                if "hybrid_score_raw" in item:
+                    result_item["hybrid_score_raw"] = item["hybrid_score_raw"]
+                logger.info(f"[SCORE-DEBUG] 결과 {idx}: 하이브리드 점수 설정 - score={result_item['score']:.6f}")
+            else:
+                result_item["score"] = item.get("score", 0)
+                logger.info(f"[SCORE-DEBUG] 결과 {idx}: 기본 점수 설정 - score={result_item['score']:.6f}")
+            
             result_item["rerank_position"] = idx
             
             # 원본 점수 정보 (있는 경우)
             if original_item and "score" in original_item:
                 result_item["original_score"] = original_item["score"]
+                logger.info(f"[SCORE-DEBUG] 결과 {idx}: 원본 점수 복사 - original_score={result_item['original_score']:.6f}")
             
             # 재랭킹 점수 정보 복사 (있는 경우에만)
             for score_field in ["hybrid_score", "flashrank_score", "mrc_score", "mrc_answer", "mrc_char_ids"]:
                 if score_field in item:
                     result_item[score_field] = item[score_field]
+                    if score_field in ["hybrid_score", "flashrank_score", "mrc_score"]:
+                        logger.info(f"[SCORE-DEBUG] 결과 {idx}: {score_field} 복사 - {result_item[score_field]:.6f}")
             
             # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
             if "mrc_score" in result_item and "mrc_answer" not in result_item:
@@ -604,6 +624,7 @@ def enhanced_search():
             
             # 최종 결과에 추가
             processed_results.append(result_item)
+            logger.info(f"[RESULT-DEBUG] 결과 {idx} 추가됨: doc_id={doc_id}, title={result_item.get('title', 'N/A')[:30]}...")
         
         # 총 처리 시간 계산
         total_time = (datetime.now() - start_time).total_seconds()
@@ -636,7 +657,17 @@ def enhanced_search():
         if "domain_results" in search_results:
             response["domain_results"] = search_results["domain_results"]
         
-        logger.info(f"최종 응답: {len(processed_results)}개 결과, 총 처리 시간: {total_time:.3f}초")
+        logger.info(f"[FINAL-DEBUG] 최종 응답: {len(processed_results)}개 결과, 총 처리 시간: {total_time:.3f}초")
+        logger.info(f"[FINAL-DEBUG] 임계치 필터링 통계: 검색={len(search_results.get('search_result', []))}개 -> 재랭킹={reranked_count}개 -> 필터링={len(processed_results)}개")
+        
+        # 최종 결과의 점수 분포 로깅
+        if processed_results:
+            scores = [r.get("score", 0) for r in processed_results]
+            logger.info(f"[FINAL-DEBUG] 최종 점수 분포: 최고={max(scores):.6f}, 최저={min(scores):.6f}, 평균={sum(scores)/len(scores):.6f}")
+            logger.info(f"[FINAL-DEBUG] 최종 결과 샘플:")
+            for i, result in enumerate(processed_results[:3]):  # 처음 3개만 로깅
+                logger.info(f"[FINAL-DEBUG]   {i+1}. doc_id={result.get('doc_id', 'N/A')}, score={result.get('score', 0):.6f}, title={result.get('title', 'N/A')[:50]}...")
+        
         return jsonify(response)
         
     except Exception as e:
