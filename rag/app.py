@@ -375,7 +375,12 @@ def search_data():
         # 각 도메인별 검색 결과 수집
         all_results = []
         search_time_details = {}
-        searched_domains = domains if domains else [available_collections[0]]  # 도메인이 지정되지 않으면 첫 번째 도메인만 사용
+        
+        # 도메인이 지정되지 않으면 모든 도메인에서 검색
+        if domains:
+            searched_domains = domains
+        else:
+            searched_domains = available_collections  # 모든 도메인 사용
         
         domain_start_time = time.time()
         logger.info(f"[TIMING] 도메인 검색 시작: {searched_domains}")
