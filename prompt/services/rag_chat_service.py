@@ -139,13 +139,17 @@ class RagChatService:
     def _load_system_prompt(self) -> str:
         """시스템 프롬프트를 로드합니다."""
         template_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "rag_chat.txt")
+        logger.debug(f"[시스템 프롬프트] 템플릿 파일 경로: {template_path}")
+        
         try:
             with open(template_path, "r", encoding="utf-8") as f:
-                return f.read()
+                system_prompt = f.read()
+                logger.debug(f"[시스템 프롬프트] 템플릿 파일 로드 성공: {len(system_prompt)} 문자")
+                return system_prompt
         except FileNotFoundError:
             logger.error(f"템플릿 파일을 찾을 수 없습니다: {template_path}")
             # 기본 시스템 프롬프트
-            return """당신은 도움이 되는 AI 어시스턴트입니다.
+            default_prompt = """당신은 도움이 되는 AI 어시스턴트입니다.
 사용자의 질문에 친절하고 정확하게 답변해 주세요.
 아래 제공된 문서 정보와 대화 기록을 참고하여 답변하되, 문서에 없는 내용은 솔직히 모른다고 말하세요.
 
@@ -157,6 +161,8 @@ class RagChatService:
 5. 사용자가 이해하기 쉽게 설명하세요.
 
 문서에 제공된 메타데이터(작성자, 날짜, 링크 등)는 답변에 활용할 수 있습니다."""
+            logger.debug(f"[시스템 프롬프트] 기본 프롬프트 사용: {len(default_prompt)} 문자")
+            return default_prompt
     
     def _perform_enhanced_search(self, query: str, **kwargs) -> List[Dict]:
         """enhanced_search API를 통해 문서 검색 및 재랭킹을 수행합니다."""
@@ -198,9 +204,11 @@ class RagChatService:
     
     def format_context(self, documents: List[Dict]) -> str:
         """검색 결과를 컨텍스트 형식으로 포맷팅합니다."""
+        logger.debug(f"[RAG 컨텍스트] 시작: {len(documents)}개 문서")
+        
         if not documents:
             logger.info("검색 결과가 없어 일반 지식 기반 응답 모드로 전환합니다.")
-            return """관련 문서를 찾을 수 없어 제가 학습해둔 일반 지식을 기반으로 답변하겠습니다.
+            no_docs_context = """관련 문서를 찾을 수 없어 제가 학습해둔 일반 지식을 기반으로 답변하겠습니다.
 
 참고사항:
 1. 이 답변은 문서 검색 결과가 아닌 LLM의 일반 지식을 기반으로 합니다.
@@ -219,57 +227,64 @@ class RagChatService:
 <references>
 관련 문서 없음
 </references>"""
+            logger.debug(f"[RAG 컨텍스트] 문서 없음 - 기본 컨텍스트 생성: {len(no_docs_context)} 문자")
+            return no_docs_context
             
         try:
             context = ""
             logger.info(f"검색 결과 {len(documents)}개 문서를 컨텍스트로 포맷팅합니다.")
             
             for idx, doc in enumerate(documents, 1):
-                context += f"[문서 {idx}]\n"
-                context += f"제목: {doc.get('title', '제목 없음')}\n"
+                logger.debug(f"[RAG 컨텍스트] 문서 {idx} 처리: {doc.get('title', '제목 없음')[:30]}...")
+                
+                doc_context = f"[문서 {idx}]\n"
+                doc_context += f"제목: {doc.get('title', '제목 없음')}\n"
                 
                 # 작성자 정보 추가
                 if doc.get('author'):
-                    context += f"작성자: {doc.get('author')}\n"
+                    doc_context += f"작성자: {doc.get('author')}\n"
                 
                 # 날짜 정보 추가
                 if 'tags' in doc and 'date' in doc['tags']:
                     date = doc['tags']['date']
                     if len(date) == 8:  # YYYYMMDD 형식인 경우
                         formatted_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
-                        context += f"날짜: {formatted_date}\n"
+                        doc_context += f"날짜: {formatted_date}\n"
                 
                 # 도메인 정보 추가
                 if doc.get('domain'):
-                    context += f"출처: {doc.get('domain')}\n"
+                    doc_context += f"출처: {doc.get('domain')}\n"
                 
                 # MRC 정보 추가 (질문에 대한 직접 답변)
                 if doc.get('mrc_answer'):
-                    context += f"핵심 답변: {doc.get('mrc_answer')}\n"
-                    context += f"답변 신뢰도: {doc.get('mrc_score', 0):.2f}\n"
+                    doc_context += f"핵심 답변: {doc.get('mrc_answer')}\n"
+                    doc_context += f"답변 신뢰도: {doc.get('mrc_score', 0):.2f}\n"
                 
                 # 재랭킹 점수 정보 추가
                 if doc.get('score'):
-                    context += f"관련도: {doc.get('score', 0):.2f}\n"
+                    doc_context += f"관련도: {doc.get('score', 0):.2f}\n"
                 
                 # 링크 정보 추가 - 참고 문헌에서 활용하기 위해 별도 필드로 추가
                 link = ""
                 if 'info' in doc and 'url' in doc['info']:
                     link = doc['info']['url']
-                    context += f"원문 링크: {link}\n"
+                    doc_context += f"원문 링크: {link}\n"
                 elif 'info' in doc and 'link' in doc['info']:
                     link = doc['info']['link']
-                    context += f"원문 링크: {link}\n"
+                    doc_context += f"원문 링크: {link}\n"
                 
                 # 문서 ID 정보 추가 (디버깅용)
                 if doc.get('doc_id'):
-                    context += f"문서 ID: {doc.get('doc_id')}\n"
+                    doc_context += f"문서 ID: {doc.get('doc_id')}\n"
                 
                 # 본문 내용
-                context += f"내용: {doc.get('text', '')}\n\n"
+                doc_context += f"내용: {doc.get('text', '')}\n\n"
+                
+                context += doc_context
+                logger.debug(f"[RAG 컨텍스트] 문서 {idx} 완료: {len(doc_context)} 문자")
             
             # 문서가 있는 경우 응답 형식 안내 추가
-            context += """
+            format_instruction = """
 중요: 응답 형식은 다음과 같이 작성해야 합니다:
 
 <answer>
@@ -282,11 +297,17 @@ class RagChatService:
 - [2] 문서 2의 제목 (http://example.com/link2)
 </references>"""
             
+            context += format_instruction
+            logger.debug(f"[RAG 컨텍스트] 응답 형식 지침 추가: {len(format_instruction)} 문자")
+            logger.debug(f"[RAG 컨텍스트] 완료: 총 {len(context)} 문자")
+            
             return context
         except Exception as e:
             logger.error(f"컨텍스트 포맷팅 중 오류 발생: {str(e)}", exc_info=True)
             # 오류 발생 시 기본 메시지 반환
-            return "검색 결과 처리 중 오류가 발생했습니다. 일반 지식을 기반으로 답변하겠습니다."
+            error_context = "검색 결과 처리 중 오류가 발생했습니다. 일반 지식을 기반으로 답변하겠습니다."
+            logger.debug(f"[RAG 컨텍스트] 오류 - 기본 컨텍스트 반환: {len(error_context)} 문자")
+            return error_context
     
     def generate_response(self, session_id: str, query: str, model: str = None, stream: bool = False, **kwargs) -> Union[Dict[str, Any], Generator[str, None, None]]:
         """RAG 검색 결과를 기반으로 챗봇 응답을 생성합니다."""
@@ -333,6 +354,10 @@ class RagChatService:
             chain_result = self.rag_chain.invoke(chain_input)
             logger.info(f"[성능] RAG 체인 실행 완료: {(datetime.now() - session_load_start).total_seconds():.3f}초")
             
+            # 최종 프롬프트 로깅 (디버깅용)
+            logger.debug(f"[디버깅] LLM에 전달되는 최종 프롬프트 (처음 500자):\n{chain_result['prompt'][:500]}...")
+            logger.debug(f"[디버깅] LLM에 전달되는 최종 프롬프트 (마지막 500자):\n{chain_result['prompt'][-500:] if len(chain_result['prompt']) > 500 else chain_result['prompt']}")
+            
             # 2. LLM 응답 생성
             llm_start = datetime.now()
             model_to_use = model or self.default_model
@@ -357,6 +382,10 @@ class RagChatService:
             logger.info(f"[성능] LLM 응답 완료: {(llm_end - llm_start).total_seconds():.3f}초")
             
             response_text = ollama_response.json().get("response", "")
+            
+            # 응답 로깅 (디버깅용)
+            logger.debug(f"[디버깅] LLM 응답 (처음 500자):\n{response_text[:500]}...")
+            logger.debug(f"[디버깅] LLM 응답 (마지막 500자):\n{response_text[-500:] if len(response_text) > 500 else response_text}")
             
             # 응답 파싱 및 구조화
             structured_response = self.parse_structured_response(response_text)
@@ -512,6 +541,10 @@ class RagChatService:
             chain_result = self.rag_chain.invoke(chain_input)
             logger.info(f"[성능] RAG 체인 실행 완료: {(datetime.now() - session_load_start).total_seconds():.3f}초")
             
+            # 최종 프롬프트 로깅 (디버깅용)
+            logger.debug(f"[디버깅] LLM에 전달되는 최종 프롬프트 (처음 500자):\n{chain_result['prompt'][:500]}...")
+            logger.debug(f"[디버깅] LLM에 전달되는 최종 프롬프트 (마지막 500자):\n{chain_result['prompt'][-500:] if len(chain_result['prompt']) > 500 else chain_result['prompt']}")
+            
             # 2. LLM 스트리밍 응답 생성
             model_to_use = model or self.default_model
             logger.info(f"[성능] 스트리밍 LLM 요청 시작: 모델={model_to_use}, 세션={session_id}")
@@ -561,6 +594,10 @@ class RagChatService:
                 
                 # 스트림 종료 후 메모리에 저장
                 self.session_manager.add_bot_message(session_id, accumulated_response)
+                
+                # 응답 로깅 (디버깅용)
+                logger.debug(f"[디버깅] 최종 누적 LLM 응답 (처음 500자):\n{accumulated_response[:500]}...")
+                logger.debug(f"[디버깅] 최종 누적 LLM 응답 (마지막 500자):\n{accumulated_response[-500:] if len(accumulated_response) > 500 else accumulated_response}")
                 
                 # 성능 로깅
                 logger.info(f"[성능] 스트리밍 LLM 응답 완료: {(datetime.now() - llm_start).total_seconds():.3f}초, 응답 길이: {len(accumulated_response)}")

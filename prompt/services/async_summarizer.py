@@ -9,7 +9,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_community.llms import Ollama
 from langchain_core.runnables import RunnableLambda
 from .session_manager import SessionManager
-
+# 현재 미사용 코드 최근 5개 대화만 사용하기 때문
 # 로깅 설정
 logger = logging.getLogger("async-summarizer")
 
