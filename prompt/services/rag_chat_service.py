@@ -358,6 +358,12 @@ class RagChatService:
             logger.debug(f"[디버깅] LLM에 전달되는 최종 프롬프트 (처음 500자):\n{chain_result['prompt'][:500]}...")
             logger.debug(f"[디버깅] LLM에 전달되는 최종 프롬프트 (마지막 500자):\n{chain_result['prompt'][-500:] if len(chain_result['prompt']) > 500 else chain_result['prompt']}")
             
+            # 전체 프롬프트 로깅 (INFO 레벨)
+            logger.info(f"[최종 프롬프트] 길이: {len(chain_result['prompt'])} 문자")
+            logger.info("=== 최종 프롬프트 전체 내용 ===")
+            logger.info(f"{chain_result['prompt']}")
+            logger.info("================================")
+            
             # 2. LLM 응답 생성
             llm_start = datetime.now()
             model_to_use = model or self.default_model
@@ -544,6 +550,12 @@ class RagChatService:
             # 최종 프롬프트 로깅 (디버깅용)
             logger.debug(f"[디버깅] LLM에 전달되는 최종 프롬프트 (처음 500자):\n{chain_result['prompt'][:500]}...")
             logger.debug(f"[디버깅] LLM에 전달되는 최종 프롬프트 (마지막 500자):\n{chain_result['prompt'][-500:] if len(chain_result['prompt']) > 500 else chain_result['prompt']}")
+            
+            # 전체 프롬프트 로깅 (INFO 레벨)
+            logger.info(f"[최종 프롬프트] 길이: {len(chain_result['prompt'])} 문자")
+            logger.info("=== 최종 프롬프트 전체 내용 ===")
+            logger.info(f"{chain_result['prompt']}")
+            logger.info("================================")
             
             # 2. LLM 스트리밍 응답 생성
             model_to_use = model or self.default_model
