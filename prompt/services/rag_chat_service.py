@@ -285,17 +285,12 @@ class RagChatService:
             
             # 문서가 있는 경우 응답 형식 안내 추가
             format_instruction = """
-중요: 응답 형식은 다음과 같이 작성해야 합니다:
+중요: 응답 형식은 다음과 같이 작성하세요:
 
-<answer>
+
 여기에 사용자 질문에 대한 답변을 작성하세요. 문서에서 정보를 인용할 때는 반드시 "📚[숫자]" 형식으로 출처를 표시하세요.
 예: "메타버스는 가상 세계입니다 📚[1]"
-</answer>
-
-<references>
-- [1] 문서 1의 제목 (http://example.com/link1)
-- [2] 문서 2의 제목 (http://example.com/link2)
-</references>"""
+"""
             
             context += format_instruction
             logger.debug(f"[RAG 컨텍스트] 응답 형식 지침 추가: {len(format_instruction)} 문자")
@@ -394,7 +389,7 @@ class RagChatService:
             logger.debug(f"[디버깅] LLM 응답 (마지막 500자):\n{response_text[-500:] if len(response_text) > 500 else response_text}")
             
             # 응답 파싱 및 구조화
-            structured_response = self.parse_structured_response(response_text)
+            structured_response = self.parse_structured_response(response_text, chain_result["search_results"])
             
             # 3. 봇 응답 저장 (원본 텍스트)
             self.session_manager.add_bot_message(session_id, response_text)
@@ -410,127 +405,49 @@ class RagChatService:
             logger.error(f"Ollama 서비스 연결 오류: {str(e)}")
             return {"error": "Ollama 서비스에 연결할 수 없습니다", "details": str(e)}
     
-    def parse_structured_response(self, response_text: str) -> Dict[str, Any]:
+    def parse_structured_response(self, response_text: str, search_results: List[Dict]) -> Dict[str, Any]:
         """LLM 응답을 구조화된 형식으로 파싱합니다."""
         import re
         
         result = {
-            "answer": "",
+            "answer": response_text.strip(),
             "references": []
         }
         
-        try:
-            # 정규식 패턴 정의
-            answer_pattern = r'<answer>(.*?)</answer>'
-            references_pattern = r'<references>(.*?)</references>'
-            citation_pattern = r'📚\[(\d+)\]'  # 인용 패턴 (📚[숫자])
+        # 📚[숫자] 패턴에서 숫자만 추출
+        citation_pattern = r'📚\[(\d+)\]'
+        citation_matches = re.findall(citation_pattern, response_text)
+        
+        if citation_matches:
+            logger.info(f"응답에서 {len(set(citation_matches))}개의 인용 패턴을 찾았습니다.")
             
-            # 응답 텍스트 파싱
-            answer_match = re.search(answer_pattern, response_text, re.DOTALL)
-            if answer_match:
-                result["answer"] = answer_match.group(1).strip()
-                logger.debug(f"응답 텍스트 파싱 성공: {len(result['answer'])} 문자")
-            else:
-                # 태그가 없는 경우 전체 응답을 answer로 처리
-                result["answer"] = response_text.strip()
-                logger.warning("응답에서 <answer> 태그를 찾을 수 없어 전체 텍스트를 사용합니다.")
+            # 중복 제거 및 정렬
+            unique_citations = sorted(set([int(num) for num in citation_matches]))
             
-            # 참고 문헌 파싱
-            references_match = re.search(references_pattern, response_text, re.DOTALL)
-            if references_match:
-                references_text = references_match.group(1).strip()
-                logger.debug(f"참고 문헌 텍스트 파싱 성공: {len(references_text)} 문자")
-                
-                # 각 줄을 개별 참고 문헌으로 처리
-                references = []
-                for line in references_text.split('\n'):
-                    line = line.strip()
-                    if line and line != '-':
-                        # [숫자] 패턴 찾기
-                        ref_match = re.search(r'\[(\d+)\](.*)', line)
-                        if ref_match:
-                            ref_num = ref_match.group(1)
-                            ref_text = ref_match.group(2).strip()
-                            
-                            # 제목과 링크 분리
-                            title = ref_text
-                            link = ""
-                            
-                            # 링크 패턴 찾기 (http:// 또는 https://)
-                            link_match = re.search(r'(https?://\S+)', ref_text)
-                            if link_match:
-                                link = link_match.group(1).rstrip(')')  # 닫는 괄호 제거
-                                # 링크를 제외한 부분을 제목으로 설정
-                                title = re.sub(r'\s*\(?\s*https?://\S+\s*\)?\s*', '', ref_text).strip()
-                            else:
-                                # 괄호 안에 있는 텍스트를 링크로 간주
-                                paren_match = re.search(r'\((.*?)\)', ref_text)
-                                if paren_match:
-                                    paren_content = paren_match.group(1)
-                                    if paren_content.startswith('http'):
-                                        link = paren_content
-                                        # 괄호와 내용을 제외한 부분을 제목으로 설정
-                                        title = re.sub(r'\s*\(.*?\)\s*', '', ref_text).strip()
-                            
-                            references.append({
-                                "number": ref_num,
-                                "title": title,
-                                "link": link
-                            })
-                            logger.debug(f"참고 문헌 항목 파싱: 번호={ref_num}, 제목={title}, 링크={link}")
-                        else:
-                            # 패턴이 없는 경우 전체 텍스트 사용
-                            if "관련 문서 없음" in line:
-                                references.append({
-                                    "number": "",
-                                    "title": "관련 문서 없음",
-                                    "link": ""
-                                })
-                                logger.debug("관련 문서 없음 항목 파싱")
-                            else:
-                                references.append({
-                                    "number": "",
-                                    "title": line,
-                                    "link": ""
-                                })
-                                logger.debug(f"형식이 맞지 않는 참고 문헌 항목: {line}")
-                result["references"] = references
-                logger.debug(f"총 {len(references)}개의 참고 문헌 파싱 완료")
-            else:
-                logger.warning("응답에서 <references> 태그를 찾을 수 없습니다.")
-                
-                # 태그가 없는 경우, 인용 패턴(📚[숫자])을 찾아 참고 문헌 추출 시도
-                citation_matches = re.findall(citation_pattern, result["answer"])
-                if citation_matches:
-                    logger.info(f"응답에서 {len(set(citation_matches))}개의 인용 패턴을 찾았습니다.")
-                    
-                    # 중복 제거 및 정렬
-                    unique_citations = sorted(set([int(num) for num in citation_matches]))
-                    
-                    # 각 인용에 대한 참고 문헌 생성
-                    for idx, num in enumerate(unique_citations, 1):
-                        references_append = {
-                            "number": str(num),
-                            "title": f"참고 문헌 {num}",
-                            "link": ""
-                        }
-                        result["references"].append(references_append)
-                        logger.debug(f"인용 패턴에서 참고 문헌 생성: 번호={num}")
+            # 실제 검색된 문서와 매핑
+            for citation_num in unique_citations:
+                doc_index = citation_num - 1  # 1-based to 0-based
+                if 0 <= doc_index < len(search_results):
+                    doc = search_results[doc_index]
+                    result["references"].append({
+                        "number": str(citation_num),
+                        "title": doc.get('title', '제목 없음'),
+                        "link": doc.get('info', {}).get('url', '')
+                    })
+                    logger.debug(f"인용 패턴에서 참고 문헌 생성: 번호={citation_num}, 제목={doc.get('title', '제목 없음')}")
                 else:
-                    logger.warning("응답에서 인용 패턴(📚[숫자])을 찾을 수 없습니다.")
-                    
-                    # 문서가 있는 경우 기본 참고 문헌 생성
-                    if "관련 문서를 찾을 수 없어" not in result["answer"]:
-                        result["references"].append({
-                            "number": "1",
-                            "title": "참고 문헌",
-                            "link": ""
-                        })
-                        logger.debug("기본 참고 문헌 생성")
-        except Exception as e:
-            logger.error(f"응답 파싱 중 오류 발생: {str(e)}", exc_info=True)
-            # 오류 발생 시 원본 텍스트를 그대로 반환
-            result["answer"] = response_text.strip()
+                    logger.warning(f"인용된 문서 번호 {citation_num}이 검색 결과 범위를 벗어남 (최대: {len(search_results)})")
+        else:
+            logger.warning("응답에서 인용 패턴(📚[숫자])을 찾을 수 없습니다.")
+            
+            # 문서가 있는 경우 기본 참고 문헌 생성
+            if "관련 문서를 찾을 수 없어" not in result["answer"] and search_results:
+                result["references"].append({
+                    "number": "1",
+                    "title": "참고 문헌",
+                    "link": ""
+                })
+                logger.debug("기본 참고 문헌 생성")
         
         return result
     
@@ -616,7 +533,7 @@ class RagChatService:
                 logger.info(f"[성능] 총 응답 생성 시간: {(datetime.now() - start_time).total_seconds():.3f}초")
                 
                 # 스트림 종료 시 구조화된 응답 파싱
-                structured_response = self.parse_structured_response(accumulated_response)
+                structured_response = self.parse_structured_response(accumulated_response, chain_result["search_results"])
                 
                 # 스트림 종료 응답
                 final_response = {
