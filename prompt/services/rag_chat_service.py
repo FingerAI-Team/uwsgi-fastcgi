@@ -59,8 +59,8 @@ class RagChatService:
             max_context_tokens=max_context_tokens
         )
         
-        # 시스템 프롬프트 로드
-        self.system_prompt = self._load_system_prompt()
+        # 시스템 프롬프트는 검색 결과에 따라 동적으로 로드됨
+        self.system_prompt = None
         
         # LangChain LLM 초기화
         self.llm = Ollama(
@@ -110,6 +110,7 @@ class RagChatService:
             session_data = inputs["session_data"]
             query = inputs["query"]
             rag_context = inputs["rag_context"]
+            system_prompt = inputs["system_prompt"]
             
             # 세션 저장
             self.session_manager.save_session(session_data)
@@ -117,7 +118,7 @@ class RagChatService:
             # 프롬프트 구성
             prompt = self.session_manager.build_prompt_context(
                 session_data,
-                self.system_prompt,
+                system_prompt,
                 rag_context=rag_context,
                 current_query=query
             )
@@ -128,17 +129,30 @@ class RagChatService:
                 **inputs  # 원래 입력 유지
             }
         
+        # 시스템 프롬프트 로드 함수
+        def load_system_prompt(inputs):
+            search_results = inputs.get("search_results", [])
+            has_documents = len(search_results) > 0
+            system_prompt = self._load_system_prompt(has_documents)
+            logger.debug(f"[시스템 프롬프트] 문서 유무: {has_documents}, 템플릿: {'rag_chat_with_docs' if has_documents else 'rag_chat_no_docs'}")
+            return {
+                "system_prompt": system_prompt,
+                **inputs
+            }
+        
         # 체인 구성 (최신 LangChain 방식)
         self.rag_chain = (
             RunnableLambda(load_session)
             | RunnableLambda(perform_search)
+            | RunnableLambda(load_system_prompt)  # 검색 결과에 따라 시스템 프롬프트 로드
             | RunnableLambda(format_search_results)
             | RunnableLambda(build_prompt)
         )
     
-    def _load_system_prompt(self) -> str:
-        """시스템 프롬프트를 로드합니다."""
-        template_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "rag_chat.txt")
+    def _load_system_prompt(self, has_documents: bool = True) -> str:
+        """검색 결과 유무에 따라 적절한 시스템 프롬프트를 로드합니다."""
+        template_name = "rag_chat_with_docs" if has_documents else "rag_chat_no_docs"
+        template_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", f"{template_name}.txt")
         logger.debug(f"[시스템 프롬프트] 템플릿 파일 경로: {template_path}")
         
         try:
@@ -148,21 +162,7 @@ class RagChatService:
                 return system_prompt
         except FileNotFoundError:
             logger.error(f"템플릿 파일을 찾을 수 없습니다: {template_path}")
-            # 기본 시스템 프롬프트
-            default_prompt = """당신은 도움이 되는 AI 어시스턴트입니다.
-사용자의 질문에 친절하고 정확하게 답변해 주세요.
-아래 제공된 문서 정보와 대화 기록을 참고하여 답변하되, 문서에 없는 내용은 솔직히 모른다고 말하세요.
-
-질문에 답변할 때 다음 지침을 따르세요:
-1. 문서 내용을 기반으로 정확하게 답변하세요.
-2. 문서에 없는 내용은 추측하지 말고 솔직히 모른다고 말하세요.
-3. 답변은 간결하고 명확하게 작성하세요.
-4. 문서의 출처를 인용할 필요는 없습니다.
-5. 사용자가 이해하기 쉽게 설명하세요.
-
-문서에 제공된 메타데이터(작성자, 날짜, 링크 등)는 답변에 활용할 수 있습니다."""
-            logger.debug(f"[시스템 프롬프트] 기본 프롬프트 사용: {len(default_prompt)} 문자")
-            return default_prompt
+            raise FileNotFoundError(f"필수 템플릿 파일이 없습니다: {template_name}.txt")
     
     def _perform_enhanced_search(self, query: str, **kwargs) -> List[Dict]:
         """enhanced_search API를 통해 문서 검색 및 재랭킹을 수행합니다."""
@@ -207,28 +207,8 @@ class RagChatService:
         logger.debug(f"[RAG 컨텍스트] 시작: {len(documents)}개 문서")
         
         if not documents:
-            logger.info("검색 결과가 없어 일반 지식 기반 응답 모드로 전환합니다.")
-            no_docs_context = """관련 문서를 찾을 수 없어 제가 학습해둔 일반 지식을 기반으로 답변하겠습니다.
-
-참고사항:
-1. 이 답변은 문서 검색 결과가 아닌 LLM의 일반 지식을 기반으로 합니다.
-2. 최신 정보나 특정 통계 데이터가 필요한 질문은 정확성이 떨어질 수 있습니다.
-3. 가능한 범위 내에서 도움이 되는 정보를 제공하겠습니다.
-4. 정확한 정보가 필요하시면 질문을 더 구체적으로 해주시거나 다른 키워드로 시도해보세요.
-
-중요: 응답 형식은 다음과 같이 작성해야 합니다:
-
-<answer>
-제공된 문서에는 이 질문에 대한 관련 정보가 없습니다. 하지만 일반적인 지식을 기반으로 답변해 드리겠습니다.
-
-(여기에 일반 지식 기반 답변 작성)
-</answer>
-
-<references>
-관련 문서 없음
-</references>"""
-            logger.debug(f"[RAG 컨텍스트] 문서 없음 - 기본 컨텍스트 생성: {len(no_docs_context)} 문자")
-            return no_docs_context
+            logger.info("검색 결과가 없어 빈 컨텍스트를 반환합니다.")
+            return ""  # 빈 값 반환 (시스템 프롬프트에서 처리)
             
         try:
             context = ""
@@ -305,26 +285,16 @@ class RagChatService:
                 context += doc_context
                 logger.debug(f"[RAG 컨텍스트] 문서 {idx} 완료: {len(doc_context)} 문자")
             
-            # 문서가 있는 경우 응답 형식 안내 추가
-            format_instruction = """
-중요: 응답 형식은 다음과 같이 작성하세요:
-
-
-여기에 사용자 질문에 대한 답변을 작성하세요. 문서에서 정보를 인용할 때는 반드시 "📚[숫자]" 형식으로 출처를 표시하세요.
-예: "메타버스는 가상 세계입니다 📚[1]"
-"""
-            
-            context += format_instruction
-            logger.debug(f"[RAG 컨텍스트] 응답 형식 지침 추가: {len(format_instruction)} 문자")
+            # 문서가 있는 경우 응답 형식 안내 추가 (시스템 프롬프트에서 처리하므로 제거)
+            logger.debug(f"[RAG 컨텍스트] 문서 정보만 포함, 응답 형식은 시스템 프롬프트에서 처리")
             logger.debug(f"[RAG 컨텍스트] 완료: 총 {len(context)} 문자")
             
             return context
         except Exception as e:
             logger.error(f"컨텍스트 포맷팅 중 오류 발생: {str(e)}", exc_info=True)
-            # 오류 발생 시 기본 메시지 반환
-            error_context = "검색 결과 처리 중 오류가 발생했습니다. 일반 지식을 기반으로 답변하겠습니다."
-            logger.debug(f"[RAG 컨텍스트] 오류 - 기본 컨텍스트 반환: {len(error_context)} 문자")
-            return error_context
+            # 오류 발생 시 빈 값 반환 (시스템 프롬프트에서 처리)
+            logger.debug(f"[RAG 컨텍스트] 오류 - 빈 컨텍스트 반환")
+            return ""
     
     def generate_response(self, session_id: str, query: str, model: str = None, stream: bool = False, **kwargs) -> Union[Dict[str, Any], Generator[str, None, None]]:
         """RAG 검색 결과를 기반으로 챗봇 응답을 생성합니다."""
@@ -498,16 +468,8 @@ class RagChatService:
                 else:
                     logger.warning(f"인용된 문서 번호 {citation_num}이 검색 결과 범위를 벗어남 (최대: {len(search_results)})")
         else:
-            logger.warning("응답에서 인용 패턴(📚[숫자])을 찾을 수 없습니다.")
-            
-            # 문서가 있는 경우 기본 참고 문헌 생성
-            if "관련 문서를 찾을 수 없어" not in result["answer"] and search_results:
-                result["references"].append({
-                    "number": "1",
-                    "title": "참고 문헌",
-                    "link": ""
-                })
-                logger.debug("기본 참고 문헌 생성")
+            logger.info("응답에서 인용 패턴(📚[숫자])을 찾을 수 없습니다.")
+            # 인용 패턴이 없으면 참고문헌 없음 (빈 배열)
         
         return result
     
