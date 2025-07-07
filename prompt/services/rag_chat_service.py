@@ -220,11 +220,14 @@ class RagChatService:
                 logger.debug(f"[RAG 컨텍스트] 문서 {idx} 처리: {doc.get('title', '제목 없음')[:30]}...")
                 
                 doc_context = f"[문서 {idx}]\n"
-                doc_context += f"제목: {doc.get('title', '제목 없음')}\n"
+                # 제목에서 개행 문자 제거하고 정리
+                title = doc.get('title', '제목 없음').strip().replace('\n', ' ').replace('\r', '')
+                doc_context += f"제목: {title}\n"
                 
                 # 작성자 정보 추가
                 if doc.get('author'):
-                    doc_context += f"작성자: {doc.get('author')}\n"
+                    author = doc.get('author').strip().replace('\n', ' ').replace('\r', '')
+                    doc_context += f"작성자: {author}\n"
                 
                 # 날짜 정보 추가
                 if 'tags' in doc and 'date' in doc['tags']:
@@ -235,11 +238,13 @@ class RagChatService:
                 
                 # 도메인 정보 추가
                 if doc.get('domain'):
-                    doc_context += f"출처: {doc.get('domain')}\n"
+                    domain = doc.get('domain').strip().replace('\n', ' ').replace('\r', '')
+                    doc_context += f"출처: {domain}\n"
                 
                 # MRC 정보 추가 (질문에 대한 직접 답변)
                 if doc.get('mrc_answer'):
-                    doc_context += f"핵심 답변: {doc.get('mrc_answer')}\n"
+                    mrc_answer = doc.get('mrc_answer').strip().replace('\n', ' ').replace('\r', '')
+                    doc_context += f"핵심 답변: {mrc_answer}\n"
                     doc_context += f"답변 신뢰도: {doc.get('mrc_score', 0):.2f}\n"
                 
                 # 재랭킹 점수 정보 추가
@@ -272,17 +277,18 @@ class RagChatService:
                     if 'http' in doc_id:
                         link = doc_id
                 
-                # 제목에서 개행 문자 제거
-                title = doc.get('title', '제목 없음').strip()
-                
+                # 링크에서 개행 문자 제거
+                link = link.strip().replace('\n', ' ').replace('\r', '')
                 doc_context += f"원문 링크: {link}\n"
                 
                 # 문서 ID 정보 추가 (디버깅용)
                 if doc.get('doc_id'):
-                    doc_context += f"문서 ID: {doc.get('doc_id')}\n"
+                    doc_id = doc.get('doc_id').strip().replace('\n', ' ').replace('\r', '')
+                    doc_context += f"문서 ID: {doc_id}\n"
                 
-                # 본문 내용
-                doc_context += f"내용: {doc.get('text', '')}\n\n"
+                # 본문 내용 (개행 문자는 유지하되 앞뒤 공백 제거)
+                text = doc.get('text', '').strip()
+                doc_context += f"내용: {text}\n\n"
                 
                 context += doc_context
                 logger.debug(f"[RAG 컨텍스트] 문서 {idx} 완료: {len(doc_context)} 문자")
