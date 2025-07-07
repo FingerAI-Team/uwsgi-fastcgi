@@ -212,9 +212,11 @@ class RagChatService:
             
         try:
             context = ""
-            logger.info(f"검색 결과 {len(documents)}개 문서를 컨텍스트로 포맷팅합니다.")
+            # 상위 5개 문서만 포함 (프롬프트 길이 단축)
+            top_documents = documents[:5]
+            logger.info(f"검색 결과 {len(documents)}개 중 상위 {len(top_documents)}개 문서를 컨텍스트로 포맷팅합니다.")
             
-            for idx, doc in enumerate(documents, 1):
+            for idx, doc in enumerate(top_documents, 1):
                 logger.debug(f"[RAG 컨텍스트] 문서 {idx} 처리: {doc.get('title', '제목 없음')[:30]}...")
                 
                 doc_context = f"[문서 {idx}]\n"
