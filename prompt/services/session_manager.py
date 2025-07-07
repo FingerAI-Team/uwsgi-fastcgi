@@ -285,13 +285,22 @@ class SessionManager:
         if rag_context:
             prompt += "관련 문서 정보:\n" + rag_context + "\n\n"
         
-        # 대화 기록 - 최근 5턴만 포함
+        # 대화 기록 - 최근 5턴만 포함 (마지막 사용자 메시지 제외)
         if session_data["history"]:
             prompt += "최근 대화:\n"
             # 최대 5턴(10개 메시지)만 포함
             recent_history = session_data["history"][-10:] if len(session_data["history"]) > 10 else session_data["history"]
+            
+            # 마지막 사용자 메시지 제외 (중복 방지)
+            if recent_history and recent_history[-1]["role"] == "user":
+                recent_history = recent_history[:-1]
+            
             for msg in recent_history:
                 role = "사용자" if msg["role"] == "user" else "AI"
                 prompt += f"{role}: {msg['message']}\n\n"
+        
+        # 현재 질의 (별도 표시)
+        if current_query:
+            prompt += f"현재 질의: {current_query}\n\nAI: "
         
         return prompt 
