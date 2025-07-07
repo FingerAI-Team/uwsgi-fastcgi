@@ -358,12 +358,15 @@ class RagChatService:
             model_to_use = model or self.default_model
             logger.info(f"[성능] LLM 요청 시작: 모델={model_to_use}, 세션={session_id}")
             
-            # Ollama API 호출
+            # Ollama API 호출 (system/user 역할 분리)
             ollama_response = requests.post(
                 f"{self.ollama_endpoint}/api/generate",
                 json={
                     "model": model_to_use,
-                    "prompt": chain_result["prompt"],
+                    "messages": [
+                        {"role": "system", "content": chain_result["prompt"]},
+                        {"role": "user", "content": query}
+                    ],
                     "stream": False
                 },
                 timeout=120
@@ -508,7 +511,10 @@ class RagChatService:
                 f"{self.ollama_endpoint}/api/generate",
                 json={
                     "model": model_to_use,
-                    "prompt": chain_result["prompt"],
+                    "messages": [
+                        {"role": "system", "content": chain_result["prompt"]},
+                        {"role": "user", "content": query}
+                    ],
                     "stream": True
                 },
                 timeout=120,

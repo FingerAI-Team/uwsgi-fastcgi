@@ -294,8 +294,4 @@ class SessionManager:
                 role = "사용자" if msg["role"] == "user" else "AI"
                 prompt += f"{role}: {msg['message']}\n\n"
         
-        # 현재 쿼리 (있는 경우)
-        if current_query:
-            prompt += f"사용자: {current_query}\n\nAI: "
-        
         return prompt 
