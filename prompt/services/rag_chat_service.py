@@ -79,7 +79,7 @@ class RagChatService:
         def load_session(inputs):
             session_id = inputs["session_id"]
             query = inputs["query"]
-            logger.debug(f"세션 로드 및 사용자 메시지 추가: 세션={session_id}")
+            logger.info(f"[체인 실행] 1단계 - 세션 로드 및 사용자 메시지 추가: 세션={session_id}")
             return {
                 "session_data": self.session_manager.add_user_message(session_id, query),
                 **inputs  # 원래 입력 유지
@@ -89,7 +89,7 @@ class RagChatService:
         def perform_search(inputs):
             query = inputs["query"]
             kwargs = inputs.get("kwargs", {})
-            logger.debug(f"RAG 검색 수행: 쿼리='{query[:30]}...'")
+            logger.info(f"[체인 실행] 2단계 - RAG 검색 수행: 쿼리='{query[:30]}...'")
             search_results = self._perform_enhanced_search(query, **kwargs)
             return {
                 "search_results": search_results,
@@ -99,7 +99,7 @@ class RagChatService:
         # 컨텍스트 포맷팅 함수
         def format_search_results(inputs):
             search_results = inputs["search_results"]
-            logger.debug(f"검색 결과 포맷팅: {len(search_results)}개 문서")
+            logger.info(f"[체인 실행] 4단계 - 검색 결과 포맷팅: {len(search_results)}개 문서")
             return {
                 "rag_context": self.format_context(search_results),
                 **inputs  # 원래 입력 유지
@@ -123,7 +123,7 @@ class RagChatService:
                 current_query=query
             )
             
-            logger.debug(f"프롬프트 구성 완료: {len(prompt)} 문자")
+            logger.info(f"[체인 실행] 5단계 - 프롬프트 구성 완료: {len(prompt)} 문자")
             return {
                 "prompt": prompt,
                 **inputs  # 원래 입력 유지
@@ -134,7 +134,7 @@ class RagChatService:
             search_results = inputs.get("search_results", [])
             has_documents = len(search_results) > 0
             system_prompt = self._load_system_prompt(has_documents)
-            logger.debug(f"[시스템 프롬프트] 문서 유무: {has_documents}, 템플릿: {'rag_chat_with_docs' if has_documents else 'rag_chat_no_docs'}")
+            logger.info(f"[체인 실행] 3단계 - 시스템 프롬프트 로드: 문서 유무={has_documents}, 템플릿={'rag_chat_with_docs' if has_documents else 'rag_chat_no_docs'}")
             return {
                 "system_prompt": system_prompt,
                 **inputs
