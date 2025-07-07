@@ -205,7 +205,7 @@ services:
       - PROMPT_CONFIG=/prompt/config.json
       - RAG_ENDPOINT=http://nginx/rag
       - RERANKER_ENDPOINT=http://nginx/reranker
-      - DEFAULT_MODEL=gemma3:12b
+      - DEFAULT_MODEL=${DEFAULT_MODEL}
       - USE_GPU=${USE_GPU}
       - OLLAMA_ENDPOINT=${OLLAMA_ENDPOINT}
       - UWSGI_PROTOCOL=fastcgi
