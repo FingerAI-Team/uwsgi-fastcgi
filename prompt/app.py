@@ -699,15 +699,6 @@ def chat():
                     # 응답 누적을 위한 변수
                     accumulated_response = ""
                     
-                    # heartbeat 카운터 초기화
-                    heartbeat_counter = 0
-                    
-                    # heartbeat 메시지 전송 (15초마다)
-                    def should_send_heartbeat():
-                        nonlocal heartbeat_counter
-                        heartbeat_counter += 1
-                        return heartbeat_counter % 15 == 0
-                    
                     with requests.post(
                         f"{OLLAMA_ENDPOINT}/api/generate",
                         json={
@@ -715,49 +706,41 @@ def chat():
                             "prompt": query,
                             "stream": True
                         },
-                        timeout=60,
+                        timeout=120,
                         stream=True
                     ) as ollama_response:
                         if ollama_response.status_code != 200:
-                            logger.error(f"Ollama API 오류: {ollama_response.text}")
-                            error_response = {
-                                "query": query,
-                                "model": model,
-                                "error": "LLM 요청 중 오류가 발생했습니다",
-                                "details": ollama_response.text
-                            }
-                            yield f"data: {json.dumps(error_response, ensure_ascii=False)}\n\n"
+                            yield json.dumps({"error": ollama_response.text}, ensure_ascii=False)
                             return
                         
-                        # SSE 형식으로 응답 전송
                         for line in ollama_response.iter_lines():
-                            # heartbeat 전송
-                            if should_send_heartbeat():
-                                yield ":\n\n"  # SSE 주석 형식의 heartbeat
-                            
-                            if line:
-                                try:
-                                    response_chunk = json.loads(line)
-                                    chunk_text = response_chunk.get("response", "")
-                                    if chunk_text:
-                                        # 응답 누적
-                                        accumulated_response += chunk_text
-                                        
-                                        # 기존 API 응답 형식으로 구성
-                                        stream_response = {
-                                            "query": query,
-                                            "model": model,
-                                            "response": accumulated_response,
-                                            "streaming": True
-                                        }
-                                        
-                                        # SSE 형식으로 전송
-                                        yield f"data: {json.dumps(stream_response, ensure_ascii=False)}\n\n"
-                                except json.JSONDecodeError:
-                                    logger.error(f"JSON 디코딩 오류: {line}")
-                                    continue
-                        
-                        # 스트림 종료 응답
+                            if not line:
+                                continue
+
+                            decoded = line.decode().strip()
+
+                            # SSE 주석/빈줄 무시
+                            if not decoded or decoded.startswith(":"):
+                                continue
+
+                            # SSE라면 data: 접두어 제거
+                            if decoded.startswith("data:"):
+                                decoded = decoded[5:].strip()
+
+                            try:
+                                response_chunk = json.loads(decoded)
+                                chunk_text = response_chunk.get("response", "")
+                                if chunk_text:
+                                    # 응답 누적 (올바른 방식)
+                                    accumulated_response += chunk_text
+
+                                # 클라이언트에 그대로 전달
+                                yield json.dumps(response_chunk, ensure_ascii=False) + "\n\n"
+                            except json.JSONDecodeError:
+                                logger.error(f"JSON 디코딩 오류: {decoded}")
+                                continue
+
+                        # 끝난 후 최종 응답
                         final_response = {
                             "query": query,
                             "model": model,
@@ -765,7 +748,7 @@ def chat():
                             "streaming": False,
                             "done": True
                         }
-                        yield f"data: {json.dumps(final_response, ensure_ascii=False)}\n\n"
+                        yield json.dumps(final_response, ensure_ascii=False)
                 
                 # 스트리밍 응답 헤더 설정 및 반환
                 response = Response(stream_with_context(generate()), mimetype='text/event-stream')
