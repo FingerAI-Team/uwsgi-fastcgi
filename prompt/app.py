@@ -732,7 +732,7 @@ def chat():
                                 chunk_text = response_chunk.get("response", "")
                                 if chunk_text:
                                     # 응답 누적 (올바른 방식)
-                                    accumulated_response += chunk_text
+                                    accumulated_response = chunk_text
 
                                 # 클라이언트에 그대로 전달
                                 yield json.dumps(response_chunk, ensure_ascii=False) + "\n\n"
