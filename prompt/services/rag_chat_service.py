@@ -521,51 +521,20 @@ class RagChatService:
                 stream=True
             ) as ollama_response:
                 if ollama_response.status_code != 200:
-                    logger.error(f"Ollama API 오류: {ollama_response.text}")
-                    yield json.dumps({
-                        "error": "LLM 요청 중 오류가 발생했습니다",
-                        "details": ollama_response.text
-                    }, ensure_ascii=False)
+                    yield json.dumps({"error": ollama_response.text}, ensure_ascii=False)
                     return
                 
-                # 응답 누적을 위한 변수
                 accumulated_response = ""
-                
+
                 for line in ollama_response.iter_lines():
                     if line:
-                        try:
-                            response_chunk = json.loads(line)
-                            chunk_text = response_chunk.get("response", "")
-                            if chunk_text:
-                                accumulated_response += chunk_text
-                                
-                                # 스트리밍 응답 형식
-                                stream_response = {
-                                    "response": accumulated_response,
-                                    "model": model_to_use,
-                                    "streaming": True
-                                }
-                                
-                                yield json.dumps(stream_response, ensure_ascii=False)
-                        except json.JSONDecodeError:
-                            logger.error(f"JSON 디코딩 오류: {line}")
-                            continue
-                
-                # 스트림 종료 후 메모리에 저장
+                        decoded = line.decode()
+                        accumulated_response += json.loads(decoded).get("response", "")
+                        yield decoded + "\n\n"
+
+                # 끝난 후
                 self.session_manager.add_bot_message(session_id, accumulated_response)
-                
-                # 응답 로깅 (디버깅용)
-                logger.debug(f"[디버깅] 최종 누적 LLM 응답 (처음 500자):\n{accumulated_response[:500]}...")
-                logger.debug(f"[디버깅] 최종 누적 LLM 응답 (마지막 500자):\n{accumulated_response[-500:] if len(accumulated_response) > 500 else accumulated_response}")
-                
-                # 성능 로깅
-                logger.info(f"[성능] 스트리밍 LLM 응답 완료: {(datetime.now() - llm_start).total_seconds():.3f}초, 응답 길이: {len(accumulated_response)}")
-                logger.info(f"[성능] 총 응답 생성 시간: {(datetime.now() - start_time).total_seconds():.3f}초")
-                
-                # 스트림 종료 시 구조화된 응답 파싱
                 structured_response = self.parse_structured_response(accumulated_response, chain_result["search_results"])
-                
-                # 스트림 종료 응답
                 final_response = {
                     "response": structured_response["answer"],
                     "model": model_to_use,
