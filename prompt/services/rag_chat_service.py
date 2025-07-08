@@ -542,7 +542,7 @@ class RagChatService:
 
                     try:
                         response_chunk = json.loads(decoded)
-                        accumulated_response += response_chunk.get("response", "")
+                        accumulated_response = response_chunk.get("response", "")
 
                         # 클라이언트에 그대로 전달
                         yield json.dumps(response_chunk, ensure_ascii=False) + "\n\n"
