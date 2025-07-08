@@ -527,10 +527,28 @@ class RagChatService:
                 accumulated_response = ""
 
                 for line in ollama_response.iter_lines():
-                    if line:
-                        decoded = line.decode()
-                        accumulated_response += json.loads(decoded).get("response", "")
-                        yield decoded + "\n\n"
+                    if not line:
+                        continue
+
+                    decoded = line.decode().strip()
+
+                    # SSE 주석/빈줄 무시
+                    if not decoded or decoded.startswith(":"):
+                        continue
+
+                    # SSE라면 data: 접두어 제거
+                    if decoded.startswith("data:"):
+                        decoded = decoded[5:].strip()
+
+                    try:
+                        response_chunk = json.loads(decoded)
+                        accumulated_response += response_chunk.get("response", "")
+
+                        # 클라이언트에 그대로 전달
+                        yield json.dumps(response_chunk, ensure_ascii=False) + "\n\n"
+                    except json.JSONDecodeError:
+                        logger.error(f"JSON 디코딩 오류: {decoded}")
+                        continue
 
                 # 끝난 후
                 self.session_manager.add_bot_message(session_id, accumulated_response)
