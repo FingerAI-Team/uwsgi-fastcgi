@@ -20,7 +20,7 @@ class RagChatService:
     
     def __init__(self, 
                  memory_dir: str = "./memory",
-                 ollama_endpoint: str = "http://ollama:11434",
+                 ollama_endpoint: str = "http://ollama-gpu:11434",
                  rag_endpoint: str = "http://nginx/rag",
                  reranker_endpoint: str = "http://nginx/reranker",
                  default_model: str = "gemma3:12b",
