@@ -41,27 +41,66 @@ rag_chat_service = None
 
 @app.route("/api/generate", methods=["POST"])
 def api_generate():
+    # 로깅 설정
+    log_dir = "/var/log/prompt" if os.path.exists("/var/log/prompt") else "logs"
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # API Generate 전용 로거 설정
+    api_logger = logging.getLogger("api-generate")
+    api_logger.setLevel(logging.INFO)
+    
+    # 이전 핸들러 제거
+    for handler in api_logger.handlers[:]:
+        api_logger.removeHandler(handler)
+    
+    # 파일 핸들러 추가
+    file_handler = logging.FileHandler(f"{log_dir}/api_generate.log")
+    file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(file_formatter)
+    api_logger.addHandler(file_handler)
+    
+    # 콘솔 핸들러 추가
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(file_formatter)
+    api_logger.addHandler(console_handler)
+    
     try:
+        api_logger.info("=== 새로운 /api/generate 요청 시작 ===")
+        start_time = datetime.now()
+        
         body = request.json
         model = body.get("model")
         stream = body.get("stream", False)
+        prompt = body.get("prompt", "")
+        
+        api_logger.info(f"요청 파라미터: model={model}, stream={stream}, prompt_length={len(prompt)}")
+        api_logger.info(f"요청 본문: {json.dumps(body, ensure_ascii=False)}")
 
         if not model:
+            api_logger.error("모델 파라미터 누락")
             return jsonify({"error": "Missing model"}), 400
 
         # ensure_model_ready 함수는 필요에 따라 구현
         # await ensure_model_ready(model)
 
         if stream:
+            api_logger.info("스트리밍 모드로 처리 시작")
+            
             def stream_response():
                 accumulated = ""
+                chunk_count = 0
                 try:
+                    api_logger.info(f"Ollama 스트리밍 요청 시작: {OLLAMA_HOST}/api/generate")
+                    ollama_start_time = datetime.now()
+                    
                     with httpx.Client(timeout=None) as client:
                         with client.stream(
                             "POST",
                             f"{OLLAMA_HOST}/api/generate",
                             json=body
                         ) as resp:
+                            api_logger.info(f"Ollama 응답 시작: status_code={resp.status_code}")
+                            
                             for line in resp.iter_lines():
                                 if not line:
                                     continue
@@ -69,6 +108,7 @@ def api_generate():
                                     chunk = json.loads(line)
                                     text_piece = chunk.get("response", "")
                                     accumulated += text_piece
+                                    chunk_count += 1
 
                                     response_obj = {
                                         'model': model,
@@ -76,14 +116,27 @@ def api_generate():
                                         'streaming': not chunk.get('done', False),
                                         'done': chunk.get('done', False)
                                     }
+                                    
+                                    # 청크별 로깅 (처음 5개와 마지막 5개만)
+                                    if chunk_count <= 5 or chunk.get('done', False):
+                                        api_logger.info(f"스트리밍 청크 {chunk_count}: text_piece_length={len(text_piece)}, accumulated_length={len(accumulated)}, done={chunk.get('done', False)}")
+                                    
                                     yield f"data: {json.dumps(response_obj, ensure_ascii=False)}\n\n"
+                                    
+                                    if chunk.get('done', False):
+                                        ollama_end_time = datetime.now()
+                                        api_logger.info(f"Ollama 스트리밍 완료: 총 {chunk_count}개 청크, 총 시간={(ollama_end_time - ollama_start_time).total_seconds():.3f}초")
+                                        break
+                                        
                                 except Exception as e:
-                                    logger.error(f"스트리밍 처리 중 오류: {e}")
+                                    api_logger.error(f"스트리밍 처리 중 오류: {e}")
                                     continue
+                                    
                 except Exception as e:
-                    logger.error(f"Ollama 스트리밍 요청 중 오류: {e}")
+                    api_logger.error(f"Ollama 스트리밍 요청 중 오류: {e}")
                     yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
 
+            api_logger.info("스트리밍 응답 생성기 반환")
             return Response(
                 stream_response(),
                 status=200,
@@ -95,17 +148,33 @@ def api_generate():
                 }
             )
         else:
+            api_logger.info("비스트리밍 모드로 처리 시작")
             try:
+                api_logger.info(f"Ollama 비스트리밍 요청 시작: {OLLAMA_HOST}/api/generate")
+                ollama_start_time = datetime.now()
+                
                 with httpx.Client(timeout=60.0) as client:
                     response = client.post(f"{OLLAMA_HOST}/api/generate", json=body)
-                    return jsonify(response.json())
+                    
+                    ollama_end_time = datetime.now()
+                    api_logger.info(f"Ollama 비스트리밍 응답 완료: status_code={response.status_code}, 소요시간={(ollama_end_time - ollama_start_time).total_seconds():.3f}초")
+                    
+                    response_json = response.json()
+                    response_text = response_json.get("response", "")
+                    api_logger.info(f"Ollama 응답 길이: {len(response_text)} 문자")
+                    
+                    return jsonify(response_json)
+                    
             except Exception as e:
-                logger.error(f"Ollama 요청 중 오류: {e}")
+                api_logger.error(f"Ollama 요청 중 오류: {e}")
                 return jsonify({"error": str(e)}), 500
 
     except Exception as e:
-        logger.error(f"/api/generate 처리 중 오류: {e}")
+        api_logger.error(f"/api/generate 처리 중 오류: {e}")
         return jsonify({"error": str(e)}), 500
+    finally:
+        total_time = (datetime.now() - start_time).total_seconds()
+        api_logger.info(f"=== /api/generate 요청 완료: 총 소요시간={total_time:.3f}초 ===")
 
 class AgentService:
     def __init__(self, config_path:str=None):
