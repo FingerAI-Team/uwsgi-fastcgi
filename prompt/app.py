@@ -31,7 +31,7 @@ config_path = os.environ.get("PROMPT_CONFIG", "/prompt/config.json")
 RAG_ENDPOINT = os.environ.get("RAG_ENDPOINT", "http://nginx/rag")
 RERANKER_ENDPOINT = os.environ.get("RERANKER_ENDPOINT", "http://nginx/reranker")
 OLLAMA_ENDPOINT = os.environ.get("OLLAMA_ENDPOINT", "http://ollama:11434")
-OLLAMA_HOST = "http://ollama:11434"  # 고정된 Ollama 호스트 URL
+OLLAMA_HOST = "http://nginx"  # 고정된 Ollama 호스트 URL
 MEMORY_DIR = os.environ.get("MEMORY_DIR", "./memory")
 
 # 전역 RAG 챗봇 서비스 인스턴스
