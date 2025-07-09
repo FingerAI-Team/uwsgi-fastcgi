@@ -31,7 +31,7 @@ config_path = os.environ.get("PROMPT_CONFIG", "/prompt/config.json")
 RAG_ENDPOINT = os.environ.get("RAG_ENDPOINT", "http://nginx/rag")
 RERANKER_ENDPOINT = os.environ.get("RERANKER_ENDPOINT", "http://nginx/reranker")
 OLLAMA_ENDPOINT = os.environ.get("OLLAMA_ENDPOINT", "http://ollama:11434")
-OLLAMA_HOST = "http://nginx"  # 고정된 Ollama 호스트 URL
+OLLAMA_HOST = "http://ollama:11434"  # Ollama 직접 호출 (무한 루프 방지)
 MEMORY_DIR = os.environ.get("MEMORY_DIR", "./memory")
 
 # 전역 RAG 챗봇 서비스 인스턴스
@@ -101,6 +101,11 @@ def api_generate():
                         ) as resp:
                             api_logger.info(f"Ollama 응답 시작: status_code={resp.status_code}")
                             
+                            if resp.status_code != 200:
+                                api_logger.error(f"Ollama 응답 오류: {resp.status_code}")
+                                yield f"data: {json.dumps({'error': f'Ollama API 오류: {resp.status_code}'}, ensure_ascii=False)}\n\n"
+                                return
+                            
                             for line in resp.iter_lines():
                                 if not line:
                                     continue
@@ -132,6 +137,12 @@ def api_generate():
                                     api_logger.error(f"스트리밍 처리 중 오류: {e}")
                                     continue
                                     
+                except httpx.ConnectError as e:
+                    api_logger.error(f"Ollama 서비스 연결 실패: {e}")
+                    yield f"data: {json.dumps({'error': f'Ollama 서비스에 연결할 수 없습니다: {str(e)}'}, ensure_ascii=False)}\n\n"
+                except httpx.TimeoutException as e:
+                    api_logger.error(f"Ollama 요청 타임아웃: {e}")
+                    yield f"data: {json.dumps({'error': f'Ollama 요청이 타임아웃되었습니다: {str(e)}'}, ensure_ascii=False)}\n\n"
                 except Exception as e:
                     api_logger.error(f"Ollama 스트리밍 요청 중 오류: {e}")
                     yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
@@ -159,12 +170,22 @@ def api_generate():
                     ollama_end_time = datetime.now()
                     api_logger.info(f"Ollama 비스트리밍 응답 완료: status_code={response.status_code}, 소요시간={(ollama_end_time - ollama_start_time).total_seconds():.3f}초")
                     
+                    if response.status_code != 200:
+                        api_logger.error(f"Ollama 응답 오류: {response.status_code}")
+                        return jsonify({"error": f"Ollama API 오류: {response.status_code}"}), 500
+                    
                     response_json = response.json()
                     response_text = response_json.get("response", "")
                     api_logger.info(f"Ollama 응답 길이: {len(response_text)} 문자")
                     
                     return jsonify(response_json)
                     
+            except httpx.ConnectError as e:
+                api_logger.error(f"Ollama 서비스 연결 실패: {e}")
+                return jsonify({"error": f"Ollama 서비스에 연결할 수 없습니다: {str(e)}"}), 503
+            except httpx.TimeoutException as e:
+                api_logger.error(f"Ollama 요청 타임아웃: {e}")
+                return jsonify({"error": f"Ollama 요청이 타임아웃되었습니다: {str(e)}"}), 504
             except Exception as e:
                 api_logger.error(f"Ollama 요청 중 오류: {e}")
                 return jsonify({"error": str(e)}), 500
