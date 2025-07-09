@@ -6,6 +6,8 @@ import logging
 from datetime import datetime
 from typing import Dict, Any
 import traceback
+import asyncio
+import httpx
 from services.rag_chat_service import RagChatService
 
 # 로깅 설정
@@ -29,10 +31,81 @@ config_path = os.environ.get("PROMPT_CONFIG", "/prompt/config.json")
 RAG_ENDPOINT = os.environ.get("RAG_ENDPOINT", "http://nginx/rag")
 RERANKER_ENDPOINT = os.environ.get("RERANKER_ENDPOINT", "http://nginx/reranker")
 OLLAMA_ENDPOINT = os.environ.get("OLLAMA_ENDPOINT", "http://ollama:11434")
+OLLAMA_HOST = "http://ollama:11434"  # 고정된 Ollama 호스트 URL
 MEMORY_DIR = os.environ.get("MEMORY_DIR", "./memory")
 
 # 전역 RAG 챗봇 서비스 인스턴스
 rag_chat_service = None
+
+# ---------------- /api/generate ----------------
+
+@app.route("/api/generate", methods=["POST"])
+def api_generate():
+    try:
+        body = request.json
+        model = body.get("model")
+        stream = body.get("stream", False)
+
+        if not model:
+            return jsonify({"error": "Missing model"}), 400
+
+        # ensure_model_ready 함수는 필요에 따라 구현
+        # await ensure_model_ready(model)
+
+        if stream:
+            def stream_response():
+                accumulated = ""
+                try:
+                    with httpx.Client(timeout=None) as client:
+                        with client.stream(
+                            "POST",
+                            f"{OLLAMA_HOST}/api/generate",
+                            json=body
+                        ) as resp:
+                            for line in resp.iter_lines():
+                                if not line:
+                                    continue
+                                try:
+                                    chunk = json.loads(line)
+                                    text_piece = chunk.get("response", "")
+                                    accumulated += text_piece
+
+                                    response_obj = {
+                                        'model': model,
+                                        'response': accumulated,
+                                        'streaming': not chunk.get('done', False),
+                                        'done': chunk.get('done', False)
+                                    }
+                                    yield f"data: {json.dumps(response_obj, ensure_ascii=False)}\n\n"
+                                except Exception as e:
+                                    logger.error(f"스트리밍 처리 중 오류: {e}")
+                                    continue
+                except Exception as e:
+                    logger.error(f"Ollama 스트리밍 요청 중 오류: {e}")
+                    yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+
+            return Response(
+                stream_response(),
+                status=200,
+                mimetype="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache, no-transform",
+                    "X-Accel-Buffering": "no",
+                    "Connection": "keep-alive"
+                }
+            )
+        else:
+            try:
+                with httpx.Client(timeout=60.0) as client:
+                    response = client.post(f"{OLLAMA_HOST}/api/generate", json=body)
+                    return jsonify(response.json())
+            except Exception as e:
+                logger.error(f"Ollama 요청 중 오류: {e}")
+                return jsonify({"error": str(e)}), 500
+
+    except Exception as e:
+        logger.error(f"/api/generate 처리 중 오류: {e}")
+        return jsonify({"error": str(e)}), 500
 
 class AgentService:
     def __init__(self, config_path:str=None):
