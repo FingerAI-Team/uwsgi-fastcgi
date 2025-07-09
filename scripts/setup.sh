@@ -358,6 +358,7 @@ setup_nginx() {
             cp nginx/templates/reranker.conf.template nginx/locations-enabled/reranker.conf
             cp nginx/templates/prompt.conf.template nginx/locations-enabled/prompt.conf
             cp nginx/templates/vision.conf.template nginx/locations-enabled/vision.conf
+            cp nginx/templates/api.conf.template nginx/locations-enabled/api.conf
             ;;
         "rag")
             # rag만 복사
@@ -370,6 +371,7 @@ setup_nginx() {
         "prompt")
             # prompt만 복사
             cp nginx/templates/prompt.conf.template nginx/locations-enabled/prompt.conf
+            cp nginx/templates/api.conf.template nginx/locations-enabled/api.conf
             ;;
         "rag-reranker")
             # rag와 reranker만 복사
