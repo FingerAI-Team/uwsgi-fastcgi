@@ -27,6 +27,7 @@ class RagChatService:
                  search_top: int = 100,
                  rerank_top: int = 10,
                  rerank_threshold: float = 0.1,
+                 temperature: float = 0.7,
                  max_total_tokens: int = 10000,
                  max_context_tokens: int = 7500):
         """
@@ -51,6 +52,7 @@ class RagChatService:
         self.search_top = search_top
         self.rerank_top = rerank_top
         self.rerank_threshold = rerank_threshold
+        self.temperature = temperature
         
         # 세션 관리자 초기화
         self.session_manager = SessionManager(
@@ -370,7 +372,8 @@ class RagChatService:
                 json={
                     "model": model_to_use,
                     "prompt": chain_result["prompt"],
-                    "stream": False
+                    "stream": False,
+                    "temperature": self.temperature
                 },
                 timeout=120
             )
@@ -515,7 +518,8 @@ class RagChatService:
                 json={
                     "model": model_to_use,
                     "prompt": chain_result["prompt"],
-                    "stream": True
+                    "stream": True,
+                    "temperature": self.temperature
                 },
                 timeout=120,
                 stream=True

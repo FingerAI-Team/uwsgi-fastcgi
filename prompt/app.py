@@ -72,8 +72,9 @@ def api_generate():
         model = body.get("model")
         stream = body.get("stream", False)
         prompt = body.get("prompt", "")
+        temperature = body.get("temperature", 0.7)  # 기본값 0.7
         
-        api_logger.info(f"요청 파라미터: model={model}, stream={stream}, prompt_length={len(prompt)}")
+        api_logger.info(f"요청 파라미터: model={model}, stream={stream}, prompt_length={len(prompt)}, temperature={temperature}")
         api_logger.info(f"요청 본문: {json.dumps(body, ensure_ascii=False)}")
 
         if not model:
@@ -97,7 +98,12 @@ def api_generate():
                         with client.stream(
                             "POST",
                             f"{OLLAMA_HOST}/api/generate",
-                            json=body
+                            json={
+                                "model": model,
+                                "prompt": prompt,
+                                "stream": stream,
+                                "temperature": temperature
+                            }
                         ) as resp:
                             api_logger.info(f"Ollama 응답 시작: status_code={resp.status_code}")
                             
@@ -165,7 +171,12 @@ def api_generate():
                 ollama_start_time = datetime.now()
                 
                 with httpx.Client(timeout=60.0) as client:
-                    response = client.post(f"{OLLAMA_HOST}/api/generate", json=body)
+                    response = client.post(f"{OLLAMA_HOST}/api/generate", json={
+                        "model": model,
+                        "prompt": prompt,
+                        "stream": stream,
+                        "temperature": temperature
+                    })
                     
                     ollama_end_time = datetime.now()
                     api_logger.info(f"Ollama 비스트리밍 응답 완료: status_code={response.status_code}, 소요시간={(ollama_end_time - ollama_start_time).total_seconds():.3f}초")
@@ -212,11 +223,13 @@ class AgentService:
             self.search_top = self.config.get("search_top")
             self.rerank_top = self.config.get("rerank_top")
             self.rerank_threshold = self.config.get("rerank_threshold")
+            self.temperature = self.config.get("temperature", 0.7)
         
             logger.info(f"Initializing Agent LLM with model: {self.default_model}")
             logger.debug(f"RAG Search Top {self.search_top}")
             logger.debug(f"Reranking Top {self.rerank_top}")
             logger.debug(f"Reranking Threshold {self.rerank_threshold}")
+            logger.debug(f"Temperature {self.temperature}")
         except Exception as e:
             logger.error(f"Failed to initialize AgentService: {str(e)}")
             raise
@@ -235,7 +248,8 @@ class AgentService:
             "search_top": int(os.getenv("RAG_SEARCH_TOP_K", "100")),
             "rerank_top": int(os.getenv("RERANKER_TOP_K", "20")),
             "default_model": os.getenv("DEFAULT_MODEL", "gemma3:12b"),
-            "rerank_threshold": float(os.getenv("RERANK_THRESHOLD", "0.1"))
+            "rerank_threshold": float(os.getenv("RERANK_THRESHOLD", "0.1")),
+            "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.7"))
         }
         
         if not config_path:
@@ -847,12 +861,13 @@ def chat():
         query = data.get("query")
         model = data.get("model", summaryAgent.default_model)
         stream = data.get("stream", False)  # 스트리밍 모드 기본값 False
+        temperature = data.get("temperature", summaryAgent.temperature)  # temperature 파라미터 추가
         
         if not query:
             return jsonify({"error": "질문이 필요합니다"}), 400
         
         # 프롬프트 템플릿 없이 사용자 쿼리 직접 사용
-        logger.info(f"Ollama API 챗봇 호출 시작: {model}, 스트리밍 모드: {stream}, 쿼리 직접 전달")
+        logger.info(f"Ollama API 챗봇 호출 시작: {model}, 스트리밍 모드: {stream}, temperature: {temperature}, 쿼리 직접 전달")
         
         try:
             # 스트리밍 모드에 따라 다른 처리
@@ -867,7 +882,8 @@ def chat():
                         json={
                             "model": model,
                             "prompt": query,
-                            "stream": True
+                            "stream": True,
+                            "temperature": temperature
                         },
                         timeout=120,
                         stream=True
@@ -926,7 +942,8 @@ def chat():
                     json={
                         "model": model,
                         "prompt": query,  # 사용자 쿼리를 직접 전달
-                        "stream": False
+                        "stream": False,
+                        "temperature": temperature
                     },
                     timeout=60
                 )
@@ -1038,7 +1055,8 @@ def chatbot():
                 default_model=default_model,
                 search_top=search_top,
                 rerank_top=rerank_top,
-                rerank_threshold=rerank_threshold
+                rerank_threshold=rerank_threshold,
+                temperature=summaryAgent.temperature
             )
         
         # 추가 검색 파라미터 추출
@@ -1183,7 +1201,8 @@ def _initialize_rag_service():
         default_model=default_model,
         search_top=search_top,
         rerank_top=rerank_top,
-        rerank_threshold=rerank_threshold
+        rerank_threshold=rerank_threshold,
+        temperature=summaryAgent.temperature
     )
 
 if __name__ == "__main__":
