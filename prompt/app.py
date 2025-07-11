@@ -1017,6 +1017,42 @@ def list_models():
         logger.error(f"모델 목록 처리 중 오류 발생: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
+# Ollama API 프록시 - /api/tags 응답을 그대로 리턴
+@app.route("/api/tags", methods=["GET"])
+def api_tags():
+    logger.info(f"💬 OLLAMA_ENDPOINT = {OLLAMA_HOST}")
+    logger.info(f"💬 최종 요청 URL = {OLLAMA_HOST}/api/tags")
+    try:
+        # Ollama API 호출하여 모델 목록 가져오기
+        logger.info("Ollama API /api/tags 프록시 요청")
+        try:
+            models_response = requests.get(
+                f"{OLLAMA_HOST}/api/tags",
+                timeout=10
+            )
+            
+            if models_response.status_code != 200:
+                logger.error(f"Ollama API /api/tags 오류: {models_response.text}")
+                return jsonify({
+                    "error": "Ollama API 호출 중 오류가 발생했습니다",
+                    "details": models_response.text
+                }), 500
+                
+            # Ollama 응답을 그대로 리턴
+            return jsonify(models_response.json())
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ollama 서비스 연결 오류: {str(e)}")
+            logger.exception(e)  # 전체 traceback도 로그에 남기기
+            return jsonify({
+                "error": "Ollama 서비스에 연결할 수 없습니다",
+                "details": str(e)
+            }), 503
+            
+    except Exception as e:
+        logger.error(f"/api/tags 처리 중 오류 발생: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
 # RAG 챗봇 API - 파일 기반 세션 관리 멀티턴 대화
 @app.route("/prompt/chatbot", methods=["POST"])
 def chatbot():
