@@ -1,6 +1,6 @@
 
 # API Generate 엔드포인트
-location /api/generate {
+location /api {
     include fastcgi_params;
     fastcgi_pass unix:/tmp/prompt.sock;
     fastcgi_param SCRIPT_NAME /api/generate;
