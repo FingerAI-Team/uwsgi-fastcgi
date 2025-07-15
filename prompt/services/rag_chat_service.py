@@ -11,6 +11,7 @@ from langchain_community.llms import Ollama
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from .session_manager import SessionManager
+from domain_selector.domain_service import DomainService
 
 # 로깅 설정
 logger = logging.getLogger("rag-chat-service")
@@ -61,6 +62,9 @@ class RagChatService:
             max_context_tokens=max_context_tokens
         )
         
+        # 도메인 셀렉터 서비스 초기화
+        self.domain_service = DomainService()
+        
         # 시스템 프롬프트는 검색 결과에 따라 동적으로 로드됨
         self.system_prompt = None
         
@@ -87,12 +91,28 @@ class RagChatService:
                 **inputs  # 원래 입력 유지
             }
         
-        # RAG 검색 수행 함수
+        # RAG 검색 수행 함수 (도메인 셀렉터 통합)
         def perform_search(inputs):
             query = inputs["query"]
             kwargs = inputs.get("kwargs", {})
-            logger.info(f"[체인 실행] 2단계 - RAG 검색 수행: 쿼리='{query[:30]}...'")
-            search_results = self._perform_enhanced_search(query, **kwargs)
+            logger.info(f"[체인 실행] 2단계 - 도메인 셀렉터 및 RAG 검색 수행: 쿼리='{query[:30]}...'")
+            
+            # 도메인 셀렉터로 검색 범위 결정
+            domain_result = self.domain_service.process_query(query)
+            logger.info(f"[도메인 셀렉터] 결과: {json.dumps(domain_result, ensure_ascii=False)}")
+            
+            # 도메인 셀렉터 결과를 kwargs에 추가
+            search_kwargs = kwargs.copy()
+            if domain_result["domain_candidates"]:
+                # 도메인 후보가 있으면 해당 도메인들로 검색
+                search_kwargs["domains"] = domain_result["domain_candidates"]
+                logger.info(f"[도메인 셀렉터] 선택된 도메인으로 검색: {domain_result['domain_candidates']}")
+            else:
+                # 도메인 후보가 없으면 전체 도메인에서 검색
+                logger.info(f"[도메인 셀렉터] 전체 도메인에서 검색")
+            
+            # 검색 결과만 반환 (도메인 정보는 검색 파라미터로만 사용)
+            search_results = self._perform_enhanced_search(query, **search_kwargs)
             return {
                 "search_results": search_results,
                 **inputs  # 원래 입력 유지
@@ -557,6 +577,7 @@ class RagChatService:
                 # 끝난 후
                 self.session_manager.add_bot_message(session_id, accumulated_response)
                 structured_response = self.parse_structured_response(accumulated_response, chain_result["search_results"])
+                
                 final_response = {
                     "response": structured_response["answer"],
                     "model": model_to_use,
