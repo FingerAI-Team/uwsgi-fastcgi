@@ -15,6 +15,17 @@ class DomainService:
             config_path: 도메인 설정 파일 경로
         """
         self.selector = DomainSelector(config_path)
+        # 기본 도메인 목록 로드
+        self.default_domains = self.selector.config.get("default_domains", [])
+    
+    def get_default_domains(self) -> List[str]:
+        """
+        기본 도메인 목록을 반환합니다.
+        
+        Returns:
+            기본 도메인 목록
+        """
+        return self.default_domains.copy()
     
     def process_query(self, query: str) -> Dict[str, Any]:
         """
@@ -29,6 +40,7 @@ class DomainService:
             - has_direct_reference: 직접 참조가 있는지 여부
             - domain_candidates: 도메인 후보 리스트
             - should_filter_by_domain: 도메인별 필터링이 필요한지 여부
+            - used_default_domains: 기본 도메인을 사용했는지 여부
         """
         # 도메인 선택 (시그니처 패턴이 있는 경우만)
         domain_results = self.selector.select_domains(query)
@@ -38,6 +50,10 @@ class DomainService:
         
         # 도메인 후보 리스트
         domain_candidates = [result["domain"] for result in domain_results]
+        
+        # 도메인 후보가 없으면 기본 도메인 사용
+        if not domain_candidates and self.default_domains:
+            domain_candidates = self.default_domains
         
         # 도메인별 필터링이 필요한지 판단
         # 시그니처 패턴이 있는 경우만 필터링 필요
@@ -54,6 +70,7 @@ class DomainService:
     def get_search_domains(self, query: str) -> List[str]:
         """
         검색에 사용할 도메인 리스트를 반환합니다.
+        도메인 후보가 없으면 기본 도메인 목록을 반환합니다.
         
         Args:
             query: 사용자 질의
@@ -125,7 +142,7 @@ class DomainService:
             context["search_strategy"] = "domain_filtered"
         elif result["domain_candidates"]:
             context["query_type"] = "domain_related"
-            context["target_domains"] = result["domain_candidates"]
             context["search_strategy"] = "domain_enhanced"
+            context["target_domains"] = result["domain_candidates"]
         
         return context 

@@ -29,5 +29,10 @@
     "하에",
     "로부터",
     "으로부터"
+  ],
+  "default_domains": [
+    "nanet_related_law_cstt",
+    "nanet_related_law_rule",
+    "nanet_argos_manual"
   ]
 } 
