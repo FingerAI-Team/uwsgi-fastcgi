@@ -11,7 +11,7 @@ class QueryRewriter:
     """Query Rewrite 시스템 - 대화 컨텍스트를 기반으로 사용자 질문을 개선"""
     
     def __init__(self, 
-                 ollama_endpoint: str = "http://vllm:8000",
+                 vllm_endpoint: str = "http://vllm:8000",
                  default_model: str = "/app/models/mistralai/Mistral-7B-Instruct-v0.2",
                  temperature: float = 0.3,
                  max_history_turns: int = 5):
@@ -24,7 +24,7 @@ class QueryRewriter:
             temperature: 생성 온도 (낮을수록 일관성 높음)
             max_history_turns: 참조할 최대 대화 턴 수
         """
-        self.ollama_endpoint = ollama_endpoint
+        self.vllm_endpoint = vllm_endpoint
         self.default_model = default_model
         self.temperature = temperature
         self.max_history_turns = max_history_turns
@@ -32,7 +32,7 @@ class QueryRewriter:
         # 프롬프트 템플릿 로드
         self.prompt_template = self._load_prompt_template()
         
-        logger.info(f"QueryRewriter 초기화 완료: model={default_model}, max_history_turns={max_history_turns}")
+        logger.info(f"QueryRewriter 초기화 완료: endpoint={vllm_endpoint}, model={default_model}, max_history_turns={max_history_turns}")
     
     def _load_prompt_template(self) -> str:
         """Query Rewrite 프롬프트 템플릿을 로드합니다."""
@@ -207,7 +207,7 @@ class QueryRewriter:
         """LLM을 호출하여 질문을 재작성합니다."""
         try:
             response = requests.post(
-                f"{self.ollama_endpoint}/v1/chat/completions",
+                f"{self.vllm_endpoint}/v1/chat/completions",
                 json={
                     "model": model,
                     "messages": [
@@ -290,5 +290,5 @@ class QueryRewriter:
             "model": self.default_model,
             "temperature": self.temperature,
             "max_history_turns": self.max_history_turns,
-            "endpoint": self.ollama_endpoint
+            "endpoint": self.vllm_endpoint
         } 

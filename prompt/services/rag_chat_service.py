@@ -70,7 +70,7 @@ class RagChatService:
         
         # Query Rewriter 서비스 초기화 (vLLM 사용)
         self.query_rewriter = QueryRewriter(
-            ollama_endpoint=vllm_endpoint,  # vLLM 엔드포인트 사용
+            vllm_endpoint=vllm_endpoint,  # vLLM 엔드포인트 사용
             default_model=vllm_model,  # vLLM용 모델명 (환경변수에서 받음)
             temperature=temperature
         )

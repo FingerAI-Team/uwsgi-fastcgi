@@ -764,6 +764,11 @@ class RerankerService:
             position_map = {}
         
         for i, passage in enumerate(result["results"]):
+            # 튜플인 경우 딕셔너리로 변환
+            if isinstance(passage, tuple):
+                logger.warning(f"_normalize_result_format에서 Passage {i}가 튜플입니다. 딕셔너리로 변환합니다.")
+                passage = dict(passage)
+            
             # position 필드가 있는지 확인하고 저장
             position_value = passage.get("position")
             logger.info(f"[POSITION-DEBUG] 정규화 처리 중 #{i}: 초기 position={position_value}, 타입={type(position_value).__name__}")
@@ -1081,6 +1086,11 @@ class RerankerService:
                     combined_scores = []
                     
                     for i, passage in enumerate(reranked_passages):
+                        # 튜플인 경우 딕셔너리로 변환
+                        if isinstance(passage, tuple):
+                            logger.warning(f"하이브리드 재랭킹 중 Passage {i}가 튜플입니다. 딕셔너리로 변환합니다.")
+                            passage = dict(passage)
+                        
                         # position 값 추적 로그
                         position_value = passage.get("position")
                         logger.info(f"[POSITION-DEBUG] 하이브리드 재랭킹 중 #{i}: position={position_value}, 타입={type(position_value).__name__}")
@@ -1172,6 +1182,11 @@ class RerankerService:
                     
                     # 최종 결과의 position 값 확인 로그
                     for i, passage in enumerate(result["results"]):
+                        # 튜플인 경우 딕셔너리로 변환
+                        if isinstance(passage, tuple):
+                            logger.warning(f"최종 결과 처리 중 Passage {i}가 튜플입니다. 딕셔너리로 변환합니다.")
+                            passage = dict(passage)
+                        
                         position_value = passage.get("position")
                         logger.info(f"[POSITION-DEBUG] 최종 결과 #{i}: position={position_value}, 타입={type(position_value).__name__}")
                     
