@@ -72,7 +72,8 @@ class RagChatService:
         self.query_rewriter = QueryRewriter(
             vllm_endpoint=vllm_endpoint,  # vLLM 엔드포인트 사용
             default_model=vllm_model,  # vLLM용 모델명 (환경변수에서 받음)
-            temperature=temperature
+            temperature=temperature,
+            max_history_turns=3  # 대화 기록을 3개 턴으로 설정
         )
         
         # 시스템 프롬프트는 검색 결과에 따라 동적으로 로드됨
