@@ -54,18 +54,16 @@ except ImportError:
     import json
     print("ujson not available, using default json")
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
+# Configure logging - prompt와 동일한 방식
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('/var/log/reranker/reranker_detail.log') if os.path.exists('/var/log/reranker') else logging.FileHandler("reranker_detail.log")
+    ]
+)
 logger = logging.getLogger(__name__)
-
-# 파일 로그 추가 (볼륨에 저장)
-try:
-    file_handler = logging.FileHandler('/var/log/reranker/reranker_detail.log')
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-    logger.addHandler(file_handler)
-    logger.info("상세 로그 파일 설정 완료: /var/log/reranker/reranker_detail.log")
-except Exception as e:
-    logger.warning(f"로그 파일 설정 실패: {str(e)}")
 
 # MRC 모듈 임포트
 try:

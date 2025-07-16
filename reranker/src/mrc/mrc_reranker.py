@@ -383,6 +383,11 @@ class MRCReranker:
         
         if theoretical_range > 0:
             for passage in passages:
+                # 튜플인 경우 딕셔너리로 변환
+                if isinstance(passage, tuple):
+                    logger.warning(f"스케일링 중 Passage가 튜플입니다. 딕셔너리로 변환합니다.")
+                    passage = dict(passage)
+                
                 raw_score = passage['hybrid_score_raw']
                 # 이론적 범위 기준으로 스케일링
                 scaled_score = (raw_score - theoretical_min) / theoretical_range
@@ -400,6 +405,11 @@ class MRCReranker:
             # 이론적 범위가 0인 경우 (발생하지 않아야 함)
             logger.warning(f"[DEBUG-SCALE] 이론적 점수 범위가 0입니다! 기본값 0.5로 설정")
             for passage in passages:
+                # 튜플인 경우 딕셔너리로 변환
+                if isinstance(passage, tuple):
+                    logger.warning(f"기본값 설정 중 Passage가 튜플입니다. 딕셔너리로 변환합니다.")
+                    passage = dict(passage)
+                
                 passage['hybrid_score'] = 0.5  # 기본값
                 passage['score'] = 0.5
         
