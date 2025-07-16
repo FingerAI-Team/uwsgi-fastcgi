@@ -109,6 +109,12 @@ class QueryRewriter:
             # 프롬프트 구성
             prompt = self._build_prompt(current_query, conversation_history)
             
+            # 프롬프트 로깅
+            logger.info(f"=== Query Rewrite 프롬프트 ===")
+            logger.info(f"프롬프트 길이: {len(prompt)} 문자")
+            logger.info(f"프롬프트 내용:\n{prompt}")
+            logger.info(f"=== 프롬프트 끝 ===")
+            
             # LLM 호출 (항상 VLLM용 모델 사용, 더 짧은 응답 요청)
             rewritten_query = self._call_llm(prompt, self.default_model)
             
@@ -232,8 +238,14 @@ class QueryRewriter:
             result = response.json()
             rewritten_query = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
             
+            # VLLM 응답 로깅
+            logger.info(f"VLLM 원본 응답: {result}")
+            logger.info(f"VLLM 추출된 응답: '{rewritten_query}'")
+            
             # 응답에서 불필요한 부분 제거
             rewritten_query = self._clean_response(rewritten_query)
+            
+            logger.info(f"VLLM 정리된 응답: '{rewritten_query}'")
             
             return rewritten_query
             
