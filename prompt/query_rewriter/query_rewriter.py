@@ -12,7 +12,7 @@ class QueryRewriter:
     
     def __init__(self, 
                  ollama_endpoint: str = "http://vllm:8000",
-                 default_model: str = "mistralai/Mistral-7B-Instruct-v0.2",
+                 default_model: str = "/app/models/mistralai/Mistral-7B-Instruct-v0.2",
                  temperature: float = 0.3,
                  max_history_turns: int = 5):
         """

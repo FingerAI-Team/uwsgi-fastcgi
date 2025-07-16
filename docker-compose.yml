@@ -209,6 +209,7 @@ services:
       - USE_GPU=${USE_GPU}
       - OLLAMA_ENDPOINT=${OLLAMA_ENDPOINT}
       - VLLM_ENDPOINT=${VLLM_ENDPOINT:-http://vllm:8000}
+      - VLLM_MODEL=${VLLM_MODEL:-/app/models/mistralai/Mistral-7B-Instruct-v0.2}
       - UWSGI_PROTOCOL=fastcgi
       - UWSGI_SOCKET=/tmp/prompt.sock
       - UWSGI_CHMOD_SOCKET=666

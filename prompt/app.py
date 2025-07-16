@@ -33,6 +33,7 @@ RERANKER_ENDPOINT = os.environ.get("RERANKER_ENDPOINT", "http://nginx/reranker")
 OLLAMA_ENDPOINT = os.environ.get("OLLAMA_ENDPOINT", "http://nginx")
 OLLAMA_HOST = "http://ollama-gpu:11434"  # Docker Compose 서비스 이름
 VLLM_ENDPOINT = os.environ.get("VLLM_ENDPOINT", "http://vllm:8000")  # vLLM 서비스 엔드포인트
+VLLM_MODEL = os.environ.get("VLLM_MODEL", "/app/models/mistralai/Mistral-7B-Instruct-v0.2")  # vLLM 모델 경로
 MEMORY_DIR = os.environ.get("MEMORY_DIR", "./memory")
 
 # 전역 RAG 챗봇 서비스 인스턴스
@@ -1094,7 +1095,8 @@ def chatbot():
                 rerank_top=rerank_top,
                 rerank_threshold=rerank_threshold,
                 temperature=summaryAgent.temperature,
-                vllm_endpoint=VLLM_ENDPOINT  # vLLM 엔드포인트 추가
+                vllm_endpoint=VLLM_ENDPOINT,  # vLLM 엔드포인트 추가
+                vllm_model=VLLM_MODEL  # vLLM 모델 경로 추가
             )
         
         # 추가 검색 파라미터 추출
@@ -1241,7 +1243,8 @@ def _initialize_rag_service():
         rerank_top=rerank_top,
         rerank_threshold=rerank_threshold,
         temperature=summaryAgent.temperature,
-        vllm_endpoint=VLLM_ENDPOINT  # vLLM 엔드포인트 추가
+        vllm_endpoint=VLLM_ENDPOINT,  # vLLM 엔드포인트 추가
+        vllm_model=VLLM_MODEL  # vLLM 모델 경로 추가
     )
 
 if __name__ == "__main__":
