@@ -373,6 +373,12 @@ setup_nginx() {
             cp nginx/templates/prompt.conf.template nginx/locations-enabled/prompt.conf
             cp nginx/templates/api.conf.template nginx/locations-enabled/api.conf
             ;;
+        "prompt_vllm")
+            # prompt와 vllm 복사
+            cp nginx/templates/prompt.conf.template nginx/locations-enabled/prompt.conf
+            cp nginx/templates/api.conf.template nginx/locations-enabled/api.conf
+            cp nginx/templates/vllm.conf.template nginx/locations-enabled/vllm.conf
+            ;;
         "rag-reranker")
             # rag와 reranker만 복사
             cp nginx/templates/rag.conf.template nginx/locations-enabled/rag.conf
@@ -417,6 +423,8 @@ prompt_services=(
     "milvus"          # Milvus 서비스만
     "ollama"          # Ollama 서비스 (CPU)
     "ollama-gpu"      # Ollama 서비스 (GPU)
+    "vllm"            # vLLM 서비스 (GPU)
+    "prompt_vllm"     # Prompt + vLLM 서비스 조합 (GPU)
     "prompt_ollama"   # Prompt + Ollama 서비스 조합 (CPU)
     "prompt_ollama-gpu" # Prompt + Ollama 서비스 조합 (GPU)
     "all"             # 모든 서비스 (CPU 모드)
@@ -440,6 +448,8 @@ declare -A profiles=(
     ["milvus"]="db-only"
     ["ollama"]="ollama-only,cpu-only"
     ["ollama-gpu"]="gpu-only"
+    ["vllm"]="vllm-only,gpu-only"
+    ["prompt_vllm"]="prompt-only,vllm-only,gpu-only"
     ["prompt_ollama"]="prompt-only,ollama-only,cpu-only"
     ["prompt_ollama-gpu"]="prompt-only,gpu-only"
     ["all"]="all,cpu-only"
@@ -463,6 +473,8 @@ declare -A service_descriptions=(
     ["app-only-gpu"]="앱 서비스만 시작 (RAG + Reranker + Prompt + Ollama(GPU) + Vision, DB 제외)"
     ["ollama"]="Ollama 서비스만 시작 (CPU 모드)"
     ["ollama-gpu"]="Ollama 서비스만 시작 (GPU 모드)"
+    ["vllm"]="vLLM 서비스만 시작 (GPU 모드, Mistral-7B)"
+    ["prompt_vllm"]="Prompt와 vLLM 서비스 조합 (GPU 모드)"
     ["prompt_ollama"]="Prompt와 Ollama 서비스 조합 (CPU 모드)"
     ["prompt_ollama-gpu"]="Prompt와 Ollama 서비스 조합 (GPU 모드)"
     ["vision"]="Vision 서비스만 시작"
@@ -483,6 +495,8 @@ declare -A service_containers=(
     ["app-only-gpu"]="nginx rag reranker prompt ollama-gpu vision"
     ["ollama"]="ollama"
     ["ollama-gpu"]="ollama-gpu"
+    ["vllm"]="vllm"
+    ["prompt_vllm"]="nginx prompt vllm"
     ["prompt_ollama"]="nginx prompt ollama"
     ["prompt_ollama-gpu"]="nginx prompt ollama-gpu"
     ["vision"]="nginx vision"
@@ -501,6 +515,8 @@ declare -A nginx_modes=(
     ["rag-reranker-gpu"]="rag-reranker"
     ["app-only"]="all"
     ["app-only-gpu"]="all"
+    ["vllm"]=""
+    ["prompt_vllm"]="prompt"
     ["prompt_ollama"]="prompt"
     ["prompt_ollama-gpu"]="prompt"
     ["vision"]="vision"
@@ -571,6 +587,27 @@ download_ollama_models() {
     fi
 }
 
+# 공통 함수: vLLM 모델 확인
+check_vllm_model() {
+    local model_path="$ROOT_DIR/volumes/vllm/mistralai/Mistral-7B-Instruct-v0.2"
+    echo "vLLM 모델 확인 중: $model_path"
+    
+    if [ ! -d "$model_path" ]; then
+        echo "경고: vLLM 모델이 설치되지 않았습니다."
+        echo "모델을 다음 경로에 설치해주세요: $model_path"
+        echo "필요한 파일들:"
+        echo "  - config.json"
+        echo "  - pytorch_model.bin (또는 양자화된 모델 파일)"
+        echo "  - tokenizer.json"
+        echo "  - tokenizer_config.json"
+        echo "  - special_tokens_map.json"
+        return 1
+    fi
+    
+    echo "vLLM 모델 확인 완료: $model_path"
+    return 0
+}
+
 # RAG 모델 다운로드 함수
 download_rag_model() {
     # 모델 저장 디렉토리 확인
@@ -623,6 +660,11 @@ start_containers() {
     # 컨테이너 시작 전에 모델 다운로드
     if [[ "$containers" == *"rag"* ]]; then
         download_rag_model
+    fi
+    
+    # vLLM 모델 확인
+    if [[ "$containers" == *"vllm"* ]]; then
+        check_vllm_model
     fi
     
     # nginx 설정 (통계 수집 옵션 전달)
@@ -713,6 +755,18 @@ start_containers() {
                 docker compose --profile prompt-only --profile gpu-only --profile stats up -d
             else
                 docker compose --profile prompt-only --profile gpu-only up -d
+            fi
+        elif [ "$mode" = "vllm" ]; then
+            if [ "$stats_enabled" = "true" ]; then
+                docker compose --profile vllm-only --profile gpu-only --profile stats up -d
+            else
+                docker compose --profile vllm-only --profile gpu-only up -d
+            fi
+        elif [ "$mode" = "prompt_vllm" ]; then
+            if [ "$stats_enabled" = "true" ]; then
+                docker compose --profile prompt-only --profile vllm-only --profile gpu-only --profile stats up -d
+            else
+                docker compose --profile prompt-only --profile vllm-only --profile gpu-only up -d
             fi
         else
             if [ "$stats_enabled" = "true" ]; then

@@ -31,7 +31,8 @@ class RagChatService:
                  rerank_threshold: float = 0.1,
                  temperature: float = 0.7,
                  max_total_tokens: int = 10000,
-                 max_context_tokens: int = 7500):
+                 max_context_tokens: int = 7500,
+                 vllm_endpoint: str = "http://milvus-vllm:11434"):
         """
         RAG 챗봇 서비스 초기화
         
@@ -66,9 +67,9 @@ class RagChatService:
         # 도메인 셀렉터 서비스 초기화
         self.domain_service = DomainService()
         
-        # Query Rewriter 서비스 초기화
+        # Query Rewriter 서비스 초기화 (vLLM 사용)
         self.query_rewriter = QueryRewriter(
-            ollama_endpoint=ollama_endpoint,
+            ollama_endpoint=vllm_endpoint,  # vLLM 엔드포인트 사용
             default_model=default_model,
             temperature=temperature
         )

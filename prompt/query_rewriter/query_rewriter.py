@@ -11,8 +11,8 @@ class QueryRewriter:
     """Query Rewrite 시스템 - 대화 컨텍스트를 기반으로 사용자 질문을 개선"""
     
     def __init__(self, 
-                 ollama_endpoint: str = "http://ollama-gpu:11434",
-                 default_model: str = "gemma3:12b",
+                 ollama_endpoint: str = "http://milvus-vllm:11434",
+                 default_model: str = "mistralai/Mistral-7B-Instruct-v0.2",
                  temperature: float = 0.3,
                  max_history_turns: int = 5):
         """
@@ -207,10 +207,12 @@ class QueryRewriter:
         """LLM을 호출하여 질문을 재작성합니다."""
         try:
             response = requests.post(
-                f"{self.ollama_endpoint}/api/generate",
+                f"{self.ollama_endpoint}/v1/chat/completions",
                 json={
                     "model": model,
-                    "prompt": prompt,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
                     "stream": False,
                     "temperature": self.temperature,
                     "max_tokens": 200  # 짧고 명확한 질문 생성
@@ -222,7 +224,7 @@ class QueryRewriter:
                 raise Exception(f"LLM API 오류: {response.status_code}")
             
             result = response.json()
-            rewritten_query = result.get("response", "").strip()
+            rewritten_query = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
             
             # 응답에서 불필요한 부분 제거
             rewritten_query = self._clean_response(rewritten_query)

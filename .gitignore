@@ -1,5 +1,11 @@
 # Large model files
 models/**/pytorch_model.bin
+models/**/model.safetensors
+models/**/*.safetensors
+models/**/*.bin
+models/**/*.ckpt
+models/**/*.pt
+models/**/*.pth
 
 /mrc/
 /reranker/src/mrc/mrc.ckpt
