@@ -208,7 +208,7 @@ services:
       - DEFAULT_MODEL=${DEFAULT_MODEL}
       - USE_GPU=${USE_GPU}
       - OLLAMA_ENDPOINT=${OLLAMA_ENDPOINT}
-      - VLLM_ENDPOINT=${VLLM_ENDPOINT:-http://milvus-vllm:8000}
+      - VLLM_ENDPOINT=${VLLM_ENDPOINT:-http://vllm:8000}
       - UWSGI_PROTOCOL=fastcgi
       - UWSGI_SOCKET=/tmp/prompt.sock
       - UWSGI_CHMOD_SOCKET=666

@@ -32,7 +32,7 @@ class RagChatService:
                  temperature: float = 0.7,
                  max_total_tokens: int = 10000,
                  max_context_tokens: int = 7500,
-                 vllm_endpoint: str = "http://milvus-vllm:11434"):
+                 vllm_endpoint: str = "http://vllm:8000"):
         """
         RAG 챗봇 서비스 초기화
         

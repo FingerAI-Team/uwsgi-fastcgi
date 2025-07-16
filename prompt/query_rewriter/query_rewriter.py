@@ -11,7 +11,7 @@ class QueryRewriter:
     """Query Rewrite 시스템 - 대화 컨텍스트를 기반으로 사용자 질문을 개선"""
     
     def __init__(self, 
-                 ollama_endpoint: str = "http://milvus-vllm:11434",
+                 ollama_endpoint: str = "http://vllm:8000",
                  default_model: str = "mistralai/Mistral-7B-Instruct-v0.2",
                  temperature: float = 0.3,
                  max_history_turns: int = 5):
