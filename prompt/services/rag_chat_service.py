@@ -112,8 +112,7 @@ class RagChatService:
             # Query Rewrite 수행
             rewrite_result = self.query_rewriter.rewrite_query(
                 current_query=original_query,
-                session_data=session_data,
-                model=model
+                session_data=session_data
             )
             
             rewritten_query = rewrite_result["rewritten_query"]

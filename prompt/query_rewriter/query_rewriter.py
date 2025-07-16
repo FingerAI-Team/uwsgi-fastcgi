@@ -72,8 +72,7 @@ class QueryRewriter:
     
     def rewrite_query(self, 
                      current_query: str, 
-                     session_data: Dict[str, Any],
-                     model: str = None) -> Dict[str, Any]:
+                     session_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         사용자 질문을 대화 컨텍스트를 기반으로 재작성합니다.
         
@@ -110,8 +109,8 @@ class QueryRewriter:
             # 프롬프트 구성
             prompt = self._build_prompt(current_query, conversation_history)
             
-            # LLM 호출
-            rewritten_query = self._call_llm(prompt, model or self.default_model)
+            # LLM 호출 (항상 VLLM용 모델 사용)
+            rewritten_query = self._call_llm(prompt, self.default_model)
             
             # 결과 검증 및 후처리
             rewritten_query = self._post_process_query(rewritten_query, current_query)
