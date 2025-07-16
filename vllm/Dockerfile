@@ -1,7 +1,6 @@
 FROM vllm/vllm-openai:latest
 
 # 환경 변수 설정
-ENV CUDA_VISIBLE_DEVICES=1
 ENV MODEL_PATH=/app/models/mistralai/Mistral-7B-Instruct-v0.2
 
 # 모델 저장 디렉토리 생성

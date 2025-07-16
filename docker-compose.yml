@@ -277,7 +277,6 @@ services:
       - MODEL_PATH=/app/models/mistralai/Mistral-7B-Instruct-v0.2
       - USE_QUANTIZATION=${USE_QUANTIZATION:-true}
       - QUANTIZATION_METHOD=${QUANTIZATION_METHOD:-awq}
-      - CUDA_VISIBLE_DEVICES=1  # 두 번째 GPU 사용
       - MAX_MODEL_LEN=4096
       - TRUST_REMOTE_CODE=true
     networks:
@@ -287,7 +286,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['1']  # 두 번째 GPU만 사용
+              count: ${GPU_COUNT:-all}  # GPU_COUNT 환경변수로 제어, 기본값은 all
               capabilities: [gpu]
     profiles:
       - vllm-only
