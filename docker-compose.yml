@@ -287,7 +287,6 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
               device_ids: ['1']  # 두 번째 GPU만 사용
               capabilities: [gpu]
     profiles:

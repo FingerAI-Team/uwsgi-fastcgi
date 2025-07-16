@@ -589,7 +589,7 @@ download_ollama_models() {
 
 # 공통 함수: vLLM 모델 확인
 check_vllm_model() {
-    local model_path="$ROOT_DIR/volumes/vllm/mistralai/Mistral-7B-Instruct-v0.2"
+    local model_path="$ROOT_DIR/models/mistralai/Mistral-7B-Instruct-v0.2"
     echo "vLLM 모델 확인 중: $model_path"
     
     if [ ! -d "$model_path" ]; then
@@ -597,7 +597,7 @@ check_vllm_model() {
         echo "모델을 다음 경로에 설치해주세요: $model_path"
         echo "필요한 파일들:"
         echo "  - config.json"
-        echo "  - pytorch_model.bin (또는 양자화된 모델 파일)"
+        echo "  - model.safetensors (또는 양자화된 모델 파일)"
         echo "  - tokenizer.json"
         echo "  - tokenizer_config.json"
         echo "  - special_tokens_map.json"
@@ -788,7 +788,12 @@ start_containers() {
     if [[ "$containers" == *"standalone"* ]] && [[ "$containers" == *"rag"* ]]; then
         echo "DB와 RAG 서비스 동기화를 위해 컨테이너 재시작..."
         sleep 5  # DB 초기화를 위한 대기
-        docker restart milvus-standalone milvus-rag
+        if docker ps | grep -q milvus-standalone; then
+            docker restart milvus-standalone
+        fi
+        if docker ps | grep -q milvus-rag; then
+            docker restart milvus-rag
+        fi
     fi
     
     # Ollama가 포함된 경우 모델 다운로드
