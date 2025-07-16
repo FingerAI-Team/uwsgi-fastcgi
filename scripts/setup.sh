@@ -388,6 +388,11 @@ setup_nginx() {
             # vision만 복사
             cp nginx/templates/vision.conf.template nginx/locations-enabled/vision.conf
             ;;
+        "vision_vllm")
+            # vision과 vllm 복사
+            cp nginx/templates/vision.conf.template nginx/locations-enabled/vision.conf
+            cp nginx/templates/vllm.conf.template nginx/locations-enabled/vllm.conf
+            ;;
     esac
     
     # 소켓 파일 권한 설정 (공유 폴더 고려)
@@ -461,7 +466,7 @@ declare -A profiles=(
 # 서비스 설명 목록
 declare -A service_descriptions=(
     ["all"]="모든 서비스 시작 (RAG + Reranker + Prompt + Ollama(CPU) + DB + Vision)"
-    ["all-gpu"]="모든 서비스 시작 (RAG + Reranker + Prompt + Ollama(GPU) + DB + Vision)"
+    ["all-gpu"]="모든 서비스 시작 (RAG + Reranker + Prompt + Ollama(GPU) + vLLM + DB + Vision)"
     ["rag"]="RAG 서비스만 시작 (DB 포함)"
     ["reranker"]="Reranker 서비스만 시작 (CPU 모드)"
     ["reranker-gpu"]="Reranker 서비스만 시작 (GPU 모드)"
@@ -470,7 +475,7 @@ declare -A service_descriptions=(
     ["rag-reranker-gpu"]="RAG와 Reranker 서비스 시작 (GPU 모드, DB 포함)"
     ["db"]="데이터베이스 서비스만 시작 (Milvus, Etcd, MinIO)"
     ["app-only"]="앱 서비스만 시작 (RAG + Reranker + Prompt + Ollama(CPU) + Vision, DB 제외)"
-    ["app-only-gpu"]="앱 서비스만 시작 (RAG + Reranker + Prompt + Ollama(GPU) + Vision, DB 제외)"
+    ["app-only-gpu"]="앱 서비스만 시작 (RAG + Reranker + Prompt + Ollama(GPU) + vLLM + Vision, DB 제외)"
     ["ollama"]="Ollama 서비스만 시작 (CPU 모드)"
     ["ollama-gpu"]="Ollama 서비스만 시작 (GPU 모드)"
     ["vllm"]="vLLM 서비스만 시작 (GPU 모드, Mistral-7B)"
@@ -479,29 +484,29 @@ declare -A service_descriptions=(
     ["prompt_ollama-gpu"]="Prompt와 Ollama 서비스 조합 (GPU 모드)"
     ["vision"]="Vision 서비스만 시작"
     ["vision-ollama"]="Vision과 Ollama 서비스 조합 (CPU 모드)"
-    ["vision-ollama-gpu"]="Vision과 Ollama 서비스 조합 (GPU 모드)"
+    ["vision-ollama-gpu"]="Vision과 Ollama 서비스 조합 (GPU 모드, vLLM 포함)"
 )
 
 # 서비스 구성별 필요 컨테이너 매핑
 declare -A service_containers=(
     ["all"]="nginx rag reranker prompt ollama standalone etcd etcd_init minio vision"
-    ["all-gpu"]="nginx rag reranker prompt ollama-gpu standalone etcd etcd_init minio vision"
+    ["all-gpu"]="nginx rag reranker prompt ollama-gpu vllm standalone etcd etcd_init minio vision"
     ["rag"]="nginx rag standalone etcd etcd_init minio"
     ["reranker"]="nginx reranker"
     ["prompt"]="nginx prompt"
     ["rag-reranker"]="nginx rag reranker standalone etcd etcd_init minio"
     ["db"]="standalone etcd etcd_init minio"
     ["app-only"]="nginx rag reranker prompt ollama vision"
-    ["app-only-gpu"]="nginx rag reranker prompt ollama-gpu vision"
+    ["app-only-gpu"]="nginx rag reranker prompt ollama-gpu vllm vision"
     ["ollama"]="ollama"
     ["ollama-gpu"]="ollama-gpu"
     ["vllm"]="vllm"
     ["prompt_vllm"]="nginx prompt vllm"
     ["prompt_ollama"]="nginx prompt ollama"
-    ["prompt_ollama-gpu"]="nginx prompt ollama-gpu"
+    ["prompt_ollama-gpu"]="nginx prompt ollama-gpu vllm"
     ["vision"]="nginx vision"
     ["vision-ollama"]="nginx vision ollama"
-    ["vision-ollama-gpu"]="nginx vision ollama-gpu"
+    ["vision-ollama-gpu"]="nginx vision ollama-gpu vllm"
 )
 
 # nginx 설정 모드 매핑
@@ -518,10 +523,10 @@ declare -A nginx_modes=(
     ["vllm"]=""
     ["prompt_vllm"]="prompt"
     ["prompt_ollama"]="prompt"
-    ["prompt_ollama-gpu"]="prompt"
+    ["prompt_ollama-gpu"]="prompt_vllm"
     ["vision"]="vision"
     ["vision-ollama"]="vision"
-    ["vision-ollama-gpu"]="vision"
+    ["vision-ollama-gpu"]="vision_vllm"
 )
 
 # Reranker 설정 함수
