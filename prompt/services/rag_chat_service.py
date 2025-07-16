@@ -12,6 +12,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from .session_manager import SessionManager
 from domain_selector.domain_service import DomainService
+from query_rewriter.query_rewriter import QueryRewriter
 
 # 로깅 설정
 logger = logging.getLogger("rag-chat-service")
@@ -65,6 +66,13 @@ class RagChatService:
         # 도메인 셀렉터 서비스 초기화
         self.domain_service = DomainService()
         
+        # Query Rewriter 서비스 초기화
+        self.query_rewriter = QueryRewriter(
+            ollama_endpoint=ollama_endpoint,
+            default_model=default_model,
+            temperature=temperature
+        )
+        
         # 시스템 프롬프트는 검색 결과에 따라 동적으로 로드됨
         self.system_prompt = None
         
@@ -91,11 +99,41 @@ class RagChatService:
                 **inputs  # 원래 입력 유지
             }
         
+        # Query Rewrite 수행 함수
+        def perform_query_rewrite(inputs):
+            session_data = inputs["session_data"]
+            original_query = inputs["query"]
+            model = inputs.get("model")
+            
+            logger.info(f"[체인 실행] 2단계 - Query Rewrite 수행: 원본 쿼리='{original_query[:30]}...'")
+            
+            # Query Rewrite 수행
+            rewrite_result = self.query_rewriter.rewrite_query(
+                current_query=original_query,
+                session_data=session_data,
+                model=model
+            )
+            
+            rewritten_query = rewrite_result["rewritten_query"]
+            confidence = rewrite_result["confidence"]
+            
+            logger.info(f"[Query Rewrite] 결과: '{original_query[:20]}...' → '{rewritten_query[:20]}...' (신뢰도: {confidence:.2f})")
+            
+            return {
+                "original_query": original_query,
+                "rewritten_query": rewritten_query,
+                "rewrite_confidence": confidence,
+                "rewrite_reasoning": rewrite_result["reasoning"],
+                **inputs  # 원래 입력 유지
+            }
+        
         # RAG 검색 수행 함수 (도메인 셀렉터 통합)
         def perform_search(inputs):
-            query = inputs["query"]
+            # Query Rewrite 결과 사용
+            query = inputs.get("rewritten_query", inputs["query"])
+            original_query = inputs.get("original_query", query)
             kwargs = inputs.get("kwargs", {})
-            logger.info(f"[체인 실행] 2단계 - 도메인 셀렉터 및 RAG 검색 수행: 쿼리='{query[:30]}...'")
+            logger.info(f"[체인 실행] 3단계 - 도메인 셀렉터 및 RAG 검색 수행: 쿼리='{query[:30]}...' (원본: '{original_query[:30]}...')")
             
             # 도메인 셀렉터로 검색 범위 결정
             domain_result = self.domain_service.process_query(query)
@@ -127,7 +165,7 @@ class RagChatService:
         # 컨텍스트 포맷팅 함수
         def format_search_results(inputs):
             search_results = inputs["search_results"]
-            logger.info(f"[체인 실행] 4단계 - 검색 결과 포맷팅: {len(search_results)}개 문서")
+            logger.info(f"[체인 실행] 5단계 - 검색 결과 포맷팅: {len(search_results)}개 문서")
             return {
                 "rag_context": self.format_context(search_results),
                 **inputs  # 원래 입력 유지
@@ -136,7 +174,8 @@ class RagChatService:
         # 세션 저장 및 프롬프트 구성 함수
         def build_prompt(inputs):
             session_data = inputs["session_data"]
-            query = inputs["query"]
+            # Query Rewrite 결과가 있으면 재작성된 질문 사용, 없으면 원본 사용
+            query = inputs.get("rewritten_query", inputs["query"])
             rag_context = inputs["rag_context"]
             system_prompt = inputs["system_prompt"]
             
@@ -151,7 +190,7 @@ class RagChatService:
                 current_query=query
             )
             
-            logger.info(f"[체인 실행] 5단계 - 프롬프트 구성 완료: {len(prompt)} 문자")
+            logger.info(f"[체인 실행] 6단계 - 프롬프트 구성 완료: {len(prompt)} 문자")
             return {
                 "prompt": prompt,
                 **inputs  # 원래 입력 유지
@@ -162,7 +201,7 @@ class RagChatService:
             search_results = inputs.get("search_results", [])
             has_documents = len(search_results) > 0
             system_prompt = self._load_system_prompt(has_documents)
-            logger.info(f"[체인 실행] 3단계 - 시스템 프롬프트 로드: 문서 유무={has_documents}, 템플릿={'rag_chat_with_docs' if has_documents else 'rag_chat_no_docs'}")
+            logger.info(f"[체인 실행] 4단계 - 시스템 프롬프트 로드: 문서 유무={has_documents}, 템플릿={'rag_chat_with_docs' if has_documents else 'rag_chat_no_docs'}")
             return {
                 "system_prompt": system_prompt,
                 **inputs
@@ -171,6 +210,7 @@ class RagChatService:
         # 체인 구성 (최신 LangChain 방식)
         self.rag_chain = (
             RunnableLambda(load_session)
+            | RunnableLambda(perform_query_rewrite)  # Query Rewrite 추가
             | RunnableLambda(perform_search)
             | RunnableLambda(load_system_prompt)  # 검색 결과에 따라 시스템 프롬프트 로드
             | RunnableLambda(format_search_results)
@@ -425,10 +465,21 @@ class RagChatService:
             
             logger.info(f"[성능] 총 응답 생성 시간: {(datetime.now() - start_time).total_seconds():.3f}초")
             
+            # Query Rewrite 정보 추가
+            query_rewrite_info = {}
+            if "rewritten_query" in chain_result and "original_query" in chain_result:
+                query_rewrite_info = {
+                    "original_query": chain_result["original_query"],
+                    "rewritten_query": chain_result["rewritten_query"],
+                    "confidence": chain_result.get("rewrite_confidence", 0.0),
+                    "reasoning": chain_result.get("rewrite_reasoning", "")
+                }
+            
             return {
                 "response": structured_response["answer"],
                 "model": model_to_use,
-                "references": structured_response["references"]
+                "references": structured_response["references"],
+                "query_rewrite": query_rewrite_info
             }
         except requests.exceptions.RequestException as e:
             logger.error(f"Ollama 서비스 연결 오류: {str(e)}")
@@ -584,12 +635,23 @@ class RagChatService:
                 self.session_manager.add_bot_message(session_id, accumulated_response)
                 structured_response = self.parse_structured_response(accumulated_response, chain_result["search_results"])
                 
+                # Query Rewrite 정보 추가
+                query_rewrite_info = {}
+                if "rewritten_query" in chain_result and "original_query" in chain_result:
+                    query_rewrite_info = {
+                        "original_query": chain_result["original_query"],
+                        "rewritten_query": chain_result["rewritten_query"],
+                        "confidence": chain_result.get("rewrite_confidence", 0.0),
+                        "reasoning": chain_result.get("rewrite_reasoning", "")
+                    }
+                
                 final_response = {
                     "response": structured_response["answer"],
                     "model": model_to_use,
                     "streaming": False,
                     "done": True,
-                    "references": structured_response["references"]
+                    "references": structured_response["references"],
+                    "query_rewrite": query_rewrite_info
                 }
                 yield json.dumps(final_response, ensure_ascii=False)
         except Exception as e:
