@@ -206,19 +206,26 @@ class QueryRewriter:
     def _call_llm(self, prompt: str, model: str) -> str:
         """LLM을 호출하여 질문을 재작성합니다."""
         try:
+            # 디버깅: 실제 요청 정보 로깅
+            request_data = {
+                "model": model,
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ],
+                "stream": False,
+                "temperature": self.temperature,
+                "max_tokens": 200
+            }
+            logger.info(f"VLLM 요청 URL: {self.vllm_endpoint}/v1/chat/completions")
+            logger.info(f"VLLM 요청 모델: {model}")
+            logger.info(f"VLLM 요청 데이터: {request_data}")
+            
             response = requests.post(
                 f"{self.vllm_endpoint}/v1/chat/completions",
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "user", "content": prompt}
-                    ],
-                    "stream": False,
-                    "temperature": self.temperature,
-                    "max_tokens": 200  # 짧고 명확한 질문 생성
-                },
+                json=request_data,
                 timeout=30
             )
+
             
             if response.status_code != 200:
                 raise Exception(f"LLM API 오류: {response.status_code}")
