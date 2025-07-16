@@ -109,7 +109,7 @@ class QueryRewriter:
             # 프롬프트 구성
             prompt = self._build_prompt(current_query, conversation_history)
             
-            # LLM 호출 (항상 VLLM용 모델 사용)
+            # LLM 호출 (항상 VLLM용 모델 사용, 더 짧은 응답 요청)
             rewritten_query = self._call_llm(prompt, self.default_model)
             
             # 결과 검증 및 후처리
@@ -213,7 +213,7 @@ class QueryRewriter:
                 ],
                 "stream": False,
                 "temperature": self.temperature,
-                "max_tokens": 200
+                "max_tokens": 100
             }
             logger.info(f"VLLM 요청 URL: {self.vllm_endpoint}/v1/chat/completions")
             logger.info(f"VLLM 요청 모델: {model}")
