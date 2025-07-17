@@ -270,13 +270,15 @@ class QueryRewriter:
         """재작성된 질문을 후처리합니다."""
         # 빈 응답이나 너무 짧은 응답 처리
         if not rewritten_query or len(rewritten_query.strip()) < 3:
+            logger.warning("재작성된 질문이 너무 짧음 - 원본 사용")
             return original_query
         
-        # 원본과 너무 다른 경우 원본 사용
-        if len(rewritten_query) > len(original_query) * 3:
-            logger.warning("재작성된 질문이 너무 김 - 원본 사용")
+        # 100자 제한
+        if len(rewritten_query) > 100:
+            logger.warning(f"재작성된 질문이 너무 김 ({len(rewritten_query)}자) - 원본 사용")
             return original_query
         
+        logger.info(f"재작성된 질문 사용: '{rewritten_query}' ({len(rewritten_query)}자)")
         return rewritten_query
     
     def _calculate_confidence(self, 
