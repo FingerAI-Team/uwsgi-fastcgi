@@ -300,6 +300,43 @@ services:
       - vllm-only
       - gpu-only
 
+  # LLM Server 서비스 (L40S 최적화, Gemma3 12B)
+  llm-server:
+    build: ./llm-server
+    container_name: milvus-llm-server
+    volumes:
+      - ./llm-server:/app
+      - ./models:/app/models
+      - ./volumes/logs/llm-server:/var/log/llm-server
+    ports:
+      - "11436:8000"  # llm-server 전용 포트
+    environment:
+      - MODEL_PATH=/app/models/gemma3-12b
+      - USE_QUANTIZATION=${USE_QUANTIZATION:-true}
+      - QUANTIZATION_METHOD=${QUANTIZATION_METHOD:-awq}
+      - MAX_MODEL_LEN=8192
+      - TRUST_REMOTE_CODE=true
+      - GPU_MEMORY_UTILIZATION=0.9  # L40S 48GB 중 90% 사용
+      - MAX_GPU_MEMORY=40GB  # L40S 최적화
+      - TENSOR_PARALLEL_SIZE=1  # 단일 GPU
+      - MAX_NUM_BATCHED_TOKENS=8192  # L40S 메모리 여유
+      - MAX_NUM_SEQS=24  # 더 많은 동시 요청
+    networks:
+      - rag_network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1  # GPU 1개만 사용
+              capabilities: [gpu]
+              options:
+                memory: 40GB  # L40S GPU 메모리
+                device_ids: ["1"]  # GPU 1번 사용
+    profiles:
+      - llm-server-only
+      - gpu-only
+
   # Vision 서비스
   vision:
     build: ./vision
