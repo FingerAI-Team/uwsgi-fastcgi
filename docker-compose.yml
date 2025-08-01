@@ -315,8 +315,6 @@ services:
       - "11436:8000"  # llm-server 전용 포트
     environment:
       - MODEL_PATH=/app/models/gemma3-12b
-      - USE_QUANTIZATION=${USE_QUANTIZATION:-true}
-      - QUANTIZATION_METHOD=${QUANTIZATION_METHOD:-awq}
       - MAX_MODEL_LEN=8192
       - TRUST_REMOTE_CODE=true
       - GPU_MEMORY_UTILIZATION=0.9  # L40S 48GB 중 90% 사용

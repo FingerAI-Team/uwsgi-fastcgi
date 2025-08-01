@@ -13,5 +13,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# vLLM 서버 시작 (L40S 최적화)
-CMD ["--model", "/app/models/gemma3-12b", "--host", "0.0.0.0", "--port", "8000", "--quantization", "awq", "--gpu-memory-utilization", "0.9", "--max-model-len", "8192", "--max-num-batched-tokens", "8192", "--max-num-seqs", "24", "--enforce-eager", "--trust-remote-code"] 
+# vLLM 서버 시작 (L40S 최적화, 원본 모델 사용)
+CMD ["--model", "/app/models/gemma3-12b", "--host", "0.0.0.0", "--port", "8000", "--gpu-memory-utilization", "0.9", "--max-model-len", "8192", "--max-num-batched-tokens", "8192", "--max-num-seqs", "24", "--enforce-eager", "--trust-remote-code"] 
