@@ -22,7 +22,7 @@ class RagChatService:
     
     def __init__(self, 
                  memory_dir: str = "./memory",
-                 ollama_endpoint: str = "http://ollama-gpu:11434",
+                 llm_gateway_endpoint: str = None,
                  rag_endpoint: str = "http://nginx/rag",
                  reranker_endpoint: str = "http://nginx/reranker",
                  default_model: str = "gemma3:12b",
@@ -39,7 +39,7 @@ class RagChatService:
         
         Args:
             memory_dir: 세션 메모리 저장 디렉토리
-            ollama_endpoint: Ollama API 엔드포인트
+            llm_gateway_endpoint: LLM Gateway API 엔드포인트
             rag_endpoint: RAG 검색 엔드포인트
             reranker_endpoint: Reranker 엔드포인트
             default_model: 기본 LLM 모델
@@ -49,7 +49,9 @@ class RagChatService:
             max_total_tokens: 최대 총 토큰 수
             max_context_tokens: 최대 컨텍스트 토큰 수
         """
-        self.ollama_endpoint = ollama_endpoint
+        # llm_gateway_endpoint 설정 (전달받은 값 그대로 사용)
+        self.llm_gateway_endpoint = llm_gateway_endpoint
+            
         self.rag_endpoint = rag_endpoint
         self.reranker_endpoint = reranker_endpoint
         self.default_model = default_model
@@ -79,16 +81,16 @@ class RagChatService:
         # 시스템 프롬프트는 검색 결과에 따라 동적으로 로드됨
         self.system_prompt = None
         
-        # LangChain LLM 초기화
+        # LangChain LLM 초기화 (llm_gateway_endpoint는 nginx 프록시로 Ollama API 형식 통일)
         self.llm = Ollama(
-            base_url=ollama_endpoint,
+            base_url=llm_gateway_endpoint,
             model=default_model
         )
         
         # 체인 구성
         self._setup_chains()
         
-        logger.info(f"RagChatService 초기화 완료: model={default_model}, ollama_endpoint={ollama_endpoint}, search_top={search_top}, rerank_top={rerank_top}")
+        logger.info(f"RagChatService 초기화 완료: model={default_model}, llm_gateway_endpoint={llm_gateway_endpoint}, search_top={search_top}, rerank_top={rerank_top}")
     
     def _setup_chains(self):
         """LangChain 체인을 설정합니다."""
@@ -434,9 +436,9 @@ class RagChatService:
             model_to_use = model or self.default_model
             logger.info(f"[성능] LLM 요청 시작: 모델={model_to_use}, 세션={session_id}")
             
-            # Ollama API 호출
-            ollama_response = requests.post(
-                f"{self.ollama_endpoint}/api/generate",
+            # LLM Gateway API 호출
+            llm_response = requests.post(
+                f"{self.llm_gateway_endpoint}/api/generate",
                 json={
                     "model": model_to_use,
                     "prompt": chain_result["prompt"],
@@ -446,14 +448,14 @@ class RagChatService:
                 timeout=120
             )
             
-            if ollama_response.status_code != 200:
-                logger.error(f"Ollama API 오류: {ollama_response.text}")
-                return {"error": "LLM 요청 중 오류가 발생했습니다", "details": ollama_response.text}
+            if llm_response.status_code != 200:
+                logger.error(f"LLM Gateway API 오류: {llm_response.text}")
+                return {"error": "LLM 요청 중 오류가 발생했습니다", "details": llm_response.text}
             
             llm_end = datetime.now()
             logger.info(f"[성능] LLM 응답 완료: {(llm_end - llm_start).total_seconds():.3f}초")
             
-            response_text = ollama_response.json().get("response", "")
+            response_text = llm_response.json().get("response", "")
             
             # 응답 로깅 (디버깅용)
             logger.debug(f"[디버깅] LLM 응답 (처음 500자):\n{response_text[:500]}...")
@@ -484,8 +486,8 @@ class RagChatService:
                 "query_rewrite": query_rewrite_info
             }
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ollama 서비스 연결 오류: {str(e)}")
-            return {"error": "Ollama 서비스에 연결할 수 없습니다", "details": str(e)}
+            logger.error(f"LLM Gateway 서비스 연결 오류: {str(e)}")
+            return {"error": "LLM Gateway 서비스에 연결할 수 없습니다", "details": str(e)}
     
     def parse_structured_response(self, response_text: str, search_results: List[Dict]) -> Dict[str, Any]:
         """LLM 응답을 구조화된 형식으로 파싱합니다."""
@@ -591,9 +593,9 @@ class RagChatService:
             logger.info(f"[성능] 스트리밍 LLM 요청 시작: 모델={model_to_use}, 세션={session_id}")
             llm_start = datetime.now()
             
-            # Ollama API 스트리밍 호출
+            # LLM Gateway API 스트리밍 호출
             with requests.post(
-                f"{self.ollama_endpoint}/api/generate",
+                f"{self.llm_gateway_endpoint}/api/generate",
                 json={
                     "model": model_to_use,
                     "prompt": chain_result["prompt"],

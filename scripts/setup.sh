@@ -433,7 +433,8 @@ prompt_services=(
     "prompt_ollama"   # Prompt + Ollama 서비스 조합 (CPU)
     "prompt_ollama-gpu" # Prompt + Ollama 서비스 조합 (GPU)
     "all"             # 모든 서비스 (CPU 모드)
-    "all-gpu"         # 모든 서비스 (GPU 모드)
+    "all-gpu"         # 모든 서비스 (GPU 모드, Ollama 사용)
+    "all-llm"         # 모든 서비스 (GPU 모드, llm-server 사용)
     "app-only"        # 앱 서비스만 (CPU 모드)
     "app-only-gpu"    # 앱 서비스만 (GPU 모드)
 )
@@ -459,6 +460,7 @@ declare -A profiles=(
     ["prompt_ollama-gpu"]="prompt-only,gpu-only"
     ["all"]="all,cpu-only"
     ["all-gpu"]="all,gpu-only"
+    ["all-llm"]="all,gpu-only"
     ["app-only"]="app-only,cpu-only"
     ["app-only-gpu"]="app-only,gpu-only"
 )
@@ -467,6 +469,7 @@ declare -A profiles=(
 declare -A service_descriptions=(
     ["all"]="모든 서비스 시작 (RAG + Reranker + Prompt + Ollama(CPU) + DB + Vision)"
     ["all-gpu"]="모든 서비스 시작 (RAG + Reranker + Prompt + Ollama(GPU) + vLLM + DB + Vision)"
+    ["all-llm"]="모든 서비스 시작 (RAG + Reranker + Prompt + llm-server(GPU) + vLLM + DB + Vision)"
     ["rag"]="RAG 서비스만 시작 (DB 포함)"
     ["reranker"]="Reranker 서비스만 시작 (CPU 모드)"
     ["reranker-gpu"]="Reranker 서비스만 시작 (GPU 모드)"
@@ -491,6 +494,7 @@ declare -A service_descriptions=(
 declare -A service_containers=(
     ["all"]="nginx rag reranker prompt ollama standalone etcd etcd_init minio vision"
     ["all-gpu"]="nginx rag reranker prompt ollama-gpu vllm standalone etcd etcd_init minio vision"
+    ["all-llm"]="nginx rag reranker prompt llm-server vllm standalone etcd etcd_init minio vision"
     ["rag"]="nginx rag standalone etcd etcd_init minio"
     ["reranker"]="nginx reranker"
     ["prompt"]="nginx prompt"
@@ -513,6 +517,7 @@ declare -A service_containers=(
 declare -A nginx_modes=(
     ["all"]="all"
     ["all-gpu"]="all"
+    ["all-llm"]="all"
     ["rag"]="rag"
     ["reranker"]="reranker"
     ["prompt"]="prompt"
@@ -826,6 +831,13 @@ if [[ "$1" == *"-gpu" ]]; then
     echo "[env] GPU 모드로 설정합니다"
     cp .env.gpu .env
     OLLAMA_CONTAINER="milvus-ollama-gpu"
+    
+    # LLM Provider 설정 (all-llm 옵션일 때)
+    if [[ "$1" == "all-llm" ]]; then
+        echo "[env] LLM Provider를 vllm으로 설정합니다"
+        sed -i 's/LLM_PROVIDER=ollama/LLM_PROVIDER=vllm/' .env
+        echo "[env] LLM_PROVIDER=vllm으로 설정 완료"
+    fi
 else
     echo "[env] CPU 모드로 설정합니다"
     cp .env.cpu .env

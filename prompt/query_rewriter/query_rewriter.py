@@ -19,7 +19,7 @@ class QueryRewriter:
         Query Rewriter 초기화
         
         Args:
-            ollama_endpoint: Ollama API 엔드포인트
+            vllm_endpoint: vLLM API 엔드포인트 (OpenAI 호환)
             default_model: 기본 LLM 모델
             temperature: 생성 온도 (낮을수록 일관성 높음)
             max_history_turns: 참조할 최대 대화 턴 수

@@ -34,8 +34,8 @@ from query_rewriter.query_rewriter import QueryRewriter
 
 # Query Rewriter 초기화
 rewriter = QueryRewriter(
-    ollama_endpoint="http://ollama-gpu:11434",
-    default_model="gemma3:12b",
+    vllm_endpoint="http://vllm:8000",
+    default_model="/app/models/mistralai/Mistral-7B-Instruct-v0.2",
     temperature=0.3,
     max_history_turns=5
 )
@@ -80,7 +80,7 @@ Query Rewrite 결과는 다음과 같은 정보를 포함합니다:
 
 ## 설정 옵션
 
-- `ollama_endpoint`: Ollama API 엔드포인트
+- `vllm_endpoint`: vLLM API 엔드포인트 (OpenAI 호환)
 - `default_model`: 기본 LLM 모델
 - `temperature`: 생성 온도 (낮을수록 일관성 높음)
 - `max_history_turns`: 참조할 최대 대화 턴 수

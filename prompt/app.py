@@ -30,11 +30,87 @@ config_path = os.environ.get("PROMPT_CONFIG", "/prompt/config.json")
 # 환경 변수 설정
 RAG_ENDPOINT = os.environ.get("RAG_ENDPOINT", "http://nginx/rag")
 RERANKER_ENDPOINT = os.environ.get("RERANKER_ENDPOINT", "http://nginx/reranker")
-OLLAMA_ENDPOINT = os.environ.get("OLLAMA_ENDPOINT", "http://nginx")
-OLLAMA_HOST = "http://ollama-gpu:11434"  # Docker Compose 서비스 이름
-VLLM_ENDPOINT = os.environ.get("VLLM_ENDPOINT", "http://vllm:8000")  # vLLM 서비스 엔드포인트
+LLM_GATEWAY_ENDPOINT = os.environ.get("LLM_GATEWAY_ENDPOINT", "http://nginx")  # nginx 프록시 (Ollama/vLLM 분기 처리)
+VLLM_ENDPOINT = os.environ.get("VLLM_ENDPOINT", "http://vllm:8000")  # vLLM 서비스 엔드포인트 (Mistral-7B)
 VLLM_MODEL = os.environ.get("VLLM_MODEL", "/app/models/mistralai/Mistral-7B-Instruct-v0.2")  # vLLM 모델 경로
 MEMORY_DIR = os.environ.get("MEMORY_DIR", "./memory")
+
+# LLM Provider 설정
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama")  # ollama 또는 vllm
+LLM_SERVER_ENDPOINT = os.environ.get("LLM_SERVER_ENDPOINT", "http://llm-server:8000")  # llm-server (Gemma3 12B)
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://ollama-gpu:11434")  # Ollama 서비스 직접 호출용
+
+# 동적 LLM 호스트 설정
+def get_llm_host():
+    """LLM_PROVIDER에 따라 적절한 호스트 반환"""
+    if LLM_PROVIDER == "vllm":
+        return LLM_SERVER_ENDPOINT
+    else:  # ollama (기본값)
+        return OLLAMA_HOST
+
+def call_llm_api(prompt: str, model: str, stream: bool = False, temperature: float = 0.7):
+    """LLM_PROVIDER에 따라 적절한 API 호출"""
+    if LLM_PROVIDER == "vllm":
+        # vLLM OpenAI 호환 API 호출
+        return call_vllm_api(prompt, model, stream, temperature)
+    else:
+        # Ollama API 호출
+        return call_ollama_api(prompt, model, stream, temperature)
+
+def call_vllm_api(prompt: str, model: str, stream: bool = False, temperature: float = 0.7):
+    """vLLM OpenAI 호환 API 호출"""
+    import httpx
+    
+    vllm_data = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": stream,
+        "temperature": temperature,
+        "max_tokens": 2048
+    }
+    
+    logger.info(f"vLLM API 호출: {LLM_SERVER_ENDPOINT}/v1/chat/completions")
+    
+    if stream:
+        return httpx.Client(timeout=None).stream(
+            "POST",
+            f"{LLM_SERVER_ENDPOINT}/v1/chat/completions",
+            json=vllm_data
+        )
+    else:
+        response = httpx.Client(timeout=60).post(
+            f"{LLM_SERVER_ENDPOINT}/v1/chat/completions",
+            json=vllm_data
+        )
+        return response
+
+def call_ollama_api(prompt: str, model: str, stream: bool = False, temperature: float = 0.7):
+    """Ollama API 호출"""
+    import httpx
+    
+    ollama_data = {
+        "model": model,
+        "prompt": prompt,
+        "stream": stream,
+        "temperature": temperature
+    }
+    
+    logger.info(f"Ollama API 호출: {OLLAMA_HOST}/api/generate")
+    
+    if stream:
+        return httpx.Client(timeout=None).stream(
+            "POST",
+            f"{OLLAMA_HOST}/api/generate",
+            json=ollama_data
+        )
+    else:
+        response = httpx.Client(timeout=60).post(
+            f"{OLLAMA_HOST}/api/generate",
+            json=ollama_data
+        )
+        return response
+
+LLM_HOST = get_llm_host()
 
 # 전역 RAG 챗봇 서비스 인스턴스
 rag_chat_service = None
@@ -93,32 +169,53 @@ def api_generate():
                 accumulated = ""
                 chunk_count = 0
                 try:
-                    api_logger.info(f"Ollama 스트리밍 요청 시작: {OLLAMA_HOST}/api/generate")
-                    ollama_start_time = datetime.now()
+                    api_logger.info(f"LLM 스트리밍 요청 시작: {LLM_PROVIDER} 모드")
+                    llm_start_time = datetime.now()
                     
-                    with httpx.Client(timeout=None) as client:
-                        with client.stream(
-                            "POST",
-                            f"{OLLAMA_HOST}/api/generate",
-                            json={
-                                "model": model,
-                                "prompt": prompt,
-                                "stream": stream,
-                                "temperature": temperature
-                            }
-                        ) as resp:
-                            api_logger.info(f"Ollama 응답 시작: status_code={resp.status_code}")
-                            
-                            if resp.status_code != 200:
-                                api_logger.error(f"Ollama 응답 오류: {resp.status_code}")
-                                yield f"data: {json.dumps({'error': f'Ollama API 오류: {resp.status_code}'}, ensure_ascii=False)}\n\n"
-                                return
-                            
-                            for line in resp.iter_lines():
-                                if not line:
-                                    continue
-                                try:
-                                    chunk = json.loads(line)
+                    # 통합 LLM API 호출
+                    with call_llm_api(prompt, model, stream=True, temperature=temperature) as resp:
+                        api_logger.info(f"LLM 응답 시작: status_code={resp.status_code}")
+                        
+                        if resp.status_code != 200:
+                            api_logger.error(f"LLM 응답 오류: {resp.status_code}")
+                            yield f"data: {json.dumps({'error': f'LLM API 오류: {resp.status_code}'}, ensure_ascii=False)}\n\n"
+                            return
+                        
+                        for line in resp.iter_lines():
+                            if not line:
+                                continue
+                            try:
+                                chunk = json.loads(line)
+                                
+                                # LLM_PROVIDER에 따라 응답 형식 처리
+                                if LLM_PROVIDER == "vllm":
+                                    # vLLM OpenAI 호환 응답 처리
+                                    if "choices" in chunk and len(chunk["choices"]) > 0:
+                                        choice = chunk["choices"][0]
+                                        if "delta" in choice and "content" in choice["delta"]:
+                                            text_piece = choice["delta"]["content"]
+                                            accumulated += text_piece
+                                            chunk_count += 1
+                                            
+                                            response_obj = {
+                                                'model': model,
+                                                'response': accumulated,
+                                                'streaming': not choice.get('finish_reason'),
+                                                'done': choice.get('finish_reason') is not None
+                                            }
+                                            
+                                            # 청크별 로깅 (처음 5개와 마지막 5개만)
+                                            if chunk_count <= 5 or choice.get('finish_reason'):
+                                                api_logger.info(f"vLLM 스트리밍 청크 {chunk_count}: text_piece_length={len(text_piece)}, accumulated_length={len(accumulated)}, done={choice.get('finish_reason')}")
+                                            
+                                            yield f"data: {json.dumps(response_obj, ensure_ascii=False)}\n\n"
+                                            
+                                            if choice.get('finish_reason'):
+                                                llm_end_time = datetime.now()
+                                                api_logger.info(f"vLLM 스트리밍 완료: 총 {chunk_count}개 청크, 총 시간={(llm_end_time - llm_start_time).total_seconds():.3f}초")
+                                                break
+                                else:
+                                    # Ollama 응답 처리
                                     text_piece = chunk.get("response", "")
                                     accumulated += text_piece
                                     chunk_count += 1
@@ -132,27 +229,27 @@ def api_generate():
                                     
                                     # 청크별 로깅 (처음 5개와 마지막 5개만)
                                     if chunk_count <= 5 or chunk.get('done', False):
-                                        api_logger.info(f"스트리밍 청크 {chunk_count}: text_piece_length={len(text_piece)}, accumulated_length={len(accumulated)}, done={chunk.get('done', False)}")
+                                        api_logger.info(f"Ollama 스트리밍 청크 {chunk_count}: text_piece_length={len(text_piece)}, accumulated_length={len(accumulated)}, done={chunk.get('done', False)}")
                                     
                                     yield f"data: {json.dumps(response_obj, ensure_ascii=False)}\n\n"
                                     
                                     if chunk.get('done', False):
-                                        ollama_end_time = datetime.now()
-                                        api_logger.info(f"Ollama 스트리밍 완료: 총 {chunk_count}개 청크, 총 시간={(ollama_end_time - ollama_start_time).total_seconds():.3f}초")
+                                        llm_end_time = datetime.now()
+                                        api_logger.info(f"Ollama 스트리밍 완료: 총 {chunk_count}개 청크, 총 시간={(llm_end_time - llm_start_time).total_seconds():.3f}초")
                                         break
-                                        
-                                except Exception as e:
-                                    api_logger.error(f"스트리밍 처리 중 오류: {e}")
-                                    continue
                                     
+                            except Exception as e:
+                                api_logger.error(f"스트리밍 처리 중 오류: {e}")
+                                continue
+                                
                 except httpx.ConnectError as e:
-                    api_logger.error(f"Ollama 서비스 연결 실패: {e}")
-                    yield f"data: {json.dumps({'error': f'Ollama 서비스에 연결할 수 없습니다: {str(e)}'}, ensure_ascii=False)}\n\n"
+                    api_logger.error(f"LLM 서비스 연결 실패: {e}")
+                    yield f"data: {json.dumps({'error': f'LLM 서비스에 연결할 수 없습니다: {str(e)}'}, ensure_ascii=False)}\n\n"
                 except httpx.TimeoutException as e:
-                    api_logger.error(f"Ollama 요청 타임아웃: {e}")
-                    yield f"data: {json.dumps({'error': f'Ollama 요청이 타임아웃되었습니다: {str(e)}'}, ensure_ascii=False)}\n\n"
+                    api_logger.error(f"LLM 요청 타임아웃: {e}")
+                    yield f"data: {json.dumps({'error': f'LLM 요청이 타임아웃되었습니다: {str(e)}'}, ensure_ascii=False)}\n\n"
                 except Exception as e:
-                    api_logger.error(f"Ollama 스트리밍 요청 중 오류: {e}")
+                    api_logger.error(f"LLM 스트리밍 요청 중 오류: {e}")
                     yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
 
             api_logger.info("스트리밍 응답 생성기 반환")
@@ -169,38 +266,51 @@ def api_generate():
         else:
             api_logger.info("비스트리밍 모드로 처리 시작")
             try:
-                api_logger.info(f"Ollama 비스트리밍 요청 시작: {OLLAMA_HOST}/api/generate")
-                ollama_start_time = datetime.now()
+                api_logger.info(f"LLM 비스트리밍 요청 시작: {LLM_PROVIDER} 모드")
+                llm_start_time = datetime.now()
                 
-                with httpx.Client(timeout=60.0) as client:
-                    response = client.post(f"{OLLAMA_HOST}/api/generate", json={
-                        "model": model,
-                        "prompt": prompt,
-                        "stream": stream,
-                        "temperature": temperature
-                    })
-                    
-                    ollama_end_time = datetime.now()
-                    api_logger.info(f"Ollama 비스트리밍 응답 완료: status_code={response.status_code}, 소요시간={(ollama_end_time - ollama_start_time).total_seconds():.3f}초")
-                    
-                    if response.status_code != 200:
-                        api_logger.error(f"Ollama 응답 오류: {response.status_code}")
-                        return jsonify({"error": f"Ollama API 오류: {response.status_code}"}), 500
-                    
-                    response_json = response.json()
+                # 통합 LLM API 호출
+                response = call_llm_api(prompt, model, stream=False, temperature=temperature)
+                
+                llm_end_time = datetime.now()
+                api_logger.info(f"LLM 비스트리밍 응답 완료: status_code={response.status_code}, 소요시간={(llm_end_time - llm_start_time).total_seconds():.3f}초")
+                
+                if response.status_code != 200:
+                    api_logger.error(f"LLM 응답 오류: {response.status_code}")
+                    return jsonify({"error": f"LLM API 오류: {response.status_code}"}), 500
+                
+                response_json = response.json()
+                
+                # LLM_PROVIDER에 따라 응답 형식 처리
+                if LLM_PROVIDER == "vllm":
+                    # vLLM OpenAI 호환 응답 처리
+                    if "choices" in response_json and len(response_json["choices"]) > 0:
+                        response_text = response_json["choices"][0]["message"]["content"]
+                        # Ollama 형식으로 변환
+                        ollama_response = {
+                            "model": model,
+                            "response": response_text,
+                            "done": True
+                        }
+                        api_logger.info(f"vLLM 응답 길이: {len(response_text)} 문자")
+                        return jsonify(ollama_response)
+                    else:
+                        api_logger.error("vLLM 응답에서 content를 찾을 수 없습니다")
+                        return jsonify({"error": "vLLM 응답 형식 오류"}), 500
+                else:
+                    # Ollama 응답 처리
                     response_text = response_json.get("response", "")
                     api_logger.info(f"Ollama 응답 길이: {len(response_text)} 문자")
-                    
                     return jsonify(response_json)
                     
             except httpx.ConnectError as e:
-                api_logger.error(f"Ollama 서비스 연결 실패: {e}")
-                return jsonify({"error": f"Ollama 서비스에 연결할 수 없습니다: {str(e)}"}), 503
+                api_logger.error(f"LLM 서비스 연결 실패: {e}")
+                return jsonify({"error": f"LLM 서비스에 연결할 수 없습니다: {str(e)}"}), 503
             except httpx.TimeoutException as e:
-                api_logger.error(f"Ollama 요청 타임아웃: {e}")
-                return jsonify({"error": f"Ollama 요청이 타임아웃되었습니다: {str(e)}"}), 504
+                api_logger.error(f"LLM 요청 타임아웃: {e}")
+                return jsonify({"error": f"LLM 요청이 타임아웃되었습니다: {str(e)}"}), 504
             except Exception as e:
-                api_logger.error(f"Ollama 요청 중 오류: {e}")
+                api_logger.error(f"LLM 요청 중 오류: {e}")
                 return jsonify({"error": str(e)}), 500
 
     except Exception as e:
@@ -439,11 +549,11 @@ def summarize():
         logger.info("========================")
         
         # 4. Ollama API 호출
-        logger.info(f"Ollama API 호출 준비: endpoint={OLLAMA_ENDPOINT}, model={summaryAgent.default_model}")
+        logger.info(f"LLM Gateway API 호출 준비: endpoint={LLM_GATEWAY_ENDPOINT}, model={summaryAgent.default_model}")
         try:
-            logger.info("Ollama 요청 시작")
-            ollama_response = requests.post(
-                f"{OLLAMA_ENDPOINT}/api/generate",
+            logger.info("LLM Gateway 요청 시작")
+            llm_response = requests.post(
+                f"{LLM_GATEWAY_ENDPOINT}/api/generate",
                 json={
                     "model": summaryAgent.default_model,
                     "prompt": final_prompt,
@@ -452,15 +562,12 @@ def summarize():
                 timeout=120
             )
             
-            logger.info(f"Ollama 응답 코드: {ollama_response.status_code}")
-            if ollama_response.status_code != 200:
-                logger.error(f"Ollama API 오류 응답: {ollama_response.text}")
-                return jsonify({
-                    "error": "LLM 요청 중 오류가 발생했습니다",
-                    "details": ollama_response.text
-                }), 500
+            logger.info(f"LLM Gateway 응답 코드: {llm_response.status_code}")
+            if llm_response.status_code != 200:
+                logger.error(f"LLM Gateway API 오류 응답: {llm_response.text}")
+                return jsonify({"error": "LLM 요청 중 오류가 발생했습니다", "details": llm_response.text}), 500
                 
-            summary = ollama_response.json().get("response", "")
+            summary = llm_response.json().get("response", "")
             logger.info("=== 최종 요약 결과 ===")
             logger.info(f"쿼리: {query}")
             logger.info(f"요약 길이: {len(summary)} 문자")
@@ -475,9 +582,9 @@ def summarize():
             })
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ollama 서비스 연결 오류: {str(e)}", exc_info=True)
+            logger.error(f"LLM Gateway 서비스 연결 오류: {str(e)}", exc_info=True)
             return jsonify({
-                "error": "Ollama 서비스에 연결할 수 없습니다",
+                "error": "LLM Gateway 서비스에 연결할 수 없습니다",
                 "details": str(e)
             }), 503
         
@@ -869,7 +976,7 @@ def chat():
             return jsonify({"error": "질문이 필요합니다"}), 400
         
         # 프롬프트 템플릿 없이 사용자 쿼리 직접 사용
-        logger.info(f"Ollama API 챗봇 호출 시작: {model}, 스트리밍 모드: {stream}, temperature: {temperature}, 쿼리 직접 전달")
+        logger.info(f"LLM Gateway 챗봇 호출 시작: {model}, 스트리밍 모드: {stream}, temperature: {temperature}, 쿼리 직접 전달")
         
         try:
             # 스트리밍 모드에 따라 다른 처리
@@ -880,7 +987,7 @@ def chat():
                     accumulated_response = ""
                     
                     with requests.post(
-                        f"{OLLAMA_ENDPOINT}/api/generate",
+                        f"{LLM_GATEWAY_ENDPOINT}/api/generate",
                         json={
                             "model": model,
                             "prompt": query,
@@ -939,8 +1046,8 @@ def chat():
                 return response
             else:
                 # 기존 방식대로 처리 (스트리밍 없음)
-                ollama_response = requests.post(
-                    f"{OLLAMA_ENDPOINT}/api/generate",
+                llm_response = requests.post(
+                    f"{LLM_GATEWAY_ENDPOINT}/api/generate",
                     json={
                         "model": model,
                         "prompt": query,  # 사용자 쿼리를 직접 전달
@@ -950,14 +1057,14 @@ def chat():
                     timeout=60
                 )
                 
-                if ollama_response.status_code != 200:
-                    logger.error(f"Ollama API 오류: {ollama_response.text}")
+                if llm_response.status_code != 200:
+                    logger.error(f"LLM Gateway API 오류: {llm_response.text}")
                     return jsonify({
                         "error": "LLM 요청 중 오류가 발생했습니다",
-                        "details": ollama_response.text
+                        "details": llm_response.text
                     }), 500
                     
-                response_text = ollama_response.json().get("response", "")
+                response_text = llm_response.json().get("response", "")
                 
                 return jsonify({
                     "query": query,
@@ -966,9 +1073,9 @@ def chat():
                 })
                 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ollama 서비스 연결 오류: {str(e)}")
+            logger.error(f"LLM Gateway 서비스 연결 오류: {str(e)}")
             return jsonify({
-                "error": "Ollama 서비스에 연결할 수 없습니다",
+                "error": "LLM Gateway 서비스에 연결할 수 없습니다",
                 "details": str(e)
             }), 503
         
@@ -976,23 +1083,23 @@ def chat():
         logger.error(f"챗봇 처리 중 오류 발생: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
-# Ollama 모델 목록 API
+# LLM Gateway 모델 목록 API
 @app.route("/prompt/models", methods=["GET"])
 def list_models():
-    logger.info(f"💬 OLLAMA_ENDPOINT = {OLLAMA_ENDPOINT}")
-    logger.info(f"💬 최종 요청 URL = {OLLAMA_ENDPOINT}/api/tags")
+    logger.info(f"💬 LLM_GATEWAY_ENDPOINT = {LLM_GATEWAY_ENDPOINT}")
+    logger.info(f"💬 최종 요청 URL = {LLM_GATEWAY_ENDPOINT}/api/tags")
     try:
-        # Ollama API 호출하여 모델 목록 가져오기
-        logger.info("Ollama 모델 목록 요청")
+        # LLM Gateway API 호출하여 모델 목록 가져오기
+        logger.info("LLM Gateway 모델 목록 요청")
         try:
             models_response = requests.get(
-                f"{OLLAMA_ENDPOINT}/api/tags",
+                f"{LLM_GATEWAY_ENDPOINT}/api/tags",
                 timeout=10
             )
             summaryAgent = AgentService(config_path)
             
             if models_response.status_code != 200:
-                logger.error(f"Ollama API 모델 목록 오류: {models_response.text}")
+                logger.error(f"LLM Gateway API 모델 목록 오류: {models_response.text}")
                 return jsonify({
                     "error": "모델 목록을 가져오는 중 오류가 발생했습니다",
                     "details": models_response.text
@@ -1008,10 +1115,10 @@ def list_models():
             })
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ollama 서비스 연결 오류: {str(e)}")
+            logger.error(f"LLM Gateway 서비스 연결 오류: {str(e)}")
             logger.exception(e)  # 전체 traceback도 로그에 남기기
             return jsonify({
-                "error": "Ollama 서비스에 연결할 수 없습니다",
+                "error": "LLM Gateway 서비스에 연결할 수 없습니다",
                 "details": str(e)
             }), 503
             
@@ -1019,35 +1126,54 @@ def list_models():
         logger.error(f"모델 목록 처리 중 오류 발생: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
-# Ollama API 프록시 - /api/tags 응답을 그대로 리턴
+# LLM API 프록시 - /api/tags 응답을 그대로 리턴
 @app.route("/api/tags", methods=["GET"])
 def api_tags():
-    logger.info(f"💬 OLLAMA_ENDPOINT = {OLLAMA_HOST}")
-    logger.info(f"💬 최종 요청 URL = {OLLAMA_HOST}/api/tags")
     try:
-        # Ollama API 호출하여 모델 목록 가져오기
-        logger.info("Ollama API /api/tags 프록시 요청")
+        # LLM_PROVIDER에 따라 적절한 엔드포인트 선택
+        if LLM_PROVIDER == "vllm":
+            endpoint = f"{LLM_SERVER_ENDPOINT}/models"
+            logger.info(f"💬 vLLM 모델 목록 요청: {endpoint}")
+        else:
+            endpoint = f"{OLLAMA_HOST}/api/tags"
+            logger.info(f"💬 Ollama 모델 목록 요청: {endpoint}")
+        
+        # LLM API 호출하여 모델 목록 가져오기
+        logger.info("LLM API 모델 목록 프록시 요청")
         try:
-            models_response = requests.get(
-                f"{OLLAMA_HOST}/api/tags",
-                timeout=10
-            )
+            models_response = requests.get(endpoint, timeout=10)
             
             if models_response.status_code != 200:
-                logger.error(f"Ollama API /api/tags 오류: {models_response.text}")
+                logger.error(f"LLM API 모델 목록 오류: {models_response.text}")
                 return jsonify({
-                    "error": "Ollama API 호출 중 오류가 발생했습니다",
+                    "error": "LLM API 호출 중 오류가 발생했습니다",
                     "details": models_response.text
                 }), 500
-                
-            # Ollama 응답을 그대로 리턴
-            return jsonify(models_response.json())
+            
+            # vLLM 응답을 Ollama 형식으로 변환
+            if LLM_PROVIDER == "vllm":
+                vllm_models = models_response.json()
+                # vLLM 응답을 Ollama 형식으로 변환
+                ollama_models = {
+                    "models": [
+                        {
+                            "name": model.get("id", "gemma3:12b"),
+                            "modified_at": "2024-01-01T00:00:00Z",
+                            "size": 0
+                        }
+                        for model in vllm_models.get("data", [])
+                    ]
+                }
+                return jsonify(ollama_models)
+            else:
+                # Ollama 응답을 그대로 리턴
+                return jsonify(models_response.json())
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ollama 서비스 연결 오류: {str(e)}")
+            logger.error(f"LLM 서비스 연결 오류: {str(e)}")
             logger.exception(e)  # 전체 traceback도 로그에 남기기
             return jsonify({
-                "error": "Ollama 서비스에 연결할 수 없습니다",
+                "error": "LLM 서비스에 연결할 수 없습니다",
                 "details": str(e)
             }), 503
             
@@ -1087,7 +1213,7 @@ def chatbot():
             logger.info(f"RAG 챗봇 서비스 초기화: model={default_model}, search_top={search_top}, rerank_top={rerank_top}")
             rag_chat_service = RagChatService(
                 memory_dir=MEMORY_DIR,
-                ollama_endpoint=OLLAMA_ENDPOINT,
+                llm_gateway_endpoint=LLM_GATEWAY_ENDPOINT,  # nginx 엔드포인트 전달
                 rag_endpoint=RAG_ENDPOINT,
                 reranker_endpoint=RERANKER_ENDPOINT,
                 default_model=default_model,
@@ -1235,7 +1361,7 @@ def _initialize_rag_service():
     logger.info(f"RAG 챗봇 서비스 초기화: model={default_model}, search_top={search_top}, rerank_top={rerank_top}")
     rag_chat_service = RagChatService(
         memory_dir=MEMORY_DIR,
-        ollama_endpoint=OLLAMA_ENDPOINT,
+        llm_gateway_endpoint=LLM_GATEWAY_ENDPOINT,  # nginx 엔드포인트 전달
         rag_endpoint=RAG_ENDPOINT,
         reranker_endpoint=RERANKER_ENDPOINT,
         default_model=default_model,

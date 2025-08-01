@@ -18,7 +18,7 @@ class AsyncSummarizer:
     
     def __init__(self, 
                  session_manager: SessionManager,
-                 ollama_endpoint: str = "http://ollama:11434",
+                 llm_gateway_endpoint: str = "http://nginx",
                  default_model: str = "gemma3:12b",
                  max_workers: int = 3,  # 병렬 처리를 위한 최대 워커 수
                  batch_size: int = 3):  # 배치 처리를 위한 크기
@@ -27,13 +27,13 @@ class AsyncSummarizer:
         
         Args:
             session_manager: 세션 관리자 인스턴스
-            ollama_endpoint: Ollama API 엔드포인트
+            llm_gateway_endpoint: LLM Gateway API 엔드포인트 (nginx 프록시)
             default_model: 기본 LLM 모델
             max_workers: 병렬 처리를 위한 최대 워커 수
             batch_size: 배치 처리를 위한 크기
         """
         self.session_manager = session_manager
-        self.ollama_endpoint = ollama_endpoint
+        self.llm_gateway_endpoint = llm_gateway_endpoint
         self.default_model = default_model
         self.max_workers = max_workers
         self.batch_size = batch_size
@@ -45,7 +45,7 @@ class AsyncSummarizer:
         # LangChain 체인 구성
         self._setup_chains()
         
-        logger.info(f"AsyncSummarizer 초기화 완료: endpoint={ollama_endpoint}, model={default_model}, max_workers={max_workers}, batch_size={batch_size}")
+        logger.info(f"AsyncSummarizer 초기화 완료: endpoint={llm_gateway_endpoint}, model={default_model}, max_workers={max_workers}, batch_size={batch_size}")
     
     def _create_summary_prompt(self) -> PromptTemplate:
         """요약 프롬프트 템플릿을 생성합니다."""
@@ -81,9 +81,9 @@ class AsyncSummarizer:
         """LangChain 체인을 설정합니다."""
         # 요약 함수
         def summarize(inputs):
-            # Ollama LLM 초기화
+            # LLM Gateway 초기화 (nginx 프록시)
             llm = Ollama(
-                base_url=self.ollama_endpoint,
+                base_url=self.llm_gateway_endpoint,
                 model=inputs.get("model", self.default_model),
                 temperature=0.1  # 요약은 낮은 온도로 사실적으로
             )
@@ -101,9 +101,9 @@ class AsyncSummarizer:
         
         # 메타 요약 함수
         def meta_summarize(inputs):
-            # Ollama LLM 초기화
+            # LLM Gateway 초기화 (nginx 프록시)
             llm = Ollama(
-                base_url=self.ollama_endpoint,
+                base_url=self.llm_gateway_endpoint,
                 model=inputs.get("model", self.default_model),
                 temperature=0.1
             )

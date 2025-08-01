@@ -33,8 +33,15 @@ logger.info(f"전역 config 변수 내용: {config}")  # 전역 변수에 저장
 def call_ollama_api(model: str, prompt: str, image_url: str) -> Optional[Dict[str, Any]]:
     """Ollama API를 호출하여 이미지 분석을 수행합니다."""
     try:
-        ollama_url = os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434")
-        logger.info(f"Ollama URL: {ollama_url}")
+        # LLM_PROVIDER에 따라 Ollama 서비스 상태 확인
+        llm_provider = os.environ.get("LLM_PROVIDER", "ollama")
+        ollama_host = os.environ.get("OLLAMA_HOST", "http://ollama-gpu:11434")
+        
+        if llm_provider == "vllm":
+            logger.info("vLLM 모드: Ollama 서비스가 다운되어 있습니다")
+            return None
+        
+        logger.info(f"Ollama Host URL: {ollama_host}")
         
         # 이미지 URL에서 이미지를 다운로드하고 base64로 인코딩
         try:
@@ -58,7 +65,7 @@ def call_ollama_api(model: str, prompt: str, image_url: str) -> Optional[Dict[st
         
         # API 호출
         response = requests.post(
-            f"{ollama_url}/api/generate",
+            f"{ollama_host}/api/generate",
             json=payload,
             timeout=30  # 30초 타임아웃 설정
         )
@@ -126,8 +133,13 @@ def analyze_media():
         logger.info("Ollama API 호출 시작")
         result = call_ollama_api(model, prompt, image_url)
         if not result:
-            logger.error("Ollama API 호출 실패")
-            return jsonify({"error": "이미지 분석에 실패했습니다"}), 500
+            llm_provider = os.environ.get("LLM_PROVIDER", "ollama")
+            if llm_provider == "vllm":
+                logger.error("vLLM 모드: Ollama 서비스가 다운되어 있습니다")
+                return jsonify({"error": "vLLM 모드에서는 이미지 분석을 지원하지 않습니다. Ollama 서비스가 필요합니다."}), 503
+            else:
+                logger.error("Ollama API 호출 실패")
+                return jsonify({"error": "이미지 분석에 실패했습니다"}), 500
             
         logger.info(f"Ollama API 응답: {result}")
             

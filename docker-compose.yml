@@ -207,9 +207,12 @@ services:
       - RERANKER_ENDPOINT=http://nginx/reranker
       - DEFAULT_MODEL=${DEFAULT_MODEL}
       - USE_GPU=${USE_GPU}
-      - OLLAMA_ENDPOINT=${OLLAMA_ENDPOINT}
+      - LLM_GATEWAY_ENDPOINT=${LLM_GATEWAY_ENDPOINT:-http://nginx}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama-gpu:11434}
       - VLLM_ENDPOINT=${VLLM_ENDPOINT:-http://vllm:8000}
       - VLLM_MODEL=${VLLM_MODEL:-/app/models/mistralai/Mistral-7B-Instruct-v0.2}
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - LLM_SERVER_ENDPOINT=${LLM_SERVER_ENDPOINT:-http://llm-server:8000}
       - UWSGI_PROTOCOL=fastcgi
       - UWSGI_SOCKET=/tmp/prompt.sock
       - UWSGI_CHMOD_SOCKET=666
@@ -347,7 +350,8 @@ services:
       - ./volumes/logs/vision:/var/log/vision
     environment:
       - VISION_CONFIG=/vision/config.json
-      - OLLAMA_ENDPOINT=${OLLAMA_ENDPOINT}
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama-gpu:11434}
       - UWSGI_PROTOCOL=fastcgi
       - UWSGI_SOCKET=/tmp/vision.sock
       - UWSGI_CHMOD_SOCKET=666

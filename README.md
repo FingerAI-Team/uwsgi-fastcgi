@@ -773,7 +773,7 @@ cd /home/jsh0630/uwsgi-fastcgi
 - 컨텍스트 제한을 위해 최근 5턴(10개 메시지)만 포함
 
 ## 환경 변수
-- `OLLAMA_ENDPOINT`: Ollama API 엔드포인트 (기본값: http://localhost:11434)
+- `LLM_GATEWAY_ENDPOINT`: LLM Gateway API 엔드포인트 (nginx 프록시, 기본값: http://nginx)
 - `RAG_ENDPOINT`: RAG 검색 엔드포인트 (기본값: http://nginx/rag)
 - `RERANKER_ENDPOINT`: 재랭킹 엔드포인트 (기본값: http://nginx/reranker)
 - `MEMORY_DIR`: 세션 메모리 저장 디렉토리 (기본값: ./memory)
