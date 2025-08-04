@@ -517,7 +517,7 @@ declare -A service_containers=(
 declare -A nginx_modes=(
     ["all"]="all"
     ["all-gpu"]="all"
-    ["llm-full"]="llm-server-only"
+    ["llm-full"]="all"
     ["rag"]="rag"
     ["reranker"]="reranker"
     ["prompt"]="prompt"
@@ -740,26 +740,43 @@ start_containers() {
     
     echo "${service_descriptions[$mode]}"
     
-    # 컨테이너 시작 전에 모델 다운로드
-    if [[ "$containers" == *"rag"* ]]; then
+    # llm-full 전용 전처리 프로세스 (all-gpu와 동일)
+    if [ "$mode" = "llm-full" ]; then
+        echo "llm-full 전처리 프로세스 시작..."
+        
+        # RAG 모델 다운로드
         download_rag_model
-    fi
-    
-    # vLLM 모델 확인
-    if [[ "$containers" == *"vllm"* ]]; then
+        
+        # vLLM 모델 확인
         check_vllm_model
-    fi
-    
-    # nginx 설정 (통계 수집 옵션 전달)
-    if [[ -n "${nginx_modes[$mode]}" ]]; then
-        setup_nginx "${nginx_modes[$mode]}" "$stats_enabled"
-    fi
-    
-    # reranker 설정 (GPU 모드이면)
-    if [[ "$mode" == *"-gpu" ]] && [[ "$containers" == *"reranker"* ]]; then
+        
+        # nginx 설정
+        setup_nginx "all" "$stats_enabled"
+        
+        # reranker 설정 (GPU 모드)
         setup_reranker "gpu"
-    elif [[ "$containers" == *"reranker"* ]] && [[ "$mode" != "db" ]]; then
-        setup_reranker "cpu"
+    else
+        # 컨테이너 시작 전에 모델 다운로드
+        if [[ "$containers" == *"rag"* ]]; then
+            download_rag_model
+        fi
+        
+        # vLLM 모델 확인
+        if [[ "$containers" == *"vllm"* ]]; then
+            check_vllm_model
+        fi
+        
+        # nginx 설정 (통계 수집 옵션 전달)
+        if [[ -n "${nginx_modes[$mode]}" ]]; then
+            setup_nginx "${nginx_modes[$mode]}" "$stats_enabled"
+        fi
+        
+        # reranker 설정 (GPU 모드이면)
+        if [[ "$mode" == *"-gpu" ]] && [[ "$containers" == *"reranker"* ]]; then
+            setup_reranker "gpu"
+        elif [[ "$containers" == *"reranker"* ]] && [[ "$mode" != "db" ]]; then
+            setup_reranker "cpu"
+        fi
     fi
     
     # 통계 서비스 추가 (활성화 된 경우)
@@ -851,6 +868,20 @@ start_containers() {
             else
                 docker compose --profile prompt-only --profile vllm-only --profile gpu-only up -d
             fi
+        elif [ "$mode" = "llm-full" ]; then
+            # llm-full은 all-gpu와 동일한 프로필 사용하되 ollama-gpu는 제외
+            if [ "$stats_enabled" = "true" ]; then
+                docker compose --profile all --profile gpu-only --profile stats up -d
+            else
+                docker compose --profile all --profile gpu-only up -d
+            fi
+            
+            # ollama-gpu 컨테이너가 올라갔다면 중지 (llm-server만 사용)
+            if docker ps | grep -q milvus-ollama-gpu; then
+                echo "ollama-gpu 컨테이너를 중지합니다..."
+                docker stop milvus-ollama-gpu
+                docker rm milvus-ollama-gpu
+            fi
         else
             if [ "$stats_enabled" = "true" ]; then
                 docker compose --profile all --profile cpu-only --profile stats up -d
@@ -867,8 +898,11 @@ start_containers() {
         fi
     fi
     
-    # DB 컨테이너가 포함된 경우 재시작 처리
-    if [[ "$containers" == *"standalone"* ]] && [[ "$containers" == *"rag"* ]]; then
+    # llm-full 전용 후처리 프로세스 (all-gpu와 동일)
+    if [ "$mode" = "llm-full" ]; then
+        echo "llm-full 후처리 프로세스 시작..."
+        
+        # DB 컨테이너 재시작 처리
         echo "DB와 RAG 서비스 동기화를 위해 컨테이너 재시작..."
         sleep 5  # DB 초기화를 위한 대기
         if docker ps | grep -q milvus-standalone; then
@@ -877,11 +911,32 @@ start_containers() {
         if docker ps | grep -q milvus-rag; then
             docker restart milvus-rag
         fi
-    fi
-    
-    # Ollama가 포함된 경우 모델 다운로드
-    if [[ "$containers" == *"ollama"* ]] || [[ "$mode" == *"-gpu" && "$mode" != "reranker-gpu" && "$mode" != "rag-reranker-gpu" ]]; then
-        download_ollama_models $OLLAMA_CONTAINER
+        
+        # llm-server 모델 확인 (필요한 경우)
+        echo "llm-server 모델 확인 중..."
+        local model_path="$ROOT_DIR/models/gemma3-12b"
+        if [ ! -d "$model_path" ]; then
+            echo "경고: llm-server 모델이 설치되지 않았습니다: $model_path"
+        else
+            echo "llm-server 모델 확인 완료: $model_path"
+        fi
+    else
+        # DB 컨테이너가 포함된 경우 재시작 처리
+        if [[ "$containers" == *"standalone"* ]] && [[ "$containers" == *"rag"* ]]; then
+            echo "DB와 RAG 서비스 동기화를 위해 컨테이너 재시작..."
+            sleep 5  # DB 초기화를 위한 대기
+            if docker ps | grep -q milvus-standalone; then
+                docker restart milvus-standalone
+            fi
+            if docker ps | grep -q milvus-rag; then
+                docker restart milvus-rag
+            fi
+        fi
+        
+        # Ollama가 포함된 경우 모델 다운로드
+        if [[ "$containers" == *"ollama"* ]] || [[ "$mode" == *"-gpu" && "$mode" != "reranker-gpu" && "$mode" != "rag-reranker-gpu" ]]; then
+            download_ollama_models $OLLAMA_CONTAINER
+        fi
     fi
 }
 
@@ -948,53 +1003,9 @@ if [ -z "$SERVICE_MODE" ]; then
 fi
 
 # 컨테이너 시작
-if [ -n "${service_containers[$SERVICE_MODE]}" ] && [ "$SERVICE_MODE" != "llm-full" ]; then
-    # 명시적 컨테이너 목록이 있는 경우 (llm-full 제외)
+if [ -n "${service_containers[$SERVICE_MODE]}" ]; then
+    # 명시적 컨테이너 목록이 있는 경우
     start_containers "$SERVICE_MODE" "${service_containers[$SERVICE_MODE]}" false "$STATS_ENABLED"
-elif [ "$SERVICE_MODE" = "llm-full" ]; then
-    # llm-full 전용 전처리 프로세스 (all-gpu와 동일)
-    echo "llm-full 전처리 프로세스 시작..."
-    
-    # RAG 모델 다운로드
-    download_rag_model
-    
-    # vLLM 모델 확인
-    check_vllm_model
-    
-    # nginx 설정
-    setup_nginx "all" "$stats_enabled"
-    
-    # reranker 설정 (GPU 모드)
-    setup_reranker "gpu"
-    
-    # llm-full은 완전히 분리된 프로필 사용 (all 프로필 제외, ollama-gpu 제외)
-    if [ "$stats_enabled" = "true" ]; then
-        docker compose --profile rag-only --profile reranker-only --profile prompt-only --profile llm-server-only --profile vllm-only --profile vision-only --profile gpu-only --profile stats up -d
-    else
-        docker compose --profile rag-only --profile reranker-only --profile prompt-only --profile llm-server-only --profile vllm-only --profile vision-only --profile gpu-only up -d
-    fi
-    
-    # llm-full 전용 후처리 프로세스
-    echo "llm-full 후처리 프로세스 시작..."
-    
-    # DB 컨테이너 재시작 처리
-    echo "DB와 RAG 서비스 동기화를 위해 컨테이너 재시작..."
-    sleep 5  # DB 초기화를 위한 대기
-    if docker ps | grep -q milvus-standalone; then
-        docker restart milvus-standalone
-    fi
-    if docker ps | grep -q milvus-rag; then
-        docker restart milvus-rag
-    fi
-    
-    # llm-server 모델 확인 (필요한 경우)
-    echo "llm-server 모델 확인 중..."
-    local model_path="$ROOT_DIR/models/gemma3-12b"
-    if [ ! -d "$model_path" ]; then
-        echo "경고: llm-server 모델이 설치되지 않았습니다: $model_path"
-    else
-        echo "llm-server 모델 확인 완료: $model_path"
-    fi
 else
     # 프로필 사용
     start_containers "$SERVICE_MODE" "" true "$STATS_ENABLED"

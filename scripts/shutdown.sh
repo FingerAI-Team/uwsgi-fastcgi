@@ -35,7 +35,7 @@ case "$1" in
     ;;
   "llm-full")
     echo "🛑 모든 서비스 종료 중... (LLM Server 모드)"
-    $DOCKER_CMD compose --profile rag-only --profile reranker-only --profile prompt-only --profile llm-server-only --profile vllm-only --profile vision-only --profile gpu-only down
+    $DOCKER_CMD compose --profile all --profile gpu-only down
     ;;
   "rag")
     echo "🛑 RAG 서비스 종료 중..."
