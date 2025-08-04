@@ -33,6 +33,10 @@ case "$1" in
     echo "🛑 모든 서비스 종료 중... (GPU 모드)"
     $DOCKER_CMD compose --profile all --profile gpu-only down
     ;;
+  "llm-full")
+    echo "🛑 모든 서비스 종료 중... (LLM Server 모드)"
+    $DOCKER_CMD compose --profile rag-only --profile reranker-only --profile prompt-only --profile llm-server-only --profile vllm-only --profile vision-only --profile gpu-only down
+    ;;
   "rag")
     echo "🛑 RAG 서비스 종료 중..."
     $DOCKER_CMD compose --profile rag-only down
@@ -82,9 +86,10 @@ case "$1" in
     $DOCKER_CMD compose --profile vision-only down
     ;;
   *)
-    echo "Usage: $0 {all|all-gpu|rag|reranker|prompt|rag-reranker|db|app-only|app-only-gpu|ollama|ollama-gpu|prompt_ollama|prompt_ollama-gpu|vision}"
+    echo "Usage: $0 {all|all-gpu|llm-full|rag|reranker|prompt|rag-reranker|db|app-only|app-only-gpu|ollama|ollama-gpu|prompt_ollama|prompt_ollama-gpu|vision}"
     echo "  all        - 모든 서비스 종료 (CPU 모드)"
     echo "  all-gpu    - 모든 서비스 종료 (GPU 모드)"
+    echo "  llm-full   - 모든 서비스 종료 (LLM Server 모드)"
     echo "  rag          - RAG 서비스만 종료 (DB 포함)"
     echo "  reranker     - Reranker 서비스만 종료"
     echo "  prompt       - Prompt 서비스만 종료"
