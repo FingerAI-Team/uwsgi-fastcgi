@@ -315,6 +315,7 @@ services:
       - "11436:8000"  # llm-server 전용 포트
     environment:
       - NVIDIA_VISIBLE_DEVICES=1  # GPU 1번만 사용
+      - CUDA_VISIBLE_DEVICES=1
       - MODEL_PATH=/app/models/gemma3-12b
       - MAX_MODEL_LEN=8192
       - TRUST_REMOTE_CODE=true
@@ -332,6 +333,7 @@ services:
             - driver: nvidia
               count: 1  # GPU 1개만 사용
               capabilities: [gpu]
+              device_ids: ["1"]  # 배열 형태로 다시 시도
               options:
                 memory: 40GB  # L40S GPU 메모리
     profiles:
