@@ -434,7 +434,7 @@ prompt_services=(
     "prompt_ollama-gpu" # Prompt + Ollama 서비스 조합 (GPU)
     "all"             # 모든 서비스 (CPU 모드)
     "all-gpu"         # 모든 서비스 (GPU 모드, Ollama 사용)
-    "all-llm"         # 모든 서비스 (GPU 모드, llm-server 사용)
+    "llm-full"         # 모든 서비스 (GPU 모드, llm-server 사용)
     "app-only"        # 앱 서비스만 (CPU 모드)
     "app-only-gpu"    # 앱 서비스만 (GPU 모드)
 )
@@ -460,7 +460,7 @@ declare -A profiles=(
     ["prompt_ollama-gpu"]="prompt-only,gpu-only"
     ["all"]="all,cpu-only"
     ["all-gpu"]="all,gpu-only"
-    ["all-llm"]="all,gpu-only"
+    ["llm-full"]="llm-server-only,gpu-only"
     ["app-only"]="app-only,cpu-only"
     ["app-only-gpu"]="app-only,gpu-only"
 )
@@ -469,7 +469,7 @@ declare -A profiles=(
 declare -A service_descriptions=(
     ["all"]="모든 서비스 시작 (RAG + Reranker + Prompt + Ollama(CPU) + DB + Vision)"
     ["all-gpu"]="모든 서비스 시작 (RAG + Reranker + Prompt + Ollama(GPU) + vLLM + DB + Vision)"
-    ["all-llm"]="모든 서비스 시작 (RAG + Reranker + Prompt + llm-server(GPU) + vLLM + DB + Vision)"
+    ["llm-full"]="모든 서비스 시작 (RAG + Reranker + Prompt + llm-server(GPU) + vLLM + DB + Vision)"
     ["rag"]="RAG 서비스만 시작 (DB 포함)"
     ["reranker"]="Reranker 서비스만 시작 (CPU 모드)"
     ["reranker-gpu"]="Reranker 서비스만 시작 (GPU 모드)"
@@ -494,7 +494,7 @@ declare -A service_descriptions=(
 declare -A service_containers=(
     ["all"]="nginx rag reranker prompt ollama standalone etcd etcd_init minio vision"
     ["all-gpu"]="nginx rag reranker prompt ollama-gpu vllm standalone etcd etcd_init minio vision"
-    ["all-llm"]="nginx rag reranker prompt llm-server vllm standalone etcd etcd_init minio vision"
+    ["llm-full"]="nginx rag reranker prompt llm-server vllm standalone etcd etcd_init minio vision"
     ["rag"]="nginx rag standalone etcd etcd_init minio"
     ["reranker"]="nginx reranker"
     ["prompt"]="nginx prompt"
@@ -517,7 +517,7 @@ declare -A service_containers=(
 declare -A nginx_modes=(
     ["all"]="all"
     ["all-gpu"]="all"
-    ["all-llm"]="all"
+    ["llm-full"]="llm-server-only"
     ["rag"]="rag"
     ["reranker"]="reranker"
     ["prompt"]="prompt"
@@ -900,7 +900,7 @@ print_usage() {
 }
 
 # GPU/CPU 모드에 따라 .env 파일 설정
-if [[ "$1" == *"-gpu" ]]; then
+if [[ "$1" == *"-gpu" ]] || [[ "$1" == "llm-full" ]]; then
     echo "[env] GPU 모드로 설정합니다"
     
     # NVIDIA Container Toolkit 설치 확인
@@ -913,11 +913,12 @@ if [[ "$1" == *"-gpu" ]]; then
     cp .env.gpu .env
     OLLAMA_CONTAINER="milvus-ollama-gpu"
     
-    # LLM Provider 설정 (all-llm 옵션일 때)
-    if [[ "$1" == "all-llm" ]]; then
+    # LLM Provider 설정 (llm-full 옵션일 때)
+    if [[ "$1" == "llm-full" ]]; then
         echo "[env] LLM Provider를 vllm으로 설정합니다"
         sed -i 's/LLM_PROVIDER=ollama/LLM_PROVIDER=vllm/' .env
         echo "[env] LLM_PROVIDER=vllm으로 설정 완료"
+        OLLAMA_CONTAINER="milvus-llm-server"  # llm-full에서는 llm-server 사용
     fi
 else
     echo "[env] CPU 모드로 설정합니다"
@@ -947,9 +948,53 @@ if [ -z "$SERVICE_MODE" ]; then
 fi
 
 # 컨테이너 시작
-if [ -n "${service_containers[$SERVICE_MODE]}" ]; then
-    # 명시적 컨테이너 목록이 있는 경우
+if [ -n "${service_containers[$SERVICE_MODE]}" ] && [ "$SERVICE_MODE" != "llm-full" ]; then
+    # 명시적 컨테이너 목록이 있는 경우 (llm-full 제외)
     start_containers "$SERVICE_MODE" "${service_containers[$SERVICE_MODE]}" false "$STATS_ENABLED"
+elif [ "$SERVICE_MODE" = "llm-full" ]; then
+    # llm-full 전용 전처리 프로세스 (all-gpu와 동일)
+    echo "llm-full 전처리 프로세스 시작..."
+    
+    # RAG 모델 다운로드
+    download_rag_model
+    
+    # vLLM 모델 확인
+    check_vllm_model
+    
+    # nginx 설정
+    setup_nginx "all" "$stats_enabled"
+    
+    # reranker 설정 (GPU 모드)
+    setup_reranker "gpu"
+    
+    # llm-full은 완전히 분리된 프로필 사용 (all 프로필 제외, ollama-gpu 제외)
+    if [ "$stats_enabled" = "true" ]; then
+        docker compose --profile rag-only --profile reranker-only --profile prompt-only --profile llm-server-only --profile vllm-only --profile vision-only --profile gpu-only --profile stats up -d
+    else
+        docker compose --profile rag-only --profile reranker-only --profile prompt-only --profile llm-server-only --profile vllm-only --profile vision-only --profile gpu-only up -d
+    fi
+    
+    # llm-full 전용 후처리 프로세스
+    echo "llm-full 후처리 프로세스 시작..."
+    
+    # DB 컨테이너 재시작 처리
+    echo "DB와 RAG 서비스 동기화를 위해 컨테이너 재시작..."
+    sleep 5  # DB 초기화를 위한 대기
+    if docker ps | grep -q milvus-standalone; then
+        docker restart milvus-standalone
+    fi
+    if docker ps | grep -q milvus-rag; then
+        docker restart milvus-rag
+    fi
+    
+    # llm-server 모델 확인 (필요한 경우)
+    echo "llm-server 모델 확인 중..."
+    local model_path="$ROOT_DIR/models/gemma3-12b"
+    if [ ! -d "$model_path" ]; then
+        echo "경고: llm-server 모델이 설치되지 않았습니다: $model_path"
+    else
+        echo "llm-server 모델 확인 완료: $model_path"
+    fi
 else
     # 프로필 사용
     start_containers "$SERVICE_MODE" "" true "$STATS_ENABLED"
