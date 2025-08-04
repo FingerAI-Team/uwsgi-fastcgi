@@ -333,6 +333,8 @@ services:
           devices:
             - driver: nvidia
               count: 1  # GPU 1개만 사용
+              device_ids:
+                - GPU-1b8ec862-333b-1bd2-4010-35aceefad60b  # 두 번째 GPU UUID
               capabilities: [gpu]
               options:
                 memory: 40GB  # L40S GPU 메모리
