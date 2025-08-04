@@ -186,8 +186,13 @@ def api_generate():
                                 continue
                             
                             try:
+                                # line이 이미 문자열인지 바이트인지 확인
+                                if isinstance(line, bytes):
+                                    line_str = line.decode('utf-8')
+                                else:
+                                    line_str = str(line)
+                                
                                 # SSE 형식 처리: "data: {...}" 형태에서 JSON 부분만 추출
-                                line_str = line.decode('utf-8')
                                 if line_str.startswith('data: '):
                                     json_str = line_str[6:]  # "data: " 제거
                                     if json_str.strip() == '[DONE]':
