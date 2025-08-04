@@ -315,7 +315,8 @@ services:
       - "11436:8000"  # llm-server 전용 포트
     runtime: nvidia            # 이 서비스만 GPU 런타임
     environment:
-      - NVIDIA_VISIBLE_DEVICES=GPU-3e46c91e-7e6c-3f0d-a3a1-1b57d5d0ba6a # GPU 1번만 사용
+      - NVIDIA_VISIBLE_DEVICES=GPU-1b8ec862-333b-1bd2-4010-35aceefad60b # GPU 1번만 사용
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - MODEL_PATH=/app/models/gemma3-12b
       - MAX_MODEL_LEN=8192
       - TRUST_REMOTE_CODE=true
