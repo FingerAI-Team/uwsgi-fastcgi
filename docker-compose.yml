@@ -333,7 +333,7 @@ services:
               capabilities: [gpu]
               options:
                 memory: 40GB  # L40S GPU 메모리
-                device_ids: ["1"]  # GPU 1번 사용
+                device_ids: "1"  # GPU 1번 사용
     profiles:
       - llm-server-only
       - gpu-only
