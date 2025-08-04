@@ -534,6 +534,72 @@ declare -A nginx_modes=(
     ["vision-ollama-gpu"]="vision_vllm"
 )
 
+# NVIDIA Container Toolkit 설치 함수
+install_nvidia_container_toolkit() {
+    echo "NVIDIA Container Toolkit 설치 확인 중..."
+    
+    # 이미 설치되어 있는지 확인
+    if command -v nvidia-container-runtime &> /dev/null; then
+        echo "✅ NVIDIA Container Toolkit이 이미 설치되어 있습니다."
+        return 0
+    fi
+    
+    # nvidia-container-toolkit 패키지 확인
+    if dpkg -l | grep -q nvidia-container-toolkit; then
+        echo "✅ NVIDIA Container Toolkit 패키지가 이미 설치되어 있습니다."
+        return 0
+    fi
+    
+    echo "NVIDIA Container Toolkit이 설치되어 있지 않습니다. 설치를 시작합니다..."
+    
+    # sudo 권한 확인
+    if ! sudo -n true 2>/dev/null; then
+        echo "❌ sudo 권한이 필요합니다. 다음 명령어를 수동으로 실행하세요:"
+        echo "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg"
+        echo "curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list"
+        echo "sudo apt update"
+        echo "sudo apt install -y nvidia-container-toolkit"
+        echo "sudo systemctl restart docker"
+        return 1
+    fi
+    
+    # 저장소 등록
+    echo "NVIDIA Container Toolkit 저장소 등록 중..."
+    if ! curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg; then
+        echo "❌ GPG 키 다운로드에 실패했습니다."
+        return 1
+    fi
+    
+    if ! curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list; then
+        echo "❌ 저장소 목록 추가에 실패했습니다."
+        return 1
+    fi
+    
+    # 패키지 업데이트 및 설치
+    echo "패키지 업데이트 중..."
+    if ! sudo apt update; then
+        echo "❌ 패키지 업데이트에 실패했습니다."
+        return 1
+    fi
+    
+    echo "NVIDIA Container Toolkit 설치 중..."
+    if ! sudo apt install -y nvidia-container-toolkit; then
+        echo "❌ NVIDIA Container Toolkit 설치에 실패했습니다."
+        return 1
+    fi
+    
+    # Docker 재시작
+    echo "Docker 서비스 재시작 중..."
+    if ! sudo systemctl restart docker; then
+        echo "❌ Docker 재시작에 실패했습니다."
+        return 1
+    fi
+    
+    echo "✅ NVIDIA Container Toolkit 설치가 완료되었습니다."
+    echo "Docker가 재시작되었습니다. 잠시 후 다시 시도해주세요."
+    return 0
+}
+
 # Reranker 설정 함수
 setup_reranker() {
     local mode=$1
@@ -550,6 +616,13 @@ setup_reranker() {
         if ! command -v nvidia-smi &> /dev/null; then
             echo "경고: NVIDIA 드라이버가 설치되어 있지 않습니다."
             echo "GPU 모드를 사용하려면 NVIDIA 드라이버가 필요합니다."
+            return 1
+        fi
+        
+        # NVIDIA Container Toolkit 설치 확인
+        if ! install_nvidia_container_toolkit; then
+            echo "경고: NVIDIA Container Toolkit 설치에 실패했습니다."
+            echo "GPU 모드를 사용하려면 NVIDIA Container Toolkit이 필요합니다."
             return 1
         fi
         
@@ -829,6 +902,14 @@ print_usage() {
 # GPU/CPU 모드에 따라 .env 파일 설정
 if [[ "$1" == *"-gpu" ]]; then
     echo "[env] GPU 모드로 설정합니다"
+    
+    # NVIDIA Container Toolkit 설치 확인
+    if ! install_nvidia_container_toolkit; then
+        echo "❌ NVIDIA Container Toolkit 설치에 실패했습니다."
+        echo "GPU 모드를 사용하려면 NVIDIA Container Toolkit이 필요합니다."
+        exit 1
+    fi
+    
     cp .env.gpu .env
     OLLAMA_CONTAINER="milvus-ollama-gpu"
     

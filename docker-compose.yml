@@ -313,9 +313,9 @@ services:
       - ./volumes/logs/llm-server:/var/log/llm-server
     ports:
       - "11436:8000"  # llm-server 전용 포트
+    runtime: nvidia            # 이 서비스만 GPU 런타임
     environment:
       - NVIDIA_VISIBLE_DEVICES=1  # GPU 1번만 사용
-      - CUDA_VISIBLE_DEVICES=1
       - MODEL_PATH=/app/models/gemma3-12b
       - MAX_MODEL_LEN=8192
       - TRUST_REMOTE_CODE=true

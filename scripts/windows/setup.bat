@@ -195,6 +195,11 @@ if "%mode%"=="gpu" (
         echo GPU 모드를 사용하려면 NVIDIA 드라이버가 필요합니다.
         exit /b 1
     )
+    
+    echo GPU 모드 사용 시 NVIDIA Container Toolkit이 필요할 수 있습니다.
+    echo Windows에서는 Docker Desktop의 GPU 지원 기능을 활성화해야 합니다.
+    echo Docker Desktop 설정에서 "Use the WSL 2 based engine" 및 "Use GPU acceleration"을 확인하세요.
+    
     copy /y reranker\requirements.gpu.txt reranker\requirements.txt
     copy /y reranker\Dockerfile.gpu reranker\Dockerfile
     powershell -Command "(Get-Content flashrank\Config.py) -replace 'torch_dtype=torch.float32', 'torch_dtype=torch.float16\n            device_map=\"auto\"' | Set-Content flashrank\Config.py"
