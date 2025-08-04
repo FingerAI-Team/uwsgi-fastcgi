@@ -184,8 +184,26 @@ def api_generate():
                         for line in resp.iter_lines():
                             if not line:
                                 continue
+                            
                             try:
-                                chunk = json.loads(line)
+                                # SSE 형식 처리: "data: {...}" 형태에서 JSON 부분만 추출
+                                line_str = line.decode('utf-8')
+                                if line_str.startswith('data: '):
+                                    json_str = line_str[6:]  # "data: " 제거
+                                    if json_str.strip() == '[DONE]':
+                                        break
+                                    try:
+                                        chunk = json.loads(json_str)
+                                    except json.JSONDecodeError:
+                                        api_logger.warning(f"JSON 파싱 실패, 라인 무시: {line_str}")
+                                        continue
+                                else:
+                                    # 일반 JSON 라인인 경우
+                                    try:
+                                        chunk = json.loads(line_str)
+                                    except json.JSONDecodeError:
+                                        api_logger.warning(f"JSON 파싱 실패, 라인 무시: {line_str}")
+                                        continue
                                 
                                 # LLM_PROVIDER에 따라 응답 형식 처리
                                 if LLM_PROVIDER == "vllm":
