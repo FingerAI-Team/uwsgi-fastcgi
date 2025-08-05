@@ -283,7 +283,7 @@ services:
       - QUANTIZATION_METHOD=${QUANTIZATION_METHOD:-awq}
       - MAX_MODEL_LEN=4096
       - TRUST_REMOTE_CODE=true
-      - GPU_MEMORY_UTILIZATION=0.8  # GPU 메모리 사용률을 80%로 조정
+      - GPU_MEMORY_UTILIZATION=0.5  # GPU 메모리 사용률을 80%로 조정
       - MAX_GPU_MEMORY=20GB  # 최대 GPU 메모리 사용량을 20GB로 조정
       - TENSOR_PARALLEL_SIZE=1  # 텐서 병렬 크기 제한
       - MAX_NUM_BATCHED_TOKENS=4096  # 배치 토큰 수를 4096으로 유지
