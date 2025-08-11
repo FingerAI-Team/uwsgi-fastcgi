@@ -38,8 +38,14 @@ class SemanticChunker:
                 logger.info("히스토리가 없어 빈 리스트 반환")
                 return []
             
-            # 1. 히스토리 전처리 (최대 10턴으로 제한)
-            processed_history = self._truncate_history(history, max_turns=10)
+            # 1. 히스토리 전처리 (마지막 질의 제외 후 최대 5턴으로 제한)
+            # 마지막 질의는 무조건 관련이므로 시멘틱청커에서 제외
+            if len(history) > 1 and history[-1]["role"] == "user":
+                history_without_last_query = history[:-1]
+            else:
+                history_without_last_query = history
+            
+            processed_history = self._truncate_history(history_without_last_query, max_turns=5)
             
             # 2. 프롬프트 생성
             prompt = self._build_prompt(current_query, processed_history)
@@ -59,8 +65,8 @@ class SemanticChunker:
             logger.info(f"받은 응답: '{response}'")
             logger.info("=============================")
             
-            # 4. 결과 파싱
-            selected_history = self._parse_response(response, history)
+            # 4. 결과 파싱 (제한된 히스토리 기준으로 파싱)
+            selected_history = self._parse_response(response, processed_history)
             
             total_time = time.time() - start_time
             logger.info(f"시멘틱 청커 완료: {len(selected_history)}개 턴 선택, 총 시간: {total_time:.3f}초 (LLM: {llm_time:.3f}초)")
@@ -71,7 +77,7 @@ class SemanticChunker:
             logger.error(f"시멘틱 청커 오류: {e}")
             return history[-3:]  # 기본값: 최근 3턴
     
-    def _truncate_history(self, history: List[Dict[str, Any]], max_turns: int = 10) -> List[Dict[str, Any]]:
+    def _truncate_history(self, history: List[Dict[str, Any]], max_turns: int = 5) -> List[Dict[str, Any]]:
         """히스토리 길이 제한"""
         if len(history) <= max_turns * 2:
             return history
@@ -134,20 +140,38 @@ class SemanticChunker:
             logger.error(f"VLLM API 오류: status_code={response.status_code}, response={response.text}")
             raise Exception(f"VLLM API 오류: {response.status_code}")
     
-    def _parse_response(self, response: str, original_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """응답 파싱"""
+    def _parse_response(self, response: str, processed_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """응답 파싱 (제한된 히스토리 기준)"""
         try:
             numbers = re.findall(r'\d+', response)
-            indices = [int(n) - 1 for n in numbers]  # 0-based 인덱스로 변환
             
-            # 유효한 인덱스만 필터링
-            valid_indices = [i for i in indices if 0 <= i < len(original_history)]
+            # 턴 번호를 히스토리 인덱스로 변환
+            # 턴 1 = 히스토리 인덱스 0, 1 (사용자 메시지, 봇 메시지)
+            # 턴 2 = 히스토리 인덱스 2, 3 (사용자 메시지, 봇 메시지)
+            # 턴 3 = 히스토리 인덱스 4, 5 (사용자 메시지, 봇 메시지)
+            selected_messages = []
             
-            if not valid_indices:
-                return original_history[-3:]  # 기본값
+            for turn_num in numbers:
+                turn_index = int(turn_num)
+                # 턴 번호를 제한된 히스토리 인덱스로 변환
+                user_index = (turn_index - 1) * 2
+                bot_index = user_index + 1
+                
+                # 사용자 메시지 추가
+                if 0 <= user_index < len(processed_history):
+                    selected_messages.append(processed_history[user_index])
+                
+                # 봇 메시지 추가 (있는 경우)
+                if 0 <= bot_index < len(processed_history):
+                    selected_messages.append(processed_history[bot_index])
             
-            return [original_history[i] for i in valid_indices]
+            if not selected_messages:
+                logger.warning(f"유효한 턴 번호가 없음: {numbers}")
+                return processed_history[-3:]  # 기본값: 제한된 히스토리에서 최근 3턴
+            
+            logger.info(f"턴 번호 {numbers} → 선택된 메시지 {len(selected_messages)}개 (제한된 히스토리 기준)")
+            return selected_messages
             
         except Exception as e:
             logger.warning(f"응답 파싱 실패: {e}")
-            return original_history[-3:] 
+            return processed_history[-3:] 
