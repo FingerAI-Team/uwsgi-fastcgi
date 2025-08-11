@@ -85,11 +85,16 @@ class SemanticChunker:
         for i in range(0, len(history), 2):
             if i + 1 < len(history):
                 turn_count += 1
-                formatted.append(f"{turn_count}. 사용자: {history[i]['message']}")
-                formatted.append(f"   봇: {history[i + 1]['message']}")
+                user_msg = history[i]['message']
+                bot_msg = history[i + 1]['message']
+                
+                # 봇 답변의 번호 매기기를 구분하기 위해 들여쓰기와 다른 형식 사용
+                formatted.append(f"[턴 {turn_count}] 사용자: {user_msg}")
+                formatted.append(f"[턴 {turn_count}] 봇: {bot_msg}")
             else:
                 turn_count += 1
-                formatted.append(f"{turn_count}. 사용자: {history[i]['message']}")
+                user_msg = history[i]['message']
+                formatted.append(f"[턴 {turn_count}] 사용자: {user_msg}")
         
         return "\n".join(formatted)
     
