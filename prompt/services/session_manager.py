@@ -30,7 +30,15 @@ USE_SEMANTIC_CHUNKER = load_semantic_chunker_config()
 
 if USE_SEMANTIC_CHUNKER:
     try:
-        from ..semantic_chunker.semantic_chunker import SemanticChunker
+        # 절대 경로로 import 시도
+        import sys
+        import os
+        current_dir = os.path.dirname(__file__)
+        parent_dir = os.path.dirname(current_dir)
+        if parent_dir not in sys.path:
+            sys.path.insert(0, parent_dir)
+        
+        from semantic_chunker.semantic_chunker import SemanticChunker
         SEMANTIC_CHUNKER_AVAILABLE = True
         logger.info("시멘틱 청커 모듈 로드 성공")
     except ImportError as e:
