@@ -44,10 +44,20 @@ class SemanticChunker:
             # 2. 프롬프트 생성
             prompt = self._build_prompt(current_query, processed_history)
             
+            # 프롬프트 로깅 추가
+            logger.info("=== 시멘틱 청커 VLLM 프롬프트 ===")
+            logger.info(f"전송할 프롬프트:\n{prompt}")
+            logger.info("================================")
+            
             # 3. LLM 호출
             llm_start = time.time()
             response = self._call_vllm(prompt)
             llm_time = time.time() - llm_start
+            
+            # 응답 로깅 추가
+            logger.info("=== 시멘틱 청커 VLLM 응답 ===")
+            logger.info(f"받은 응답: '{response}'")
+            logger.info("=============================")
             
             # 4. 결과 파싱
             selected_history = self._parse_response(response, history)
@@ -100,6 +110,9 @@ class SemanticChunker:
             "max_tokens": 100
         }
         
+        logger.info(f"VLLM 요청 시작: endpoint={self.vllm_endpoint}, model={self.model}")
+        logger.info(f"VLLM 요청 데이터: {payload}")
+        
         response = requests.post(
             f"{self.vllm_endpoint}/v1/chat/completions",
             json=payload,
@@ -107,8 +120,13 @@ class SemanticChunker:
         )
         
         if response.status_code == 200:
-            return response.json()["choices"][0]["message"]["content"]
+            result = response.json()
+            content = result["choices"][0]["message"]["content"]
+            logger.info(f"VLLM 원본 응답: {result}")
+            logger.info(f"VLLM 추출된 응답: '{content}'")
+            return content
         else:
+            logger.error(f"VLLM API 오류: status_code={response.status_code}, response={response.text}")
             raise Exception(f"VLLM API 오류: {response.status_code}")
     
     def _parse_response(self, response: str, original_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
