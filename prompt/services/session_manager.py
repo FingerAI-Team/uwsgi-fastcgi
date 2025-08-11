@@ -319,6 +319,41 @@ class SessionManager:
         
         return count
     
+    def _get_messages_by_turn_numbers(self, history: List[Dict[str, Any]], turn_numbers: List[int]) -> List[Dict[str, Any]]:
+        """턴 번호를 사용하여 완전한 대화(사용자+봇) 구성"""
+        if not history or not turn_numbers:
+            return []
+        
+        # 마지막 질의 제외 (시멘틱청커와 동일한 기준)
+        if len(history) > 1 and history[-1]["role"] == "user":
+            history_without_last_query = history[:-1]
+        else:
+            history_without_last_query = history
+        
+        # 최근 5턴(10개 메시지)으로 제한 (시멘틱청커와 동일한 기준)
+        recent_history = history_without_last_query[-10:] if len(history_without_last_query) > 10 else history_without_last_query
+        
+        # 최근 5턴에서 사용자 질의만 추출
+        user_queries = [msg for msg in recent_history if msg["role"] == "user"]
+        
+        selected_messages = []
+        for turn_num in turn_numbers:
+            # 턴 번호는 1부터 시작하므로 인덱스로 변환 (최근 5턴 기준)
+            user_index = turn_num - 1
+            
+            if 0 <= user_index < len(user_queries):
+                # 사용자 메시지 추가
+                user_msg = user_queries[user_index]
+                selected_messages.append(user_msg)
+                
+                # 해당 사용자 메시지 다음의 봇 메시지 찾기 (전체 히스토리에서)
+                user_msg_index = history.index(user_msg)
+                if user_msg_index + 1 < len(history) and history[user_msg_index + 1]["role"] == "bot":
+                    selected_messages.append(history[user_msg_index + 1])
+        
+        logger.info(f"턴 번호 {turn_numbers} → 선택된 메시지 {len(selected_messages)}개 (최근 5턴 기준)")
+        return selected_messages
+
     def build_prompt_context(self, session_data: Dict[str, Any], system_prompt: str, 
                            rag_context: str = "", current_query: str = "") -> str:
         """프롬프트 컨텍스트를 구성합니다."""
@@ -366,9 +401,14 @@ class SessionManager:
         if session_data["history"] and self.semantic_chunker:
             try:
                 original_history_count = len(session_data["history"])
-                relevant_history = self.semantic_chunker.select_relevant_history(current_query, session_data)
                 
-                if relevant_history:
+                # 시멘틱청커에서 턴 번호만 받기
+                selected_turn_numbers = self.semantic_chunker.select_relevant_history(current_query, session_data)
+                
+                if selected_turn_numbers:
+                    # 턴 번호를 사용하여 완전한 대화(사용자+봇) 구성
+                    relevant_history = self._get_messages_by_turn_numbers(session_data["history"], selected_turn_numbers)
+                    
                     prompt += "관련 대화 기록:\n"
                     for msg in relevant_history:
                         role = "사용자" if msg["role"] == "user" else "AI"
@@ -379,6 +419,7 @@ class SessionManager:
                     logger.info(f"=== 시멘틱 청킹 결과 ===")
                     logger.info(f"질의: {current_query}")
                     logger.info(f"원본 히스토리: {original_history_count}개 메시지")
+                    logger.info(f"선택된 턴 번호: {selected_turn_numbers}")
                     logger.info(f"선별된 히스토리: {len(relevant_history)}개 메시지")
                     logger.info(f"제외된 메시지: {original_history_count - len(relevant_history)}개")
                     

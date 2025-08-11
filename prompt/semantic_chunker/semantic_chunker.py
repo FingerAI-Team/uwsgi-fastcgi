@@ -26,29 +26,31 @@ class SemanticChunker:
         with open(template_path, 'r', encoding='utf-8') as f:
             self.template = f.read()
     
-    def select_relevant_history(self, current_query: str, session_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """현재 질의와 관련된 히스토리만 선별"""
-        
+    def select_relevant_history(self, current_query: str, session_data: Dict[str, Any]) -> List[int]:
+        """관련 히스토리 선택 (턴 번호만 반환)"""
         start_time = time.time()
-        logger.info(f"시멘틱 청커 시작: 질의='{current_query[:50]}...'")
         
         try:
             history = session_data.get("history", [])
             if not history:
-                logger.info("히스토리가 없어 빈 리스트 반환")
+                logger.info("히스토리가 비어있음")
                 return []
             
-            # 1. 히스토리 전처리 (마지막 질의 제외 후 최대 5턴으로 제한)
+            # 1. 히스토리 전처리 (최근 5턴으로 제한)
             # 마지막 질의는 무조건 관련이므로 시멘틱청커에서 제외
             if len(history) > 1 and history[-1]["role"] == "user":
                 history_without_last_query = history[:-1]
             else:
                 history_without_last_query = history
             
-            processed_history = self._truncate_history(history_without_last_query, max_turns=5)
+            # 최근 5턴(10개 메시지)으로 제한
+            recent_history = self._truncate_history(history_without_last_query, max_turns=5)
             
-            # 2. 프롬프트 생성
-            prompt = self._build_prompt(current_query, processed_history)
+            # 최근 5턴에서 사용자 질의만 추출 (성능 향상을 위해)
+            user_queries = [msg for msg in recent_history if msg["role"] == "user"]
+            
+            # 2. 프롬프트 생성 (사용자 질의만)
+            prompt = self._build_prompt_with_user_queries(current_query, user_queries)
             
             # 프롬프트 로깅 추가
             logger.info("=== 시멘틱 청커 VLLM 프롬프트 ===")
@@ -65,17 +67,17 @@ class SemanticChunker:
             logger.info(f"받은 응답: '{response}'")
             logger.info("=============================")
             
-            # 4. 결과 파싱 (제한된 히스토리 기준으로 파싱)
-            selected_history = self._parse_response(response, processed_history)
+            # 4. 결과 파싱 (턴 번호만 반환)
+            selected_turn_numbers = self._parse_turn_numbers(response)
             
             total_time = time.time() - start_time
-            logger.info(f"시멘틱 청커 완료: {len(selected_history)}개 턴 선택, 총 시간: {total_time:.3f}초 (LLM: {llm_time:.3f}초)")
+            logger.info(f"시멘틱 청커 완료: 턴 번호 {selected_turn_numbers}, 총 시간: {total_time:.3f}초 (LLM: {llm_time:.3f}초)")
             
-            return selected_history
+            return selected_turn_numbers
             
         except Exception as e:
             logger.error(f"시멘틱 청커 오류: {e}")
-            return history[-3:]  # 기본값: 최근 3턴
+            return [3, 4, 5]  # 기본값: 최근 3턴
     
     def _truncate_history(self, history: List[Dict[str, Any]], max_turns: int = 5) -> List[Dict[str, Any]]:
         """히스토리 길이 제한"""
@@ -83,6 +85,39 @@ class SemanticChunker:
             return history
         return history[-(max_turns * 2):]
     
+    def _build_prompt_with_user_queries(self, current_query: str, user_queries: List[Dict[str, Any]]) -> str:
+        """사용자 질의만으로 프롬프트 생성"""
+        formatted = []
+        for i, msg in enumerate(user_queries, 1):
+            formatted.append(f"[턴 {i}] 사용자: {msg['message']}")
+        
+        numbered_history = "\n".join(formatted)
+        return self.template.format(
+            current_query=current_query,
+            numbered_history=numbered_history
+        )
+
+    def _parse_turn_numbers(self, response: str) -> List[int]:
+        """턴 번호만 파싱하여 반환"""
+        try:
+            numbers = re.findall(r'\d+', response)
+            # 중복 제거
+            numbers = list(dict.fromkeys(numbers))
+            
+            # 유효한 턴 번호만 필터링 (1-5 범위)
+            valid_turns = []
+            for num in numbers:
+                turn_num = int(num)
+                if 1 <= turn_num <= 5:  # 5턴 제한
+                    valid_turns.append(turn_num)
+            
+            logger.info(f"선택된 턴 번호: {valid_turns}")
+            return valid_turns
+            
+        except Exception as e:
+            logger.warning(f"턴 번호 파싱 실패: {e}")
+            return [3, 4, 5]  # 기본값: 최근 3턴
+
     def _format_numbered_history(self, history: List[Dict[str, Any]]) -> str:
         """번호가 매겨진 대화 기록 포맷팅"""
         formatted = []
@@ -143,7 +178,10 @@ class SemanticChunker:
     def _parse_response(self, response: str, processed_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """응답 파싱 (제한된 히스토리 기준)"""
         try:
+            # 145번째 줄 수정
             numbers = re.findall(r'\d+', response)
+            # 중복 제거 (VLLM이 같은 턴 번호를 여러 형태로 반환할 수 있음)
+            numbers = list(dict.fromkeys(numbers))  # 순서 유지하면서 중복 제거
             
             # 턴 번호를 히스토리 인덱스로 변환
             # 턴 1 = 히스토리 인덱스 0, 1 (사용자 메시지, 봇 메시지)
