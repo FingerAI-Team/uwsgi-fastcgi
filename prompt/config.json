@@ -3,5 +3,6 @@
     "rerank_top": 10,
     "default_model": "gemma3:12b",
     "rerank_threshold": 0.1,
-    "temperature": 0.3
+    "temperature": 0.3,
+    "use_semantic_chunker": true
 } 

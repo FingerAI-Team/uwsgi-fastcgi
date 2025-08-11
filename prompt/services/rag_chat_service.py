@@ -186,15 +186,24 @@ class RagChatService:
             # 세션 저장
             self.session_manager.save_session(session_data)
             
-            # 프롬프트 구성
-            prompt = self.session_manager.build_prompt_context(
-                session_data,
-                system_prompt,
-                rag_context=rag_context,
-                current_query=query
-            )
+            # 프롬프트 구성 (시멘틱 청커 사용 가능 여부에 따라 선택)
+            if hasattr(self.session_manager, 'semantic_chunker') and self.session_manager.semantic_chunker:
+                prompt = self.session_manager.build_prompt_context_with_semantic_chunking(
+                    session_data,
+                    system_prompt,
+                    rag_context=rag_context,
+                    current_query=query
+                )
+                logger.info(f"[체인 실행] 6단계 - 프롬프트 구성 완료 (시멘틱 청킹 적용): {len(prompt)} 문자")
+            else:
+                prompt = self.session_manager.build_prompt_context(
+                    session_data,
+                    system_prompt,
+                    rag_context=rag_context,
+                    current_query=query
+                )
+                logger.info(f"[체인 실행] 6단계 - 프롬프트 구성 완료 (기본 방식): {len(prompt)} 문자")
             
-            logger.info(f"[체인 실행] 6단계 - 프롬프트 구성 완료: {len(prompt)} 문자")
             return {
                 "prompt": prompt,
                 **inputs  # 원래 입력 유지

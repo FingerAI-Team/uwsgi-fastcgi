@@ -9,8 +9,35 @@ from datetime import datetime
 import tiktoken
 from typing import List, Dict, Any, Optional, Tuple
 
-# 로깅 설정
+# 로깅 설정 (먼저 등록)
 logger = logging.getLogger("session-manager")
+
+# 시멘틱 청커 import
+SEMANTIC_CHUNKER_AVAILABLE = False
+
+# 설정 파일에서 시멘틱 청커 사용 여부 확인
+def load_semantic_chunker_config():
+    try:
+        config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        return config.get('use_semantic_chunker', True)
+    except Exception as e:
+        logger.warning(f"설정 파일 로드 실패, 기본값 사용: {e}")
+        return True
+
+USE_SEMANTIC_CHUNKER = load_semantic_chunker_config()
+
+if USE_SEMANTIC_CHUNKER:
+    try:
+        from ..semantic_chunker.semantic_chunker import SemanticChunker
+        SEMANTIC_CHUNKER_AVAILABLE = True
+        logger.info("시멘틱 청커 모듈 로드 성공")
+    except ImportError as e:
+        logger.warning(f"시멘틱 청커 모듈 로드 실패: {e}")
+        SEMANTIC_CHUNKER_AVAILABLE = False
+else:
+    logger.info("설정 파일로 시멘틱 청커 비활성화됨")
 
 # 토큰 카운터 초기화
 tokenizer = tiktoken.get_encoding("cl100k_base")  # GPT 모델용 토크나이저 (대부분의 모델과 호환)
@@ -96,7 +123,16 @@ class SessionManager:
         # 메모리 디렉토리 생성
         os.makedirs(memory_dir, exist_ok=True)
         
-        logger.info(f"SessionManager 초기화 완료: memory_dir={memory_dir}, max_context_tokens={max_context_tokens}")
+        # 시멘틱 청커 초기화 (사용 가능한 경우)
+        self.semantic_chunker = None
+        if SEMANTIC_CHUNKER_AVAILABLE:
+            try:
+                self.semantic_chunker = SemanticChunker()
+                logger.info("시멘틱 청커 초기화 완료")
+            except Exception as e:
+                logger.warning(f"시멘틱 청커 초기화 실패: {e}")
+        
+        logger.info(f"SessionManager 초기화 완료: memory_dir={memory_dir}, max_context_tokens={max_context_tokens}, semantic_chunker={self.semantic_chunker is not None}")
     
     def _validate_session_id(self, session_id: str) -> str:
         """세션 ID를 검증하고 안전한 형식으로 변환합니다."""
@@ -298,6 +334,68 @@ class SessionManager:
             for msg in recent_history:
                 role = "사용자" if msg["role"] == "user" else "AI"
                 prompt += f"{role}: {msg['message']}\n\n"
+        
+        # 현재 질의 (별도 표시)
+        if current_query:
+            prompt += f"현재 질의: {current_query}\n\nAI: "
+        
+        return prompt
+    
+    def build_prompt_context_with_semantic_chunking(self, session_data: Dict[str, Any], 
+                                                   system_prompt: str, 
+                                                   rag_context: str = "", 
+                                                   current_query: str = "") -> str:
+        """시멘틱 청킹을 적용한 프롬프트 컨텍스트 구성"""
+        
+        # 시스템 프롬프트
+        prompt = system_prompt + "\n\n"
+        
+        # RAG 컨텍스트 (있는 경우)
+        if rag_context:
+            prompt += "관련 문서 정보:\n" + rag_context + "\n\n"
+        
+        # 시멘틱 청킹으로 관련 히스토리만 선별
+        if session_data["history"] and self.semantic_chunker:
+            try:
+                original_history_count = len(session_data["history"])
+                relevant_history = self.semantic_chunker.select_relevant_history(current_query, session_data)
+                
+                if relevant_history:
+                    prompt += "관련 대화 기록:\n"
+                    for msg in relevant_history:
+                        role = "사용자" if msg["role"] == "user" else "AI"
+                        prompt += f"{role}: {msg['message']}\n\n"
+                    prompt += "\n"
+                    
+                    # 상세한 전후 비교 로깅
+                    logger.info(f"=== 시멘틱 청킹 결과 ===")
+                    logger.info(f"질의: {current_query}")
+                    logger.info(f"원본 히스토리: {original_history_count}개 메시지")
+                    logger.info(f"선별된 히스토리: {len(relevant_history)}개 메시지")
+                    logger.info(f"제외된 메시지: {original_history_count - len(relevant_history)}개")
+                    
+                    # 선별된 대화 내용 요약
+                    selected_summary = []
+                    for i, msg in enumerate(relevant_history):
+                        role = "사용자" if msg["role"] == "user" else "AI"
+                        content = msg["message"][:50] + "..." if len(msg["message"]) > 50 else msg["message"]
+                        selected_summary.append(f"{i+1}. {role}: {content}")
+                    
+                    logger.info(f"선별된 대화 요약:")
+                    for summary in selected_summary:
+                        logger.info(f"  {summary}")
+                    logger.info(f"================================")
+                    
+                else:
+                    logger.info("시멘틱 청킹: 관련 히스토리 없음")
+                    
+            except Exception as e:
+                logger.warning(f"시멘틱 청킹 실패, 기본 방식 사용: {e}")
+                # 실패 시 기본 방식 사용
+                return self.build_prompt_context(session_data, system_prompt, rag_context, current_query)
+        else:
+            # 시멘틱 청커가 없으면 기본 방식 사용
+            return self.build_prompt_context(session_data, system_prompt, rag_context, current_query)
         
         # 현재 질의 (별도 표시)
         if current_query:
