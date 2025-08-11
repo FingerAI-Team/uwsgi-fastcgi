@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import requests
+import time
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
@@ -31,6 +32,18 @@ class QueryRewriter:
         
         # 프롬프트 템플릿 로드
         self.prompt_template = self._load_prompt_template()
+        
+        # 성능 통계 초기화
+        self.performance_stats = {
+            'total_calls': 0,
+            'total_time': 0.0,
+            'avg_time': 0.0,
+            'llm_calls': 0,
+            'llm_total_time': 0.0,
+            'llm_avg_time': 0.0,
+            'cache_hits': 0,
+            'cache_misses': 0
+        }
         
         logger.info(f"QueryRewriter 초기화 완료: endpoint={vllm_endpoint}, model={default_model}, max_history_turns={max_history_turns}")
     
@@ -88,16 +101,24 @@ class QueryRewriter:
             - confidence: 개선 신뢰도 (0.0-1.0)
             - reasoning: 재작성 이유
             - used_history: 사용된 대화 기록 수
+            - processing_time: 처리 소요 시간
+            - timing_breakdown: 단계별 시간 분석
         """
+        start_time = time.time()
+        logger.info(f"Query Rewrite 시작: 원본 질문='{current_query[:50]}...'")
+        
         try:
-            logger.info(f"Query Rewrite 시작: 원본 질문='{current_query[:50]}...'")
-            
-            # 대화 기록 추출
+            # 1단계: 대화 기록 추출
+            history_start = time.time()
             conversation_history = self._extract_conversation_history(session_data)
+            history_time = time.time() - history_start
+            logger.info(f"대화 기록 추출 완료: {history_time:.3f}초")
             
             # 대화 기록이 없거나 질문이 이미 명확한 경우 원본 반환
             if not conversation_history or self._is_query_already_clear(current_query):
-                logger.info("대화 기록이 없거나 질문이 이미 명확함 - 원본 반환")
+                total_time = time.time() - start_time
+                self._update_performance_stats(total_time, 0.0, cache_hit=True)
+                logger.info(f"Query Rewrite 완료 (원본 반환): {total_time:.3f}초")
                 return {
                     "original_query": current_query,
                     "rewritten_query": current_query,
@@ -106,23 +127,30 @@ class QueryRewriter:
                     "used_history": 0
                 }
             
-            # 프롬프트 구성
+            # 2단계: 프롬프트 구성
+            prompt_start = time.time()
             prompt = self._build_prompt(current_query, conversation_history)
+            prompt_time = time.time() - prompt_start
+            logger.info(f"프롬프트 구성 완료: {prompt_time:.3f}초")
             
-            # 프롬프트 로깅
-            logger.info(f"=== Query Rewrite 프롬프트 ===")
-            logger.info(f"프롬프트 길이: {len(prompt)} 문자")
-            logger.info(f"프롬프트 내용:\n{prompt}")
-            logger.info(f"=== 프롬프트 끝 ===")
-            
-            # LLM 호출 (항상 VLLM용 모델 사용, 더 짧은 응답 요청)
+            # 3단계: LLM 호출
+            llm_start = time.time()
             rewritten_query = self._call_llm(prompt, self.default_model)
+            llm_time = time.time() - llm_start
+            logger.info(f"LLM 호출 완료: {llm_time:.3f}초")
             
-            # 결과 검증 및 후처리
+            # 4단계: 후처리
+            post_start = time.time()
             rewritten_query = self._post_process_query(rewritten_query, current_query)
-            
-            # 신뢰도 계산
             confidence = self._calculate_confidence(current_query, rewritten_query, conversation_history)
+            post_time = time.time() - post_start
+            logger.info(f"후처리 완료: {post_time:.3f}초")
+            
+            # 총 소요 시간
+            total_time = time.time() - start_time
+            
+            # 성능 통계 업데이트
+            self._update_performance_stats(total_time, llm_time, cache_hit=False)
             
             result = {
                 "original_query": current_query,
@@ -132,12 +160,14 @@ class QueryRewriter:
                 "used_history": len(conversation_history)
             }
             
-            logger.info(f"Query Rewrite 완료: '{current_query[:30]}...' → '{rewritten_query[:30]}...' (신뢰도: {confidence:.2f})")
+            logger.info(f"Query Rewrite 완료: '{current_query[:30]}...' → '{rewritten_query[:30]}...' (신뢰도: {confidence:.2f}, 총 시간: {total_time:.3f}초)")
+            logger.info(f"시간 분석: 히스토리={history_time:.3f}s, 프롬프트={prompt_time:.3f}s, LLM={llm_time:.3f}s, 후처리={post_time:.3f}s")
+            
             return result
             
         except Exception as e:
-            logger.error(f"Query Rewrite 중 오류 발생: {str(e)}")
-            # 오류 발생 시 원본 반환
+            total_time = time.time() - start_time
+            logger.error(f"Query Rewrite 중 오류 발생: {str(e)} (소요 시간: {total_time:.3f}초)")
             return {
                 "original_query": current_query,
                 "rewritten_query": current_query,
@@ -304,11 +334,37 @@ class QueryRewriter:
         
         return min(confidence, 1.0)
     
+    def _update_performance_stats(self, total_time: float, llm_time: float, cache_hit: bool = False):
+        """성능 통계 업데이트"""
+        self.performance_stats['total_calls'] += 1
+        self.performance_stats['total_time'] += total_time
+        
+        if llm_time > 0:
+            self.performance_stats['llm_calls'] += 1
+            self.performance_stats['llm_total_time'] += llm_time
+        
+        if cache_hit:
+            self.performance_stats['cache_hits'] += 1
+        else:
+            self.performance_stats['cache_misses'] += 1
+    
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """성능 통계 반환"""
+        stats = self.performance_stats.copy()
+        if stats['total_calls'] > 0:
+            stats['avg_time'] = stats['total_time'] / stats['total_calls']
+        if stats['llm_calls'] > 0:
+            stats['llm_avg_time'] = stats['llm_total_time'] / stats['llm_calls']
+        return stats
+    
     def get_rewrite_stats(self) -> Dict[str, Any]:
         """Query Rewrite 통계를 반환합니다."""
         return {
-            "model": self.default_model,
-            "temperature": self.temperature,
-            "max_history_turns": self.max_history_turns,
-            "endpoint": self.vllm_endpoint
+            "performance_stats": self.get_performance_stats(),
+            "model_info": {
+                "endpoint": self.vllm_endpoint,
+                "model": self.default_model,
+                "temperature": self.temperature,
+                "max_history_turns": self.max_history_turns
+            }
         } 
