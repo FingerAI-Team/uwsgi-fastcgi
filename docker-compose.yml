@@ -424,6 +424,33 @@ services:
       - ollama-only
       - db-only
 
+  # Meilisearch 서비스 (하이브리드 검색용)
+  meilisearch:
+    image: getmeili/meilisearch:v1.5
+    container_name: milvus-meilisearch
+    ports:
+      - "7700:7700"
+    environment:
+      - MEILI_MASTER_KEY=legal-search-hybrid-key-2024
+      - MEILI_ENV=development
+      - MEILI_DB_PATH=/meili_data
+      - MEILI_HTTP_ADDR=0.0.0.0:7700
+      - MEILI_LOG_LEVEL=info
+    volumes:
+      - meilisearch_data:/meili_data
+      - ./volumes/logs/meilisearch:/var/log/meilisearch
+    networks:
+      - rag_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    profiles:
+      - all
+      - rag-only
+
 networks:
   rag_network:
     name: rag_network
@@ -431,4 +458,5 @@ networks:
 
 volumes:
   shared_tmp:
-    name: ${COMPOSE_PROJECT_NAME:-rag}_shared_tmp 
+    name: ${COMPOSE_PROJECT_NAME:-rag}_shared_tmp
+  meilisearch_data: 

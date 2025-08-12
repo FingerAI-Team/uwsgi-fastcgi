@@ -3,6 +3,9 @@ from pymilvus import Collection
 from dotenv import load_dotenv
 from src import EnvManager, InteractManager
 from src.pipe import InteractManager as PipeInteractManager  # 명시적으로 pipe.py의 InteractManager 임포트
+
+# 통합 법령 검색 시스템 임포트
+from hierarchical.engines.integrated_legal_search import get_integrated_search_system
 import logging
 import json 
 import os 
@@ -80,6 +83,9 @@ emb_model = env_manager.set_emb_model()
 milvus_data, milvus_meta = env_manager.set_vectordb()
 milvus_db = env_manager.milvus_db
 interact_manager = InteractManager(data_p=env_manager.data_p, vectorenv=milvus_db, vectordb=milvus_data, emb_model=emb_model)
+
+# 통합 법령 검색 시스템 초기화
+integrated_search_system = None
 
 # 자주 사용하는 컬렉션을 미리 로드하는 함수
 def load_common_collections():
@@ -2742,6 +2748,550 @@ def test_or_operator():
             "status": "error",
             "message": f"요청 처리 중 오류 발생: {str(e)}"
         }), 500
+
+
+# ==============================
+# 🚀 통합 법령 검색 시스템 API
+# ==============================
+
+def get_or_init_integrated_search():
+    """통합 검색 시스템 인스턴스 조회 또는 초기화"""
+    global integrated_search_system
+    if integrated_search_system is None:
+        try:
+            integrated_search_system = get_integrated_search_system(interact_manager)
+            logger.info("통합 법령 검색 시스템 초기화 완료")
+        except Exception as e:
+            logger.error(f"통합 법령 검색 시스템 초기화 실패: {e}")
+            raise
+    return integrated_search_system
+
+
+@app.route('/rag/legal/search', methods=['POST'])
+def legal_search():
+    """
+    통합 법령 검색 API
+    
+    Vector + BM25 하이브리드 검색, 고급 재랭킹, 위계 컨텍스트, 결과 설명을 모두 제공
+    """
+    try:
+        start_time = time.time()
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                "status": "error",
+                "message": "JSON 데이터가 필요합니다"
+            }), 400
+        
+        # 필수 파라미터 검증
+        query = data.get('query')
+        if not query or not query.strip():
+            return jsonify({
+                "status": "error", 
+                "message": "검색 쿼리가 필요합니다"
+            }), 400
+        
+        # 검색 파라미터 구성
+        domains = data.get("domains", ["nanet_related_law_cstt"])  # 기본값으로 헌법및법률
+        search_params = {
+            "top_k": data.get("top_k", 15),
+            "domains": domains,
+            "enable_explanation": data.get("enable_explanation", True),
+            "enable_context": data.get("enable_context", True),
+            "filter_conditions": data.get("filter_conditions", {}),
+            "explanation_mode": data.get("explanation_mode", True)
+        }
+        
+        logger.info(f"🏛️ 법령 검색 요청: '{query}' (top_k={search_params['top_k']})")
+        
+        # 통합 검색 시스템으로 검색
+        search_system = get_or_init_integrated_search()
+        result = search_system.search(query, search_params)
+        
+        # 응답 시간 추가
+        end_time = time.time()
+        result["api_response_time_ms"] = int((end_time - start_time) * 1000)
+        
+        logger.info(f"✅ 법령 검색 완료: {result.get('total_results', 0)}개 결과, {end_time - start_time:.3f}초")
+        
+        return jsonify({
+            "status": "success",
+            "data": result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"법령 검색 중 오류: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"법령 검색 중 오류가 발생했습니다: {str(e)}"
+        }), 500
+
+
+@app.route('/rag/legal/search/simple', methods=['POST'])
+def legal_search_simple():
+    """
+    간소화된 법령 검색 API
+    
+    빠른 응답을 위한 기본 검색 (컨텍스트 강화 및 상세 설명 제외)
+    """
+    try:
+        start_time = time.time()
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                "status": "error",
+                "message": "JSON 데이터가 필요합니다"
+            }), 400
+        
+        query = data.get('query')
+        if not query or not query.strip():
+            return jsonify({
+                "status": "error",
+                "message": "검색 쿼리가 필요합니다"
+            }), 400
+        
+        # 간소화된 검색 파라미터
+        search_params = {
+            "top_k": data.get("top_k", 10),
+            "collection_name": data.get("collection_name", "legal_documents"),
+            "enable_explanation": False,  # 설명 비활성화
+            "enable_context": False,      # 컨텍스트 비활성화
+            "filter_conditions": data.get("filter_conditions", {}),
+            "explanation_mode": False
+        }
+        
+        logger.info(f"🏛️ 간소 법령 검색: '{query}' (top_k={search_params['top_k']})")
+        
+        search_system = get_or_init_integrated_search()
+        result = search_system.search(query, search_params)
+        
+        # 간소화된 응답 (핵심 정보만)
+        simplified_results = []
+        for r in result.get("results", []):
+            simplified_result = {
+                "node_id": r.get("node_id"),
+                "content": r.get("content"),
+                "title": r.get("title"),
+                "article_number": r.get("article_number"),
+                "law_title": r.get("law_title"),
+                "law_type": r.get("law_type"),
+                "hierarchy_path": r.get("hierarchy_path"),
+                "score": r.get("final_rerank_score", r.get("hybrid_score", 0.0)),
+                "rank": r.get("final_rank", r.get("rank", 0))
+            }
+            simplified_results.append(simplified_result)
+        
+        end_time = time.time()
+        
+        response = {
+            "query": query,
+            "total_results": len(simplified_results),
+            "results": simplified_results,
+            "response_time_ms": int((end_time - start_time) * 1000),
+            "search_type": "simple_legal_search"
+        }
+        
+        logger.info(f"✅ 간소 법령 검색 완료: {len(simplified_results)}개 결과, {end_time - start_time:.3f}초")
+        
+        return jsonify({
+            "status": "success",
+            "data": response
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"간소 법령 검색 중 오류: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"검색 중 오류가 발생했습니다: {str(e)}"
+        }), 500
+
+
+@app.route('/rag/legal/search/status', methods=['GET'])
+def legal_search_status():
+    """법령 검색 시스템 상태 조회"""
+    try:
+        search_system = get_or_init_integrated_search()
+        status = search_system.get_system_status()
+        
+        return jsonify({
+            "status": "success",
+            "data": status
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"시스템 상태 조회 중 오류: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"시스템 상태 조회 중 오류가 발생했습니다: {str(e)}"
+        }), 500
+
+
+@app.route('/rag/legal/search/stats', methods=['GET'])
+def legal_search_stats():
+    """법령 검색 시스템 통계 조회"""
+    try:
+        search_system = get_or_init_integrated_search()
+        stats = search_system.get_search_statistics()
+        
+        return jsonify({
+            "status": "success",
+            "data": stats
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"검색 통계 조회 중 오류: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"검색 통계 조회 중 오류가 발생했습니다: {str(e)}"
+        }), 500
+
+
+# =============================================================================
+# 법령 인덱싱 API들
+# =============================================================================
+
+# 법령 인덱서 전역 변수
+legal_indexer = None
+
+def get_or_init_legal_indexer():
+    """법령 인덱서 인스턴스 조회 또는 초기화"""
+    global legal_indexer
+    if legal_indexer is None:
+        try:
+            from hierarchical.legal.indexer import LegalIndexer
+            legal_indexer = LegalIndexer(existing_interact_manager=interact_manager)
+            logger.info("법령 인덱서 초기화 완료")
+        except Exception as e:
+            logger.error(f"법령 인덱서 초기화 실패: {e}")
+            raise
+    return legal_indexer
+
+
+@app.route('/rag/legal/insert', methods=['POST'])
+def legal_insert():
+    """
+    법령 문서를 위계형 구조로 인덱싱합니다.
+    
+    Request Body:
+    ```json
+    {
+        "documents": [
+            {
+                "title": "개인정보보호법",                    // 필수: 문서 제목
+                "text": "제1장 총칙\n제1조(목적) 이 법은 개인정보의 처리 및 보호에 관한 사항을 정함으로써...\n\n제2조(정의) ① 이 법에서 사용하는 용어의 뜻은 다음과 같다.\n1. 개인정보란...",  // 필수: 문서 내용
+                
+                // === 선택 필드 (자동 추출됨) ===
+                "law_type": "법률",                          // 선택: 법령 유형 (자동 추출 또는 기본값 "법률")
+                "law_number": "법률 제11690호",               // 선택: 법률 번호 (자동 추출)
+                "domain": "nanet_related_law_cstt"           // 필수: 도메인 (컬렉션명 역할)
+            }
+        ],
+
+        "ignore_duplicates": true,                           // 선택: 중복 무시 (기본: true)
+        "enable_meilisearch": true                           // 선택: Meilisearch 인덱싱 (기본: true)
+    }
+    ```
+    
+    참고: 
+    - 16개 필드 중 10개는 완전 자동 생성 (node_id, document_id, hierarchy_level, parent_node_id, hierarchy_path, content_embedding, created_at, article_number, paragraph_number, item_number)
+    - 문서 하나가 여러 노드로 자동 분할되어 인덱싱됨 (조문/항/호 단위)
+    - 법령 제정일, 시행일 등은 content에서 자동 추출되어 메타데이터로 저장됨
+    
+    Returns:
+        JSON: 인덱싱 결과 요약 및 각 문서별 처리 결과
+    """
+    api_start_time = time.time()
+    logger.info("=== LEGAL INSERT API START ===")
+    
+    try:
+        # 요청 데이터 파싱
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                "status": "error",
+                "message": "JSON 요청 데이터가 필요합니다"
+            }), 400
+        
+        documents = data.get('documents', [])
+        if not documents:
+            return jsonify({
+                "status": "error",
+                "message": "문서 목록이 필요합니다"
+            }), 400
+        
+        ignore_duplicates = data.get('ignore_duplicates', True)
+        enable_meilisearch = data.get('enable_meilisearch', True)
+        
+        # 법령 인덱서 가져오기
+        indexer = get_or_init_legal_indexer()
+        
+        # 문서 인덱싱 수행
+        indexing_results = []
+        total_indexed = 0
+        total_errors = 0
+        
+        for doc_idx, document in enumerate(documents):
+            doc_start_time = time.time()
+            
+            try:
+                logger.info(f"법령 문서 {doc_idx+1}/{len(documents)} 인덱싱 시작: {document.get('title', 'Unknown')}")
+                
+                # 도메인 확인 (컬렉션명으로 사용)
+                domain = document.get('domain')
+                if not domain:
+                    raise ValueError("문서에 domain 필드가 필요합니다")
+                
+                # 1. 문서 파싱 및 노드 생성
+                parsed_nodes = indexer.parse_document(document)
+                if not parsed_nodes:
+                    raise ValueError("파싱된 노드가 없습니다")
+                
+                # 2. Milvus에 벡터 인덱싱 (도메인을 컬렉션명으로 사용)
+                milvus_result = indexer.index_document_nodes(
+                    parsed_nodes, 
+                    collection_name=domain,
+                    ignore_duplicates=ignore_duplicates
+                )
+                
+                # 3. Meilisearch에 키워드 인덱싱 (활성화된 경우)
+                meilisearch_result = None
+                if enable_meilisearch:
+                    try:
+                        # Meilisearch 인덱싱 수행 (도메인을 인덱스명으로 사용)
+                        meilisearch_result = indexer.index_to_meilisearch(
+                            parsed_nodes,
+                            index_name=domain
+                        )
+                    except Exception as meil_e:
+                        logger.warning(f"Meilisearch 인덱싱 실패 (Milvus는 성공): {meil_e}")
+                        meilisearch_result = {"status": "failed", "error": str(meil_e)}
+                
+                doc_duration = time.time() - doc_start_time
+                
+                result = {
+                    "document_index": doc_idx,
+                    "title": document.get('title', 'Unknown'),
+                    "status": "success",
+                    "total_nodes": len(parsed_nodes),
+                    "milvus_result": milvus_result,
+                    "meilisearch_result": meilisearch_result,
+                    "processing_time_seconds": round(doc_duration, 3)
+                }
+                
+                indexing_results.append(result)
+                total_indexed += len(parsed_nodes)
+                
+                logger.info(f"법령 문서 {doc_idx+1} 인덱싱 완료: {len(parsed_nodes)}개 노드, {doc_duration:.2f}초")
+                
+            except Exception as doc_e:
+                doc_duration = time.time() - doc_start_time
+                error_result = {
+                    "document_index": doc_idx,
+                    "title": document.get('title', 'Unknown'),
+                    "status": "error",
+                    "error": str(doc_e),
+                    "processing_time_seconds": round(doc_duration, 3)
+                }
+                indexing_results.append(error_result)
+                total_errors += 1
+                logger.error(f"법령 문서 {doc_idx+1} 인덱싱 실패: {doc_e}")
+        
+        api_duration = time.time() - api_start_time
+        
+        # 전체 결과 반환
+        return jsonify({
+            "status": "success" if total_errors == 0 else "partial_success",
+            "summary": {
+                "total_documents": len(documents),
+                "successful_documents": len(documents) - total_errors,
+                "failed_documents": total_errors,
+                "total_nodes_indexed": total_indexed,
+                "collection_name": collection_name,
+                "meilisearch_enabled": enable_meilisearch
+            },
+            "results": indexing_results,
+            "performance": {
+                "total_api_time_seconds": round(api_duration, 3),
+                "average_time_per_document": round(api_duration / len(documents), 3) if documents else 0
+            },
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        api_duration = time.time() - api_start_time
+        logger.error(f"법령 인덱싱 API 오류: {e}")
+        logger.error(f"상세 오류: {traceback.format_exc()}")
+        
+        return jsonify({
+            "status": "error",
+            "message": f"법령 인덱싱 중 오류가 발생했습니다: {str(e)}",
+            "processing_time_seconds": round(api_duration, 3),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
+
+@app.route('/rag/legal/delete', methods=['DELETE'])
+def legal_delete():
+    """
+    법령 문서 또는 노드 삭제
+    
+    Request Body:
+    ```json
+    {
+        "collection_name": "legal_documents",
+        "delete_type": "document",  // "document" 또는 "node"
+        "target_ids": ["document_id_1", "document_id_2"],  // 문서 ID들 또는 노드 ID들
+        "delete_from_meilisearch": true
+    }
+    ```
+    """
+    api_start_time = time.time()
+    logger.info("=== LEGAL DELETE API START ===")
+    
+    try:
+        # 요청 데이터 파싱
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                "status": "error", 
+                "message": "JSON 요청 데이터가 필요합니다"
+            }), 400
+        
+        collection_name = data.get('collection_name', 'legal_documents')
+        delete_type = data.get('delete_type', 'document')  # 'document' or 'node'
+        target_ids = data.get('target_ids', [])
+        delete_from_meilisearch = data.get('delete_from_meilisearch', True)
+        
+        if not target_ids:
+            return jsonify({
+                "status": "error",
+                "message": "삭제할 대상 ID 목록이 필요합니다"
+            }), 400
+        
+        # 법령 인덱서 가져오기
+        indexer = get_or_init_legal_indexer()
+        
+        # 삭제 수행
+        if delete_type == "document":
+            # 문서 단위 삭제 (해당 문서의 모든 노드 삭제)
+            delete_results = []
+            for doc_id in target_ids:
+                try:
+                    result = indexer.delete_document(doc_id, collection_name)
+                    if delete_from_meilisearch and indexer.meilisearch_client:
+                        meil_result = indexer.delete_from_meilisearch(doc_id, "legal_documents")
+                        result["meilisearch_result"] = meil_result
+                    delete_results.append({
+                        "document_id": doc_id,
+                        "status": "success",
+                        "result": result
+                    })
+                except Exception as e:
+                    delete_results.append({
+                        "document_id": doc_id,
+                        "status": "error",
+                        "error": str(e)
+                    })
+        else:
+            # 노드 단위 삭제
+            delete_results = []
+            for node_id in target_ids:
+                try:
+                    result = indexer.delete_node(node_id, collection_name)
+                    if delete_from_meilisearch and indexer.meilisearch_client:
+                        meil_result = indexer.delete_from_meilisearch(node_id, "legal_documents")
+                        result["meilisearch_result"] = meil_result
+                    delete_results.append({
+                        "node_id": node_id,
+                        "status": "success", 
+                        "result": result
+                    })
+                except Exception as e:
+                    delete_results.append({
+                        "node_id": node_id,
+                        "status": "error",
+                        "error": str(e)
+                    })
+        
+        api_duration = time.time() - api_start_time
+        
+        successful_deletes = len([r for r in delete_results if r["status"] == "success"])
+        
+        return jsonify({
+            "status": "success" if successful_deletes == len(target_ids) else "partial_success",
+            "summary": {
+                "delete_type": delete_type,
+                "total_targets": len(target_ids),
+                "successful_deletes": successful_deletes,
+                "failed_deletes": len(target_ids) - successful_deletes,
+                "collection_name": collection_name,
+                "meilisearch_enabled": delete_from_meilisearch
+            },
+            "results": delete_results,
+            "performance": {
+                "total_api_time_seconds": round(api_duration, 3)
+            },
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        api_duration = time.time() - api_start_time
+        logger.error(f"법령 삭제 API 오류: {e}")
+        
+        return jsonify({
+            "status": "error",
+            "message": f"법령 삭제 중 오류가 발생했습니다: {str(e)}",
+            "processing_time_seconds": round(api_duration, 3),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
+
+@app.route('/rag/legal/collections', methods=['GET'])
+def legal_collections():
+    """법령 컬렉션 목록 조회"""
+    try:
+        indexer = get_or_init_legal_indexer()
+        collections = indexer.list_collections()
+        
+        return jsonify({
+            "status": "success",
+            "data": {
+                "collections": collections,
+                "total_count": len(collections)
+            },
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"법령 컬렉션 조회 오류: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"컬렉션 조회 중 오류가 발생했습니다: {str(e)}"
+        }), 500
+
+
+@app.route('/rag/legal/collections/<collection_name>/info', methods=['GET'])
+def legal_collection_info(collection_name):
+    """특정 법령 컬렉션 정보 조회"""
+    try:
+        indexer = get_or_init_legal_indexer()
+        info = indexer.get_collection_info(collection_name)
+        
+        return jsonify({
+            "status": "success",
+            "data": info,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"법령 컬렉션 정보 조회 오류: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"컬렉션 정보 조회 중 오류가 발생했습니다: {str(e)}"
+        }), 500
+
 
 if __name__ == "__main__":
     print(f"Start results")

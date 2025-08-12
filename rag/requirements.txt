@@ -26,3 +26,6 @@ spacy
 pymilvus
 semantic-router
 FlagEmbedding
+# Hybrid Search & Enhanced Features
+meilisearch>=0.31.0
+meilisearch-python-async>=0.31.0
