@@ -459,4 +459,5 @@ networks:
 volumes:
   shared_tmp:
     name: ${COMPOSE_PROJECT_NAME:-rag}_shared_tmp
-  meilisearch_data: 
+  meilisearch_data:
+    name: ${COMPOSE_PROJECT_NAME:-rag}_meilisearch_data 
