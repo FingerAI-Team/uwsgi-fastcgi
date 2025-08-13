@@ -1,0 +1,78 @@
+{
+  "query_length_adjustments": {
+    "short_query": {
+      "max_tokens": 3,
+      "boost_strategy": "keyword_focused",
+      "adjustment_value": 0.05,
+      "description": "짧은 쿼리는 키워드 매칭 중심"
+    },
+    "long_query": {
+      "min_tokens": 8,
+      "boost_strategy": "semantic_focused", 
+      "adjustment_value": 0.05,
+      "description": "긴 쿼리는 의미적 매칭 중심"
+    }
+  },
+  
+  "exact_matching_bonuses": {
+    "article_number": {
+      "patterns": ["제\\s*(\\d+)\\s*조"],
+      "bonus_value": 0.05,
+      "match_field": "article_number",
+      "description": "조문 번호 정확 매칭"
+    },
+    "paragraph_number": {
+      "patterns": ["제?(\\d+)\\s*항"],
+      "bonus_value": 0.03,
+      "match_field": "paragraph_number", 
+      "description": "항 번호 정확 매칭"
+    },
+    "item_number": {
+      "patterns": ["제?(\\d+)\\s*호"],
+      "bonus_value": 0.02,
+      "match_field": "item_number",
+      "description": "호 번호 정확 매칭"
+    }
+  },
+  
+  "field_matching_bonuses": {
+    "title_hit": {
+      "target_field": "title",
+      "min_term_length": 2,
+      "bonus_value": 0.05,
+      "max_bonuses": 1,
+      "description": "제목에 검색어 포함시 보너스"
+    },
+    "law_title_hit": {
+      "target_field": "law_title", 
+      "min_term_length": 2,
+      "bonus_value": 0.03,
+      "max_bonuses": 1,
+      "description": "법령명에 검색어 포함시 보너스"
+    },
+    "summary_hit": {
+      "target_field": "summary",
+      "min_term_length": 3,
+      "bonus_value": 0.02,
+      "max_bonuses": 1,
+      "description": "요약에 검색어 포함시 보너스"
+    }
+  },
+  
+  "proximity_bonuses": {
+    "adjacent_article": {
+      "max_distance": 2,
+      "bonus_values": {
+        "1": 0.03,
+        "2": 0.01
+      },
+      "description": "인접 조문 거리별 보너스"
+    }
+  },
+  
+  "adjustment_limits": {
+    "max_total_adjustment": 0.15,
+    "min_adjustment": 0.0,
+    "description": "동적 보정의 최대/최소 제한"
+  }
+}

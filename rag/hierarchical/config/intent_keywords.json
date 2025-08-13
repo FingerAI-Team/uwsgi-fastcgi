@@ -1,0 +1,51 @@
+{
+  "intent_patterns": {
+    "EXACT_ARTICLE": {
+      "regex_patterns": [
+        "제\\s*\\d+\\s*조",
+        "\\d+\\s*항",
+        "\\d+\\s*호",
+        "[가-힣]{2,}법",
+        "[가-힣]{2,}규칙",
+        "[가-힣]{2,}시행령"
+      ],
+      "keywords": [
+        "조문", "항", "호", "목"
+      ],
+      "priority": 1
+    },
+    "SANCTION": {
+      "keywords": [
+        "벌칙", "과태료", "처벌", "벌금", "형사처벌",
+        "행정처분", "과료", "징역", "금고", "벌칙조항"
+      ],
+      "priority": 2
+    },
+    "PROCEDURE": {
+      "keywords": [
+        "절차", "방법", "요건", "신고", "허가", "제출",
+        "신청", "승인", "인허가", "등록", "신청서",
+        "처리절차", "진행절차", "수속"
+      ],
+      "priority": 3
+    },
+    "DEFINITION": {
+      "keywords": [
+        "정의", "란", "의미", "뜻", "개념",
+        "용어", "해석", "정의조", "용어정의"
+      ],
+      "regex_patterns": [
+        "제\\s*2\\s*조",
+        "라고?\\s*한다",
+        "의미한다",
+        "정의한다"
+      ],
+      "priority": 4
+    }
+  },
+  "text_normalization": {
+    "remove_chars": [" ", "　", "\t"],
+    "lowercase": true,
+    "remove_punctuation": false
+  }
+}

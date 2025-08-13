@@ -1,0 +1,117 @@
+{
+  "intent_based_weights": {
+    "EXACT_ARTICLE": {
+      "description": "조문 번호나 법령명이 명시된 정확한 검색",
+      "dense_weight": 0.45,
+      "bm25_weight": 0.55,
+      "article_hint_bonus": 0.25,
+      "lawname_hint_bonus": 0.15,
+      "sibling_bonus": 0.00,
+      "reasoning": "키워드 정확 매칭이 중요하므로 BM25 우선"
+    },
+    "SANCTION": {
+      "description": "벌칙, 과태료 등 제재 관련 검색",
+      "dense_weight": 0.55,
+      "bm25_weight": 0.45,
+      "article_hint_bonus": 0.10,
+      "lawname_hint_bonus": 0.10,
+      "sibling_bonus": 0.05,
+      "reasoning": "제재 내용은 의미적 유사성도 중요"
+    },
+    "PROCEDURE": {
+      "description": "절차, 방법, 요건 등 절차 관련 검색",
+      "dense_weight": 0.60,
+      "bm25_weight": 0.40,
+      "article_hint_bonus": 0.05,
+      "lawname_hint_bonus": 0.05,
+      "sibling_bonus": 0.10,
+      "reasoning": "절차는 맥락적 이해가 중요하므로 Vector 우선"
+    },
+    "DEFINITION": {
+      "description": "정의, 의미, 개념 등 정의 관련 검색",
+      "dense_weight": 0.65,
+      "bm25_weight": 0.35,
+      "article_hint_bonus": 0.05,
+      "lawname_hint_bonus": 0.05,
+      "sibling_bonus": 0.10,
+      "reasoning": "정의는 개념적 이해가 핵심이므로 Vector 최우선"
+    },
+    "DEFAULT": {
+      "description": "일반적인 검색 (의도 불분명)",
+      "dense_weight": 0.60,
+      "bm25_weight": 0.40,
+      "article_hint_bonus": 0.10,
+      "lawname_hint_bonus": 0.10,
+      "sibling_bonus": 0.05,
+      "reasoning": "균형 잡힌 접근으로 Vector 약간 우선"
+    }
+  },
+  
+  "domain_specific_adjustments": {
+    "개인정보보호": {
+      "vector_boost": 0.05,
+      "keywords": ["개인정보", "정보주체", "개인정보처리자", "동의"],
+      "description": "개념적 이해가 중요한 도메인"
+    },
+    "전자상거래": {
+      "bm25_boost": 0.03,
+      "keywords": ["전자상거래", "소비자", "사업자", "계약"],
+      "description": "구체적 규정이 중요한 도메인"
+    },
+    "금융": {
+      "pattern_boost": 0.05,
+      "keywords": ["금융", "은행", "신용정보", "전자금융"],
+      "description": "정확한 조문 참조가 중요한 도메인"
+    }
+  },
+  
+  "query_complexity_adjustments": {
+    "simple_query": {
+      "max_terms": 3,
+      "bm25_boost": 0.05,
+      "description": "단순한 키워드 검색"
+    },
+    "complex_query": {
+      "min_terms": 8,
+      "vector_boost": 0.05,
+      "description": "복잡한 자연어 검색"
+    },
+    "medium_query": {
+      "min_terms": 4,
+      "max_terms": 7,
+      "balanced_approach": true,
+      "description": "중간 복잡도 검색"
+    }
+  },
+  
+  "temporal_adjustments": {
+    "recent_law": {
+      "recency_boost": 0.02,
+      "date_threshold": "2020-01-01",
+      "description": "최근 법령에 대한 우선순위"
+    },
+    "amended_law": {
+      "amendment_boost": 0.01,
+      "description": "개정된 법령에 대한 미세 조정"
+    }
+  },
+  
+  "tuning_guidelines": {
+    "weight_constraints": {
+      "min_weight": 0.0,
+      "max_weight": 1.0,
+      "total_primary_weights": 1.0,
+      "max_bonus_total": 0.5
+    },
+    "adjustment_increments": {
+      "major_change": 0.1,
+      "minor_change": 0.05,
+      "fine_tuning": 0.01
+    },
+    "validation_rules": {
+      "dense_plus_bm25_equals_one": true,
+      "bonus_values_positive": true,
+      "max_total_score_limited": true
+    }
+  }
+}

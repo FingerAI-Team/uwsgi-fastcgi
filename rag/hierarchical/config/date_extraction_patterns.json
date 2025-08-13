@@ -1,0 +1,47 @@
+{
+    "date_patterns": [
+        {
+            "pattern": "(\\d{4})[.년]\\s*(\\d{1,2})[.월]\\s*(\\d{1,2})[.일]?",
+            "description": "기본 날짜 패턴 YYYY.MM.DD",
+            "example": "2014.05.02"
+        },
+        {
+            "pattern": "(\\d{4})년\\s*(\\d{1,2})월\\s*(\\d{1,2})일",
+            "description": "한국어 날짜 패턴", 
+            "example": "2021년 1월 1일"
+        }
+    ],
+    "priority_rules": [
+        {
+            "context": "\\[.*개정.*\\]",
+            "score": 100,
+            "description": "대괄호 개정일 (가장 구체적)"
+        },
+        {
+            "context": "<.*개정.*>",
+            "score": 90,
+            "description": "꺾쇠 개정일"
+        },
+        {
+            "context": "제정",
+            "score": 80,
+            "description": "제정일"
+        },
+        {
+            "context": "개정",
+            "score": 50,
+            "description": "일반 개정일"
+        },
+        {
+            "context": "시행",
+            "score": 30,
+            "description": "시행일"
+        }
+    ],
+    "extraction_strategy": {
+        "mode": "node_only",
+        "description": "각 노드에서만 날짜 추출, 상속 금지",
+        "allow_null": true,
+        "fallback_to_document": false
+    }
+}

@@ -1,0 +1,197 @@
+{
+  "text_patterns": {
+    "korean_legal": {
+      "whitespace_normalize": "\\s+",
+      "paragraph_split": "\\n\\s*\\n",
+      "bullet_points": "^[·•▪▫◦‣⁃]\\s*",
+      "numbering": "^(\\d+)\\.\\s*",
+      "korean_numbering": "^([가-힣])\\.\\s*"
+    },
+    
+    "legal_structure": {
+      "articles": "제\\d+조(?:의\\d+)?",
+      "paragraphs": "[①-⑳]",
+      "items": "\\d+\\.",
+      "law_references": "「([^」]+)」",
+      "dates": "\\d{4}년\\s*\\d{1,2}월\\s*\\d{1,2}일",
+      "law_numbers": "(법률|대통령령|부령|고시|훈령|예규)\\s*제\\s*(\\d+)호"
+    },
+    
+    "query_patterns": {
+      "article_ref": "제(\\d+)조(?:의(\\d+))?",
+      "paragraph_ref": "제?(\\d+)항",
+      "item_ref": "제?(\\d+)호",
+      "subitem_ref": "([가-힣])\\s*목",
+      "law_ref": "「(.+?)」",
+      "article_range": "제(\\d+)조부터\\s*제(\\d+)조까지",
+      "law_type_detect": "(법률|시행령|령|규칙|고시|훈령|예규)"
+    }
+  },
+  
+  "hierarchy_patterns": {
+    "part": {
+      "pattern": "제(\\d+)편\\s+(.+)",
+      "level": 1,
+      "prefix": "제",
+      "suffix": "편"
+    },
+    "chapter": {
+      "pattern": "제(\\d+)장\\s+(.+)",
+      "level": 2,
+      "prefix": "제",
+      "suffix": "장"
+    },
+    "section": {
+      "pattern": "제(\\d+)절\\s+(.+)",
+      "level": 3,
+      "prefix": "제",
+      "suffix": "절"
+    },
+    "article": {
+      "pattern": "제(\\d+)조\\s*\\((.+?)\\)",
+      "level": 4,
+      "prefix": "제",
+      "suffix": "조"
+    },
+    "paragraph": {
+      "pattern": "([①-⑳])",
+      "level": 5,
+      "prefix": "",
+      "suffix": ""
+    },
+    "item": {
+      "pattern": "(\\d+)\\s*\\.\\s+(.+)",
+      "level": 6,
+      "prefix": "",
+      "suffix": "."
+    },
+    "subitem": {
+      "pattern": "([가-힣])\\s*\\.\\s+(.+)",
+      "level": 7,
+      "prefix": "",
+      "suffix": "."
+    }
+  },
+  
+  "validation_patterns": {
+    "required_fields": ["title", "text"],
+    "optional_fields": ["law_type", "law_number", "domain", "ministry"],
+    "field_formats": {
+      "law_number": "^(법률|대통령령|부령|고시|훈령|예규)\\s*제\\s*\\d+호$",
+      "article_number": "^제\\d+조$",
+      "paragraph_number": "^\\d+$",
+      "item_number": "^\\d+$"
+    }
+  },
+  
+  "metadata_detection": {
+    "law_type_hints": {
+      "법률": ["법률", "법"],
+      "시행령": ["시행령", "령", "대통령령"],
+      "시행규칙": ["시행규칙", "규칙"],
+      "고시": ["고시"],
+      "훈령": ["훈령"],
+      "예규": ["예규"]
+    },
+    
+    "domain_hints": {
+      "개인정보보호": ["개인정보", "프라이버시", "정보주체"],
+      "정보통신": ["정보통신", "인터넷", "전기통신"],
+      "전자상거래": ["전자상거래", "온라인쇼핑", "전자계약"],
+      "데이터": ["데이터", "빅데이터", "데이터경제"],
+      "금융": ["금융", "은행", "신용정보", "전자금융"],
+      "의료": ["의료", "의료정보", "건강정보", "의료법"]
+    }
+  },
+  
+  "content_extraction": {
+    "title_patterns": {
+      "with_number": "제(\\d+)조\\s*\\((.+?)\\)",
+      "without_number": "\\((.+?)\\)",
+      "simple": "^(.+?)(?:\\n|$)"
+    },
+    
+    "content_cleanup": {
+      "remove_patterns": [
+        "^제\\d+조\\s*\\([^)]+\\)\\s*",
+        "^[①-⑳]\\s*",
+        "^\\d+\\.\\s*",
+        "^[가-힣]\\s*\\.\\s*"
+      ],
+      "normalize_patterns": [
+        {"from": "\\s+", "to": " "},
+        {"from": "^\\s+|\\s+$", "to": ""}
+      ]
+    }
+  },
+  
+  "search_enhancement": {
+    "query_expansion": {
+      "conjunctions": ["및", "와", "과", "또는", "이나"],
+      "negations": ["아니", "않", "제외", "외"],
+      "modifiers": ["특히", "다만", "단서", "예외"]
+    },
+    
+    "proximity_keywords": {
+      "related_article": ["관련", "해당", "동일", "유사"],
+      "reference_article": ["준용", "적용", "참조", "인용"],
+      "exception_article": ["예외", "제외", "단서", "다만"]
+    }
+  },
+
+  "scoring_patterns": {
+    "high_priority_patterns": {
+      "exact_article_match": {
+        "pattern": "제\\s*\\d+\\s*조",
+        "boost_value": 0.25,
+        "description": "조문 번호 정확 매칭"
+      },
+      "exact_paragraph_match": {
+        "pattern": "\\d+\\s*항",
+        "boost_value": 0.15,
+        "description": "항 번호 정확 매칭"
+      },
+      "exact_item_match": {
+        "pattern": "\\d+\\s*호",
+        "boost_value": 0.10,
+        "description": "호 번호 정확 매칭"
+      }
+    },
+    
+    "medium_priority_patterns": {
+      "law_name_match": {
+        "pattern": "[가-힣]{2,}(법|규칙|시행령)",
+        "boost_value": 0.10,
+        "description": "법령명 매칭"
+      },
+      "procedure_keywords": {
+        "pattern": "절차|방법|요건|신고|허가|제출",
+        "boost_value": 0.05,
+        "description": "절차 관련 키워드"
+      },
+      "sanction_keywords": {
+        "pattern": "벌칙|과태료|처벌|벌금",
+        "boost_value": 0.05,
+        "description": "제재 관련 키워드"
+      }
+    },
+    
+    "contextual_patterns": {
+      "definition_context": {
+        "pattern": "정의|의미|뜻|개념",
+        "boost_value": 0.03,
+        "description": "정의 관련 컨텍스트"
+      },
+      "reference_context": {
+        "pattern": "준용|적용|참조",
+        "boost_value": 0.03,
+        "description": "참조 관련 컨텍스트"
+      },
+      "exception_context": {
+        "pattern": "다만|단서|예외|제외",
+        "boost_value": 0.02,
+        "description": "예외 관련 컨텍스트"
+      }
+    }
+  }
+}
