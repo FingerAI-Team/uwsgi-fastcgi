@@ -3007,7 +3007,17 @@ def legal_insert():
     
     try:
         # 요청 데이터 파싱
-        data = request.get_json()
+        try:
+            data = request.get_json()
+        except Exception as json_error:
+            logger.error(f"JSON 파싱 오류: {json_error}")
+            logger.error(f"요청 데이터: {request.get_data(as_text=True)[:500]}...")  # 처음 500자만 로깅
+            return jsonify({
+                "status": "error",
+                "message": f"JSON 파싱 오류: {str(json_error)}",
+                "hint": "JSON 형식을 확인해주세요. 쉼표, 따옴표, 중괄호가 올바른지 확인하세요."
+            }), 400
+        
         if not data:
             return jsonify({
                 "status": "error",
@@ -3049,20 +3059,27 @@ def legal_insert():
                     raise ValueError("파싱된 노드가 없습니다")
                 
                 # 2. Milvus에 벡터 인덱싱 (도메인을 컬렉션명으로 사용)
-                milvus_result = indexer.index_document_nodes(
-                    parsed_nodes, 
+                # 컬렉션이 없으면 생성
+                if not indexer._collection_exists(domain):
+                    indexer.create_collection(domain)
+                
+                # 파싱된 노드들을 직접 인덱싱
+                milvus_result = indexer._index_parsed_nodes(
                     collection_name=domain,
+                    parsed_nodes=parsed_nodes,
+                    document=document,
                     ignore_duplicates=ignore_duplicates
                 )
                 
                 # 3. Meilisearch에 키워드 인덱싱 (활성화된 경우)
                 meilisearch_result = None
-                if enable_meilisearch:
+                if enable_meilisearch and indexer.meilisearch_client:
                     try:
                         # Meilisearch 인덱싱 수행 (도메인을 인덱스명으로 사용)
                         meilisearch_result = indexer.index_to_meilisearch(
-                            parsed_nodes,
-                            index_name=domain
+                            parsed_nodes=parsed_nodes,
+                            index_name=domain,
+                            document_metadata=document
                         )
                     except Exception as meil_e:
                         logger.warning(f"Meilisearch 인덱싱 실패 (Milvus는 성공): {meil_e}")

@@ -8,6 +8,7 @@ import meilisearch
 import logging
 import time
 import json
+from datetime import datetime
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 
@@ -211,6 +212,93 @@ class MeilisearchEngine:
         except Exception as e:
             self.logger.error(f"Meilisearch 문서 추가 중 오류: {e}")
             return False
+    
+    def index_parsed_nodes(self, parsed_nodes: List[Dict[str, Any]], 
+                          index_name: str = None, 
+                          document_metadata: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        파싱된 위계형 노드들을 Meilisearch에 인덱싱
+        
+        Args:
+            parsed_nodes: 파싱된 위계형 노드들
+            index_name: 인덱스 이름 (기본값: 설정된 인덱스)
+            document_metadata: 원본 문서 메타데이터
+            
+        Returns:
+            Dict: 인덱싱 결과
+        """
+        try:
+            if not parsed_nodes:
+                return {
+                    "status": "error",
+                    "message": "파싱된 노드가 없습니다",
+                    "indexed_count": 0
+                }
+            
+            # 인덱스 이름 설정
+            target_index = index_name or self.config.index_name
+            
+            # Meilisearch 형식으로 변환
+            meili_documents = []
+            for i, node in enumerate(parsed_nodes):
+                # 노드에 메타데이터 추가
+                enriched_node = node.copy()
+                if document_metadata:
+                    enriched_node.update({
+                        "law_type": document_metadata.get("law_type", ""),
+                        "law_number": document_metadata.get("law_number", ""),
+                        "domain": document_metadata.get("domain", "legal"),
+                        "created_at": datetime.now().isoformat()
+                    })
+                
+                # Meilisearch 형식으로 변환
+                meili_doc = self._convert_to_meili_format(enriched_node)
+                if meili_doc:
+                    meili_documents.append(meili_doc)
+            
+            if not meili_documents:
+                return {
+                    "status": "error", 
+                    "message": "변환된 문서가 없습니다",
+                    "indexed_count": 0
+                }
+            
+            # 배치 추가
+            self.logger.info(f"Meilisearch 인덱스 '{target_index}'에 {len(meili_documents)}개 노드 인덱싱 시작")
+            task = self.index.add_documents(meili_documents)
+            
+            # 작업 완료 대기
+            self.client.wait_for_task(task.task_uid)
+            
+            # 결과 확인
+            task_info = self.client.get_task(task.task_uid)
+            if task_info.status == "succeeded":
+                self.logger.info(f"Meilisearch 인덱싱 성공: {len(meili_documents)}개 노드")
+                return {
+                    "status": "success",
+                    "message": f"{len(meili_documents)}개 노드 인덱싱 완료",
+                    "indexed_count": len(meili_documents),
+                    "index_name": target_index,
+                    "task_uid": task.task_uid
+                }
+            else:
+                error_msg = f"Meilisearch 인덱싱 실패: {task_info}"
+                self.logger.error(error_msg)
+                return {
+                    "status": "error",
+                    "message": error_msg,
+                    "indexed_count": 0,
+                    "task_uid": task.task_uid
+                }
+                
+        except Exception as e:
+            error_msg = f"Meilisearch 인덱싱 중 오류: {e}"
+            self.logger.error(error_msg)
+            return {
+                "status": "error",
+                "message": error_msg,
+                "indexed_count": 0
+            }
     
     def _convert_to_meili_format(self, doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """문서를 Meilisearch 형식으로 변환"""

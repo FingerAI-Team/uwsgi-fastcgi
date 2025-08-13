@@ -208,6 +208,45 @@ class BaseHierarchicalIndexer(ABC):
             self.logger.error(f"문서 인덱싱 중 오류: {e}")
             return False
     
+    def _index_parsed_nodes(self, collection_name: str, parsed_nodes: List[Dict[str, Any]], 
+                           document: Dict[str, Any], ignore_duplicates: bool = True) -> bool:
+        """
+        이미 파싱된 노드들을 인덱싱
+        
+        Args:
+            collection_name: 컬렉션 이름
+            parsed_nodes: 이미 파싱된 노드들
+            document: 원본 문서 (메타데이터용)
+            ignore_duplicates: 중복 문서 무시 여부
+            
+        Returns:
+            bool: 인덱싱 성공 여부
+        """
+        try:
+            self.logger.info(f"파싱된 노드 인덱싱 시작: {len(parsed_nodes)}개 노드")
+            
+            # 1. 필수 필드 보완
+            processed_nodes = self._prepare_chunks_for_insertion(parsed_nodes, document)
+            
+            # 2. 임베딩 생성
+            if not self._generate_embeddings(processed_nodes):
+                self.logger.error("임베딩 생성 실패")
+                return False
+            
+            # 3. 배치 삽입
+            success = self._batch_insert_chunks(collection_name, processed_nodes)
+            
+            if success:
+                self.logger.info(f"파싱된 노드 인덱싱 완료: {len(processed_nodes)}개 노드")
+            else:
+                self.logger.error("배치 삽입 실패")
+                
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"파싱된 노드 인덱싱 중 오류: {e}")
+            return False
+    
     def index_documents_batch(self, collection_name: str, documents: List[Dict[str, Any]], 
                              ignore_duplicates: bool = True) -> Dict[str, Any]:
         """
@@ -455,3 +494,44 @@ class BaseHierarchicalIndexer(ABC):
         except Exception as e:
             self.logger.error(f"통계 조회 중 오류: {e}")
             return {"error": str(e)}
+    
+    def index_to_meilisearch(self, parsed_nodes: List[Dict[str, Any]], 
+                           index_name: str = None,
+                           document_metadata: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        파싱된 노드들을 Meilisearch에 인덱싱
+        
+        Args:
+            parsed_nodes: 파싱된 위계형 노드들
+            index_name: Meilisearch 인덱스 이름
+            document_metadata: 원본 문서 메타데이터
+            
+        Returns:
+            Dict: 인덱싱 결과
+        """
+        try:
+            if not self.meilisearch_client:
+                return {
+                    "status": "error",
+                    "message": "Meilisearch 클라이언트가 초기화되지 않았습니다",
+                    "indexed_count": 0
+                }
+            
+            # Meilisearch 인덱싱 수행
+            result = self.meilisearch_client.index_parsed_nodes(
+                parsed_nodes=parsed_nodes,
+                index_name=index_name,
+                document_metadata=document_metadata
+            )
+            
+            self.logger.info(f"Meilisearch 인덱싱 결과: {result}")
+            return result
+            
+        except Exception as e:
+            error_msg = f"Meilisearch 인덱싱 중 오류: {e}"
+            self.logger.error(error_msg)
+            return {
+                "status": "error",
+                "message": error_msg,
+                "indexed_count": 0
+            }
