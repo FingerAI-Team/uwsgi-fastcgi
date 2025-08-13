@@ -250,16 +250,18 @@
 ```json
 {
     "collection_name": "legal_documents",
-    "delete_type": "document",
-    "target_ids": ["document_id_1", "document_id_2"],
+    "delete_type": "document",  // "document" 또는 "node"
+    "target_ids": ["document_id_1", "document_id_2"],  // delete_type에 따라 document_id 또는 node_id
     "delete_from_meilisearch": true
 }
 ```
 
 **파라미터:**
-- `collection_name` (선택): 컬렉션명 (기본값: "legal_documents")
+- `collection_name` (선택): 컬렉션명 (인덱싱할 때 사용한 `domain` 값과 동일, 기본값: "legal_documents")
 - `delete_type` (선택): 삭제 타입 - "document" 또는 "node" (기본값: "document")
 - `target_ids` (필수): 삭제할 대상 ID 목록
+  - `delete_type: "document"` → document_id 목록
+  - `delete_type: "node"` → node_id 목록
 - `delete_from_meilisearch` (선택): Meilisearch에서도 삭제 (기본값: true)
 
 **Response:**
@@ -416,10 +418,21 @@ curl -X POST http://localhost:5000/rag/legal/search \
 
 ### 7.3 법령 삭제
 ```bash
+# 문서 단위 삭제 (document_id 사용)
 curl -X DELETE http://localhost:5000/rag/legal/delete \
   -H "Content-Type: application/json" \
   -d '{
+    "collection_name": "nanet_related_law_cstt",
     "delete_type": "document",
-    "target_ids": ["document_id_1"]
+    "target_ids": ["document_id_1", "document_id_2"]
+  }'
+
+# 노드 단위 삭제 (node_id 사용)
+curl -X DELETE http://localhost:5000/rag/legal/delete \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_name": "nanet_related_law_cstt",
+    "delete_type": "node",
+    "target_ids": ["node_id_1", "node_id_2"]
   }'
 ```
