@@ -3108,7 +3108,7 @@ def legal_insert():
                 "successful_documents": len(documents) - total_errors,
                 "failed_documents": total_errors,
                 "total_nodes_indexed": total_indexed,
-                "collection_name": collection_name,
+                "collections_used": list(set(doc.get('domain') for doc in documents if doc.get('domain'))),
                 "meilisearch_enabled": enable_meilisearch
             },
             "results": indexing_results,
