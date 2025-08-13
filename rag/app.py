@@ -14,7 +14,7 @@ from flask.cli import with_appcontext
 import click
 import atexit
 import torch
-import datetime
+from datetime import datetime
 import sys
 import signal
 import concurrent.futures

@@ -16,8 +16,8 @@ class LegalParser:
         self.logger = logging.getLogger(__name__)
         
         # 설정 로더 초기화
-        from ..config.config_loader import ConfigLoader
-        self.config_loader = ConfigLoader()
+        from ..config.config_loader import HierarchicalConfigLoader
+        self.config_loader = HierarchicalConfigLoader()
         
         # 법령 패턴 정의
         self.patterns = self._init_legal_patterns()
