@@ -15,7 +15,7 @@ from dataclasses import dataclass
 @dataclass
 class MeiliSearchConfig:
     """Meilisearch 설정"""
-    host: str = "http://localhost:7700"
+    host: str = "http://milvus-meilisearch:7700"
     master_key: str = "legal-search-hybrid-key-2024"
     index_name: str = "legal_documents"
     primary_key: str = "node_id"
