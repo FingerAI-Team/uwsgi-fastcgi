@@ -317,7 +317,6 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=GPU-1b8ec862-333b-1bd2-4010-35aceefad60b # GPU 1번만 사용
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
       - TENSOR_PARALLEL_SIZE=1  # 단일 GPU
     networks:
       - rag_network
