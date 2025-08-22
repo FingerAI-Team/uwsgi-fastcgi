@@ -763,18 +763,20 @@ class InteractManager:
                 domains = filter_conditions['domains']
                 if isinstance(domains, list) and len(domains) > 0:
                     domain = domains[0]
-                    print(f"[DEBUG] Using domain from domains array: {domain}")
+                    print(f"[DEBUG] 🌐 domains 배열에서 도메인 사용: {domain}")
                 else:
-                    print(f"[DEBUG] Invalid domains array: {domains}")
+                    print(f"[DEBUG] ❌ 잘못된 domains 배열: {domains}")
                     return []
             elif 'domain' in filter_conditions:
                 domain = filter_conditions['domain']
-        
+                print(f"[DEBUG] 🎯 단일 domain 사용: {domain}")
+
         if not domain:
             # 도메인이 지정되지 않은 경우 기본 도메인 사용
-            domain = "news"  # 기본 도메인 설정
-        
-        print(f"[DEBUG] Using domain: {domain}")
+            domain = "legal"  # 기본 도메인을 legal로 변경
+            print(f"[DEBUG] 🏛️ 기본 도메인 사용: {domain}")
+
+        print(f"[DEBUG] 🎯 최종 사용 도메인: {domain}")
         
         # 컬렉션이 있는지 확인 (신속히 처리)
         collection_check_start = time.time()

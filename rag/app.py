@@ -2774,11 +2774,23 @@ def legal_search():
     
     Vector + BM25 하이브리드 검색, 고급 재랭킹, 위계 컨텍스트, 결과 설명을 모두 제공
     """
+    api_start_time = time.time()
+    logger.info("=== LEGAL SEARCH API START ===")
+    
     try:
-        start_time = time.time()
-        data = request.get_json()
+        # 요청 데이터 파싱
+        try:
+            data = request.get_json()
+            logger.info(f"📥 검색 요청 수신")
+        except Exception as json_error:
+            logger.error(f"❌ JSON 파싱 오류: {json_error}")
+            return jsonify({
+                "status": "error",
+                "message": f"JSON 파싱 오류: {str(json_error)}"
+            }), 400
         
         if not data:
+            logger.error("❌ JSON 데이터가 없습니다")
             return jsonify({
                 "status": "error",
                 "message": "JSON 데이터가 필요합니다"
@@ -2787,13 +2799,17 @@ def legal_search():
         # 필수 파라미터 검증
         query = data.get('query')
         if not query or not query.strip():
+            logger.error("❌ 검색 쿼리가 없습니다")
             return jsonify({
                 "status": "error", 
                 "message": "검색 쿼리가 필요합니다"
             }), 400
         
+        logger.info(f"🔍 검색 쿼리: '{query}'")
+        logger.info(f"📏 쿼리 길이: {len(query)}자")
+        
         # 검색 파라미터 구성
-        domains = data.get("domains", ["nanet_related_law_cstt"])  # 기본값으로 헌법및법률
+        domains = data.get("domains", ["nanet_related_law_cstt"])
         search_params = {
             "top_k": data.get("top_k", 15),
             "domains": domains,
@@ -2803,17 +2819,32 @@ def legal_search():
             "explanation_mode": data.get("explanation_mode", True)
         }
         
-        logger.info(f"🏛️ 법령 검색 요청: '{query}' (top_k={search_params['top_k']})")
+        logger.info(f"⚙️ 검색 파라미터:")
+        logger.info(f"   top_k: {search_params['top_k']}")
+        logger.info(f"   domains: {domains}")
+        logger.info(f"   enable_explanation: {search_params['enable_explanation']}")
+        logger.info(f"   enable_context: {search_params['enable_context']}")
+        logger.info(f"   filter_conditions: {search_params['filter_conditions']}")
         
-        # 통합 검색 시스템으로 검색
+        # 통합 검색 시스템 초기화
+        logger.info("🔧 통합 검색 시스템 초기화 시작...")
         search_system = get_or_init_integrated_search()
+        logger.info("✅ 통합 검색 시스템 초기화 완료")
+        
+        # 검색 실행
+        logger.info("🚀 검색 실행 시작...")
         result = search_system.search(query, search_params)
+        logger.info("✅ 검색 실행 완료")
         
         # 응답 시간 추가
         end_time = time.time()
-        result["api_response_time_ms"] = int((end_time - start_time) * 1000)
+        api_duration = end_time - api_start_time
+        result["api_response_time_ms"] = int(api_duration * 1000)
         
-        logger.info(f"✅ 법령 검색 완료: {result.get('total_results', 0)}개 결과, {end_time - start_time:.3f}초")
+        total_results = result.get('total_results', 0)
+        logger.info(f"📊 검색 결과: {total_results}개")
+        logger.info(f"⏱️ API 처리 시간: {api_duration:.3f}초")
+        logger.info("=== LEGAL SEARCH API END ===")
         
         return jsonify({
             "status": "success",
@@ -2821,10 +2852,14 @@ def legal_search():
         }), 200
         
     except Exception as e:
-        logger.error(f"법령 검색 중 오류: {e}")
+        api_duration = time.time() - api_start_time
+        logger.error(f"❌ 검색 API 오류: {e}")
+        logger.error(f"⏱️ 오류 시점: {api_duration:.3f}초")
+        logger.info("=== LEGAL SEARCH API END (ERROR) ===")
         return jsonify({
             "status": "error",
-            "message": f"법령 검색 중 오류가 발생했습니다: {str(e)}"
+            "message": f"법령 검색 중 오류가 발생했습니다: {str(e)}",
+            "api_processing_time_seconds": round(api_duration, 3)
         }), 500
 
 
@@ -3009,16 +3044,18 @@ def legal_insert():
         # 요청 데이터 파싱
         try:
             data = request.get_json()
+            logger.info(f"📥 요청 데이터 수신: {len(data.get('documents', []))}개 문서")
         except Exception as json_error:
-            logger.error(f"JSON 파싱 오류: {json_error}")
-            logger.error(f"요청 데이터: {request.get_data(as_text=True)[:500]}...")  # 처음 500자만 로깅
+            logger.error(f"❌ JSON 파싱 오류: {json_error}")
+            logger.error(f"📄 요청 데이터: {request.get_data(as_text=True)[:500]}...")
             return jsonify({
                 "status": "error",
                 "message": f"JSON 파싱 오류: {str(json_error)}",
-                "hint": "JSON 형식을 확인해주세요. 쉼표, 따옴표, 중괄호가 올바른지 확인하세요."
+                "hint": "JSON 형식을 확인해주세요."
             }), 400
         
         if not data:
+            logger.error("❌ JSON 요청 데이터가 없습니다")
             return jsonify({
                 "status": "error",
                 "message": "JSON 요청 데이터가 필요합니다"
@@ -3026,6 +3063,7 @@ def legal_insert():
         
         documents = data.get('documents', [])
         if not documents:
+            logger.error("❌ 문서 목록이 없습니다")
             return jsonify({
                 "status": "error",
                 "message": "문서 목록이 필요합니다"
@@ -3034,8 +3072,12 @@ def legal_insert():
         ignore_duplicates = data.get('ignore_duplicates', True)
         enable_meilisearch = data.get('enable_meilisearch', True)
         
+        logger.info(f"⚙️ 설정: ignore_duplicates={ignore_duplicates}, enable_meilisearch={enable_meilisearch}")
+        
         # 법령 인덱서 가져오기
+        logger.info("🔧 법령 인덱서 초기화 시작...")
         indexer = get_or_init_legal_indexer()
+        logger.info("✅ 법령 인덱서 초기화 완료")
         
         # 문서 인덱싱 수행
         indexing_results = []
@@ -3046,34 +3088,49 @@ def legal_insert():
             doc_start_time = time.time()
             
             try:
-                logger.info(f"법령 문서 {doc_idx+1}/{len(documents)} 인덱싱 시작: {document.get('title', 'Unknown')}")
+                logger.info(f"📄 문서 {doc_idx+1}/{len(documents)} 처리 시작")
+                logger.info(f"   제목: {document.get('title', 'Unknown')}")
+                logger.info(f"   도메인: {document.get('domain', 'Not specified')}")
+                logger.info(f"   텍스트 길이: {len(document.get('text', ''))}자")
                 
                 # 도메인 확인 (컬렉션명으로 사용)
                 domain = document.get('domain')
                 if not domain:
+                    logger.error(f"❌ 문서 {doc_idx+1}: domain 필드가 없습니다")
                     raise ValueError("문서에 domain 필드가 필요합니다")
                 
+                logger.info(f"🏗️ 컬렉션 존재 확인: {domain}")
                 # 1. 문서 파싱 및 노드 생성
+                logger.info(f"🔧 문서 파싱 시작: {domain}")
                 parsed_nodes = indexer.parse_document(document)
                 if not parsed_nodes:
+                    logger.error(f"❌ 문서 {doc_idx+1}: 파싱된 노드가 없습니다")
                     raise ValueError("파싱된 노드가 없습니다")
+                
+                logger.info(f"✅ 문서 파싱 완료: {len(parsed_nodes)}개 노드")
                 
                 # 2. Milvus에 벡터 인덱싱 (도메인을 컬렉션명으로 사용)
                 # 컬렉션이 없으면 생성
                 if not indexer._collection_exists(domain):
+                    logger.info(f"🏗️ 컬렉션 생성: {domain}")
                     indexer.create_collection(domain)
+                else:
+                    logger.info(f"✅ 기존 컬렉션 사용: {domain}")
                 
                 # 파싱된 노드들을 직접 인덱싱
+                logger.info(f"🚀 Milvus 인덱싱 시작: {len(parsed_nodes)}개 노드")
                 milvus_result = indexer._index_parsed_nodes(
                     collection_name=domain,
                     parsed_nodes=parsed_nodes,
                     document=document,
                     ignore_duplicates=ignore_duplicates
                 )
+                logger.info(f"✅ Milvus 인덱싱 완료: {milvus_result.get('indexed_count', 0)}개 노드")
                 
                 # 3. Meilisearch에 키워드 인덱싱 (활성화된 경우)
                 meilisearch_result = None
                 if enable_meilisearch and indexer.meilisearch_client:
+                    logger.info(f"🔍 Meilisearch 인덱싱 시작: {domain}")
                     try:
                         # Meilisearch 인덱싱 수행 (도메인을 인덱스명으로 사용)
                         meilisearch_result = indexer.index_to_meilisearch(
@@ -3081,9 +3138,12 @@ def legal_insert():
                             index_name=domain,
                             document_metadata=document
                         )
+                        logger.info(f"✅ Meilisearch 인덱싱 완료")
                     except Exception as meil_e:
-                        logger.warning(f"Meilisearch 인덱싱 실패 (Milvus는 성공): {meil_e}")
+                        logger.warning(f"⚠️ Meilisearch 인덱싱 실패 (Milvus는 성공): {meil_e}")
                         meilisearch_result = {"status": "failed", "error": str(meil_e)}
+                else:
+                    logger.info("⏭️ Meilisearch 인덱싱 건너뜀")
                 
                 doc_duration = time.time() - doc_start_time
                 
@@ -3100,7 +3160,7 @@ def legal_insert():
                 indexing_results.append(result)
                 total_indexed += len(parsed_nodes)
                 
-                logger.info(f"법령 문서 {doc_idx+1} 인덱싱 완료: {len(parsed_nodes)}개 노드, {doc_duration:.2f}초")
+                logger.info(f"✅ 문서 {doc_idx+1} 완료: {len(parsed_nodes)}개 노드, {doc_duration:.2f}초")
                 
             except Exception as doc_e:
                 doc_duration = time.time() - doc_start_time
@@ -3113,11 +3173,15 @@ def legal_insert():
                 }
                 indexing_results.append(error_result)
                 total_errors += 1
-                logger.error(f"법령 문서 {doc_idx+1} 인덱싱 실패: {doc_e}")
+                logger.error(f"❌ 문서 {doc_idx+1} 실패: {doc_e}")
+                logger.error(f"   처리 시간: {doc_duration:.2f}초")
         
         api_duration = time.time() - api_start_time
         
-        # 전체 결과 반환
+        logger.info(f"📊 최종 결과: {total_indexed}개 노드 인덱싱, {total_errors}개 오류")
+        logger.info(f"⏱️ 총 처리 시간: {api_duration:.2f}초")
+        logger.info("=== LEGAL INSERT API END ===")
+        
         return jsonify({
             "status": "success" if total_errors == 0 else "partial_success",
             "summary": {
@@ -3126,7 +3190,8 @@ def legal_insert():
                 "failed_documents": total_errors,
                 "total_nodes_indexed": total_indexed,
                 "collections_used": list(set(doc.get('domain') for doc in documents if doc.get('domain'))),
-                "meilisearch_enabled": enable_meilisearch
+                "meilisearch_enabled": enable_meilisearch,
+                "api_processing_time_seconds": round(api_duration, 3)
             },
             "results": indexing_results,
             "performance": {
@@ -3134,17 +3199,17 @@ def legal_insert():
                 "average_time_per_document": round(api_duration / len(documents), 3) if documents else 0
             },
             "timestamp": datetime.now().isoformat()
-        })
+        }), 200 if total_errors == 0 else 207
         
     except Exception as e:
         api_duration = time.time() - api_start_time
-        logger.error(f"법령 인덱싱 API 오류: {e}")
-        logger.error(f"상세 오류: {traceback.format_exc()}")
-        
+        logger.error(f"❌ API 전체 실패: {e}")
+        logger.error(f"⏱️ 실패 시점: {api_duration:.2f}초")
+        logger.info("=== LEGAL INSERT API END (ERROR) ===")
         return jsonify({
             "status": "error",
             "message": f"법령 인덱싱 중 오류가 발생했습니다: {str(e)}",
-            "processing_time_seconds": round(api_duration, 3),
+            "api_processing_time_seconds": round(api_duration, 3),
             "timestamp": datetime.now().isoformat()
         }), 500
 

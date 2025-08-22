@@ -102,9 +102,14 @@ class HybridSearchEngine:
                 domains = search_params["domains"]
                 if isinstance(domains, list) and len(domains) > 0:
                     # 첫 번째 도메인을 사용 (단일 도메인 검색)
-                    params["filter_conditions"]["domain"] = domains[0]
-                    self.logger.info(f"도메인 설정: {domains[0]} (전체: {domains})")
-                    
+                    params["filter_conditions"]["domains"] = domains  # domain이 아닌 domains로 전달
+                    self.logger.info(f"🌐 도메인 설정: {domains[0]} (전체: {domains})")
+                else:
+                    self.logger.warning(f"⚠️ 잘못된 domains 형식: {domains}")
+            else:
+                self.logger.info("ℹ️ domains 파라미터 없음, 기본 도메인 사용")
+
+            self.logger.info(f"🔍 최종 filter_conditions: {params['filter_conditions']}")
             self.logger.info(f"🚀 하이브리드 검색 시작: '{query}'")
             
             # 1. 의도 감지 및 동적 가중치 설정
