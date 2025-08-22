@@ -94,6 +94,36 @@
       "예규": ["예규"]
     },
     
+    "law_name_extraction": {
+      "patterns": [
+        {
+          "name": "basic_law_title",
+          "pattern": "^(.+?법)(?:\\s*\\(.+?\\))?\\s*$",
+          "description": "기본 법령명 패턴 (예: 개인정보보호법)"
+        },
+        {
+          "name": "law_with_action",
+          "pattern": "^(.+?법)(?:\\s+제정|\\s+시행|\\s*\\(|$)",
+          "description": "제정/시행 등이 포함된 법령명 패턴"
+        },
+        {
+          "name": "simple_law_name",
+          "pattern": "^(.+?법)\\s*$",
+          "description": "단순 법령명 패턴"
+        },
+        {
+          "name": "law_in_quotes",
+          "pattern": "「(.+?법)」",
+          "description": "따옴표로 감싸진 법령명 패턴"
+        }
+      ],
+      "validation": {
+        "must_end_with": "법",
+        "max_length": 50,
+        "min_length": 3
+      }
+    },
+    
     "domain_hints": {
       "개인정보보호": ["개인정보", "프라이버시", "정보주체"],
       "정보통신": ["정보통신", "인터넷", "전기통신"],

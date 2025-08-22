@@ -23,9 +23,9 @@ class BaseHierarchicalSchema(ABC):
         
     def get_base_fields(self) -> List[FieldSchema]:
         """
-        핵심 위계형 필드들 (15개 → 8개로 축소)
+        순수 위계형 필드들 (기존 시스템 호환성 제거)
         
-        실용성을 위해 필수 필드만 남긴 최적화된 스키마
+        완전히 새로운 위계형 검색 시스템을 위한 스키마
         """
         try:
             base_fields = [
@@ -77,7 +77,7 @@ class BaseHierarchicalSchema(ABC):
                     description="노드 내용"
                 ),
                 
-                # === 임베딩 필드 ===
+                # === 임베딩 필드 (단일) ===
                 FieldSchema(
                     name="content_embedding", 
                     dtype=DataType.FLOAT_VECTOR, 
@@ -100,7 +100,7 @@ class BaseHierarchicalSchema(ABC):
                 ),
             ]
             
-            self.logger.info(f"축소된 기본 필드 {len(base_fields)}개 생성 완료")
+            self.logger.info(f"순수 위계형 필드 {len(base_fields)}개 생성 완료")
             return base_fields
             
         except Exception as e:
@@ -178,24 +178,22 @@ class BaseHierarchicalSchema(ABC):
                     "metric_type": "COSINE",
                     "params": {"nlist": 1024}
                 },
-                {
-                    "field_name": "title_embedding",
-                    "index_type": "IVF_FLAT", 
-                    "metric_type": "COSINE",
-                    "params": {"nlist": 512}
-                },
-                # 위계형 구조 인덱스들
+                # 위계형 구조 인덱스들 (VARCHAR 필드는 FLAT 사용)
                 {
                     "field_name": "hierarchy_level", 
-                    "index_type": "STL_SORT"
+                    "index_type": "FLAT"
                 },
                 {
                     "field_name": "parent_node_id",
-                    "index_type": "STL_SORT"
+                    "index_type": "FLAT"
                 },
                 {
-                    "field_name": "node_type",
-                    "index_type": "STL_SORT"
+                    "field_name": "domain",
+                    "index_type": "FLAT"
+                },
+                {
+                    "field_name": "document_id",
+                    "index_type": "FLAT"
                 },
                 {
                     "field_name": "domain",
@@ -244,7 +242,7 @@ class BaseHierarchicalSchema(ABC):
         try:
             # 필수 필드 확인
             required_base_fields = [
-                "node_id", "document_id", "hierarchy_level", "node_type", 
+                "node_id", "document_id", "hierarchy_level", 
                 "title", "content", "content_embedding"
             ]
             
@@ -262,7 +260,7 @@ class BaseHierarchicalSchema(ABC):
                 self.logger.error(f"프라이머리 키는 정확히 1개여야 함: {len(primary_fields)}개 발견")
                 return False
             
-            # 벡터 필드 확인
+            # 벡터 필드 확인 (1개: content_embedding)
             vector_fields = [field for field in all_fields if field.dtype == DataType.FLOAT_VECTOR]
             if len(vector_fields) != 1:
                 self.logger.error(f"벡터 필드는 정확히 1개여야 함: {len(vector_fields)}개 발견")

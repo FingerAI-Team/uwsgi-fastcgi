@@ -86,18 +86,20 @@ class LegalIndexer(BaseHierarchicalIndexer):
                     "hierarchy_level": chunk.get("hierarchy_level", 0),
                     "parent_node_id": "",  # 나중에 설정
                     "hierarchy_path": chunk.get("hierarchy_path", "/"),
-                    "title": chunk.get("article_title", "") or chunk.get("section_number", "") or document.get("title", ""),
+                    "title": chunk.get("article_title", "") or chunk.get("section_number", "") or chunk.get("text", "")[:50] or "제목 없음",
                     "content": chunk.get("text", ""),
                     "content_embedding": None,  # 나중에 생성
                     "domain": "legal",
                     "created_at": current_time,
                     
-                    # === Legal 필드 (5개) ===
+                    # === Legal 필드 (6개) ===
                     "law_type": chunk.get("law_type", ""),
+                    "law_name": chunk.get("law_name", ""),  # 누락된 필드 추가
                     "law_number": chunk.get("law_number", ""),
                     "article_number": chunk.get("article_number", ""),
                     "paragraph_number": chunk.get("paragraph_number", ""),
                     "item_number": chunk.get("item_number", ""),
+                    "enactment_date": chunk.get("enactment_date", ""),
                 }
                 
                 nodes.append(node)
@@ -112,10 +114,10 @@ class LegalIndexer(BaseHierarchicalIndexer):
         """위계형 노드 ID 생성"""
         try:
             # 법령 특화 ID 생성
-            law_number = chunk.get("law_number", "").replace(" ", "_")
-            article_number = chunk.get("article_number", "").replace("제", "").replace("조", "")
-            paragraph_number = chunk.get("paragraph_number", "")
-            item_number = chunk.get("item_number", "")
+            law_number = chunk.get("law_number", "").replace(" ", "_") if chunk.get("law_number") else ""
+            article_number = chunk.get("article_number", "").replace("제", "").replace("조", "") if chunk.get("article_number") else ""
+            paragraph_number = chunk.get("paragraph_number", "") if chunk.get("paragraph_number") else ""
+            item_number = chunk.get("item_number", "") if chunk.get("item_number") else ""
             
             id_parts = [self.node_id_prefix]
             
@@ -240,13 +242,17 @@ class LegalIndexer(BaseHierarchicalIndexer):
             enriched_nodes = []
             
             for node in nodes:
+                # 법령명 설정 (title은 조문 제목으로 유지)
+                if "law_name" not in node or not node.get("law_name"):
+                    node["law_name"] = document.get("law_name", "")
+                
                 # 요약 생성 (옵션)
                 if self.enable_summary_generation:
-                    node["summary"] = self._generate_summary(node["content"])
+                    node["summary"] = self._generate_summary(node.get("content", ""))
                 
                 # 키워드 추출 (옵션)
                 if self.enable_keyword_extraction:
-                    node["keywords"] = self._extract_keywords(node["content"])
+                    node["keywords"] = self._extract_keywords(node.get("content", ""))
                 
                 enriched_nodes.append(node)
             
@@ -293,7 +299,7 @@ class LegalIndexer(BaseHierarchicalIndexer):
     
     def _generate_embeddings(self, nodes: List[Dict[str, Any]]) -> bool:
         """
-        임베딩 생성 (제목과 내용 별도)
+        법령 전용 임베딩 생성 (BaseHierarchicalIndexer의 _generate_embeddings 오버라이드)
         
         Args:
             nodes: 임베딩을 생성할 노드들
@@ -306,46 +312,110 @@ class LegalIndexer(BaseHierarchicalIndexer):
                 self.logger.error("임베딩 모델이 설정되지 않았습니다")
                 return False
             
-            # 제목과 내용 텍스트 분리
-            titles = []
+            # 내용 텍스트만 추출 (스키마에 content_embedding만 있음)
             contents = []
             valid_nodes = []
             
             for node in nodes:
-                title = node.get("title", "").strip()
                 content = node.get("content", "").strip()
-                
-                if title or content:
-                    titles.append(title if title else content[:100])
-                    contents.append(content if content else title)
+                if content:
+                    contents.append(content)
                     valid_nodes.append(node)
             
             if not valid_nodes:
                 self.logger.warning("임베딩할 텍스트가 없습니다")
                 return False
             
-            self.logger.info(f"임베딩 생성 시작: {len(valid_nodes)}개 노드")
+            self.logger.info(f"🚀 법령 전용 임베딩 생성 시작: {len(valid_nodes)}개 노드")
             
-            # 제목 임베딩 생성
-            if titles:
-                title_embeddings = self.interact_manager.emb_model.bge_batch_embed_data(titles)
-                if title_embeddings and len(title_embeddings) == len(titles):
-                    for node, embedding in zip(valid_nodes, title_embeddings):
-                        node["title_embedding"] = embedding
-                        
-            # 내용 임베딩 생성
-            if contents:
-                content_embeddings = self.interact_manager.emb_model.bge_batch_embed_data(contents)
-                if content_embeddings and len(content_embeddings) == len(contents):
-                    for node, embedding in zip(valid_nodes, content_embeddings):
-                        node["content_embedding"] = embedding
-            
-            self.logger.info("임베딩 생성 완료")
-            return True
+            # 내용 임베딩 생성 (스키마에 맞게)
+            content_embeddings = self.interact_manager.emb_model.bge_batch_embed_data(contents)
+            if content_embeddings and len(content_embeddings) == len(contents):
+                for node, embedding in zip(valid_nodes, content_embeddings):
+                    node["content_embedding"] = embedding
+                
+                self.logger.info("✅ 법령 전용 임베딩 생성 완료")
+                return True
+            else:
+                self.logger.error("❌ 법령 임베딩 생성 실패")
+                return False
             
         except Exception as e:
-            self.logger.error(f"임베딩 생성 중 오류: {e}")
+            self.logger.error(f"법령 임베딩 생성 중 오류: {e}")
             return False
+    
+    def _batch_insert_chunks(self, collection_name: str, chunks: List[Dict[str, Any]]) -> bool:
+        """
+        법령 전용 배치 삽입 (BaseHierarchicalIndexer의 _batch_insert_chunks 오버라이드)
+        
+        법령 필드들 (law_type, law_number 등)을 포함한 완전한 검증 및 삽입
+        
+        Args:
+            collection_name: 컬렉션 이름
+            chunks: 삽입할 청크들
+            
+        Returns:
+            bool: 성공 여부
+        """
+        try:
+            if not self.interact_manager:
+                self.logger.error("InteractManager가 설정되지 않았습니다")
+                return False
+            
+            # 법령 전용 배치 삽입 로직
+            self.logger.info(f"🚀 법령 전용 배치 삽입 시작: {len(chunks)}개 노드")
+            
+            # 1. 법령 필드 검증 (Base + Legal 필드 모두)
+            valid_chunks = []
+            for chunk in chunks:
+                if self._validate_legal_chunk(chunk):
+                    valid_chunks.append(chunk)
+                else:
+                    self.logger.warning(f"법령 필드 검증 실패: {chunk.get('node_id', 'unknown')}")
+            
+            if not valid_chunks:
+                self.logger.error("유효한 법령 청크가 없습니다")
+                return False
+            
+            # 2. 부모 클래스의 위계형 배치 삽입 사용
+            success = super()._batch_insert_chunks(collection_name, valid_chunks)
+            
+            if success:
+                self.logger.info(f"✅ 법령 전용 배치 삽입 완료: {len(valid_chunks)}개 노드")
+            else:
+                self.logger.error(f"❌ 법령 전용 배치 삽입 실패")
+                
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"법령 배치 삽입 중 오류: {e}")
+            return False
+    
+    def _validate_legal_chunk(self, chunk: Dict[str, Any]) -> bool:
+        """법령 청크 필드 검증 (Base + Legal 필드 모두)"""
+        # Base 필드 검증
+        base_required_fields = [
+            "node_id", "document_id", "hierarchy_level", 
+            "title", "content", "content_embedding"
+        ]
+        
+        for field in base_required_fields:
+            if field not in chunk or chunk[field] is None:
+                self.logger.warning(f"Base 필드 누락: {field}")
+                return False
+        
+        # Legal 필드 검증 (선택적 - 빈 문자열 허용)
+        legal_fields = [
+            "law_type", "law_number", "article_number", 
+            "paragraph_number", "item_number", "enactment_date"
+        ]
+        
+        for field in legal_fields:
+            if field not in chunk:
+                self.logger.warning(f"Legal 필드 누락: {field}")
+                return False
+        
+        return True
     
     def get_legal_indexing_stats(self, collection_name: str) -> Dict[str, Any]:
         """법령 인덱싱 통계 조회"""

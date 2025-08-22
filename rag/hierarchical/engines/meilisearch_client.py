@@ -41,7 +41,7 @@ class MeilisearchEngine:
         # 검색 설정
         self.search_settings = {
             "limit": 100,
-            "attributesToHighlight": ["content", "title"],
+            "attributesToHighlight": ["content", "title", "law_name"],
             "highlightPreTag": "<mark>",
             "highlightPostTag": "</mark>",
             "attributesToCrop": ["content"],
@@ -95,16 +95,18 @@ class MeilisearchEngine:
     def _configure_index(self):
         """인덱스 설정 구성"""
         try:
-            # 검색 가능한 속성 설정
+            # 검색 가능한 속성 설정 (축소)
             searchable_attributes = [
                 "content",          # 본문 (가장 중요)
-                "title",           # 제목 (법령명/조문제목 통합)
+                "title",           # 제목 (조문 제목)
+                "law_name",        # 법령명 (새로 추가)
                 "article_number",  # 조문 번호
             ]
             
             # 필터 가능한 속성 설정 (축소)
             filterable_attributes = [
                 "law_type",
+                "law_name",        # 법령명 필터링 추가
                 "domain", 
                 "hierarchy_level",
                 "law_number",
@@ -126,6 +128,7 @@ class MeilisearchEngine:
                 "node_id",
                 "content",
                 "title", 
+                "law_name",        # 법령명 표시 추가
                 "article_number",
                 "paragraph_number",
                 "item_number",
@@ -246,6 +249,7 @@ class MeilisearchEngine:
                 if document_metadata:
                     enriched_node.update({
                         "law_type": document_metadata.get("law_type", ""),
+                        "law_name": document_metadata.get("law_name", ""),  # 법령명 추가
                         "law_number": document_metadata.get("law_number", ""),
                         "domain": document_metadata.get("domain", "legal"),
                         "created_at": datetime.now().isoformat()
@@ -300,43 +304,35 @@ class MeilisearchEngine:
                 "indexed_count": 0
             }
     
-    def _convert_to_meili_format(self, doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """문서를 Meilisearch 형식으로 변환"""
+    def _convert_to_meili_format(self, node: Dict[str, Any]) -> Dict[str, Any]:
+        """Milvus 노드를 Meilisearch 형식으로 변환"""
         try:
-            # 필수 필드 확인
-            if not doc.get("node_id") or not doc.get("content"):
-                return None
-            
             meili_doc = {
-                # 기본 식별 정보
-                "node_id": doc.get("node_id"),
-                "content": doc.get("content", ""),
-                "title": doc.get("title", ""),
+                "id": node.get("node_id", ""),
+                "document_id": node.get("document_id", ""),
+                "hierarchy_level": node.get("hierarchy_level", 0),
+                "parent_node_id": node.get("parent_node_id", ""),
+                "hierarchy_path": node.get("hierarchy_path", ""),
+                "title": node.get("title", ""),  # 조문 제목
+                "content": node.get("content", ""),
+                "domain": node.get("domain", ""),
+                "created_at": node.get("created_at", ""),
                 
-                # 법령 구조 정보
-                "article_number": doc.get("article_number", ""),
-                "paragraph_number": doc.get("paragraph_number", 0),
-                "item_number": doc.get("item_number", 0),
-                "hierarchy_level": doc.get("hierarchy_level", 0),
-                "hierarchy_path": doc.get("hierarchy_path", ""),
-                "node_type": doc.get("node_type", ""),
-                
-                # 법령 메타데이터 (축소)
-                "law_type": doc.get("law_type", ""),
-                "law_number": doc.get("law_number", ""),
-                "domain": doc.get("domain", ""),
-                
-                # 메타데이터
-                "created_at": doc.get("created_at", "")
+                # 법령 특화 필드
+                "law_type": node.get("law_type", ""),
+                "law_name": node.get("law_name", ""),  # 법령명
+                "law_number": node.get("law_number", ""),
+                "article_number": node.get("article_number", ""),
+                "paragraph_number": node.get("paragraph_number", ""),
+                "item_number": node.get("item_number", ""),
+                "enactment_date": node.get("enactment_date", ""),
             }
-            
-            # JSON 필드 처리 코드 제거됨 (해당 필드들이 삭제됨)
             
             return meili_doc
             
         except Exception as e:
-            self.logger.error(f"문서 변환 중 오류: {e}")
-            return None
+            self.logger.error(f"Meilisearch 형식 변환 중 오류: {e}")
+            return node
     
     def search(self, query: str, limit: int = 50, filters: Optional[Dict] = None) -> List[Dict[str, Any]]:
         """BM25 검색 수행"""
@@ -354,12 +350,15 @@ class MeilisearchEngine:
             if filters:
                 filter_expressions = []
                 for key, values in filters.items():
+                    if not values:  # 빈 값 스킵
+                        continue
                     if isinstance(values, list):
                         if len(values) == 1:
                             filter_expressions.append(f"{key} = '{values[0]}'")
                         else:
-                            value_list = "', '".join(str(v) for v in values)
-                            filter_expressions.append(f"{key} IN ['{value_list}']")
+                            value_list = "', '".join(str(v) for v in values if v)  # 빈 값 제외
+                            if value_list:
+                                filter_expressions.append(f"{key} IN ['{value_list}']")
                     else:
                         filter_expressions.append(f"{key} = '{values}'")
                 
@@ -414,11 +413,11 @@ class MeilisearchEngine:
                 
                 # 메타데이터
                 "article_number": hit.get("article_number", ""),
-                "paragraph_number": hit.get("paragraph_number", 0),
+                "paragraph_number": hit.get("paragraph_number", ""),  # VARCHAR 필드이므로 빈 문자열로 변경
                 "hierarchy_level": hit.get("hierarchy_level", 0),
                 "hierarchy_path": hit.get("hierarchy_path", ""),
-                # law_title 필드 제거됨
                 "law_type": hit.get("law_type", ""),
+                "law_name": hit.get("law_name", ""),  # 누락된 필드 추가
                 "domain": hit.get("domain", ""),
                 
                 # 검색 관련 정보

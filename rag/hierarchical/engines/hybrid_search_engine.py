@@ -8,9 +8,12 @@ Vector 검색(Milvus)과 BM25 검색(Meilisearch)을 결합하여
 import logging
 import time
 import numpy as np
+import re
 from typing import Dict, List, Any, Optional, Tuple
 from collections import defaultdict
 from dataclasses import dataclass
+import concurrent.futures
+from threading import Thread
 
 from .meilisearch_client import get_meilisearch_engine
 from ..utils.intent_detector import get_intent_detector
@@ -28,6 +31,14 @@ class HybridSearchConfig:
     enable_pattern_boost: bool = True
     enable_deduplication: bool = True
     max_results: int = 20
+    
+    # 상수 정의
+    MAX_PATTERN_BOOST: float = 0.5
+    SHORT_QUERY_THRESHOLD: int = 3
+    LONG_QUERY_THRESHOLD: int = 8
+    LENGTH_BIAS_ADJUSTMENT: float = 0.05
+    EXACT_MATCH_BONUS: float = 0.05
+    TITLE_HIT_BONUS: float = 0.05
 
 
 class HybridSearchEngine:
@@ -43,7 +54,7 @@ class HybridSearchEngine:
         self.config = config or HybridSearchConfig()
         self.logger = logging.getLogger(__name__)
         
-        # 검색 엔진들
+        # 검색 엔진들 (싱글톤 패턴 사용)
         self.meilisearch_engine = get_meilisearch_engine()
         self.intent_detector = get_intent_detector()
         self.config_loader = get_config_loader()
@@ -192,49 +203,35 @@ class HybridSearchEngine:
             return {"query": query, "intent": "DEFAULT", "strategy": "balanced"}
     
     def _execute_parallel_search(self, query: str, params: Dict, context: Dict) -> Dict[str, List]:
-        """병렬 검색 실행"""
+        """진짜 병렬 검색 실행"""
         try:
             search_results = {
                 "vector": [],
                 "bm25": []
             }
             
-            # Vector 검색 (기존 시스템)
-            if self.interact_manager:
+            # ThreadPoolExecutor를 사용한 병렬 검색
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                # Vector 검색과 BM25 검색을 동시에 실행
+                vector_future = executor.submit(self._vector_search, query, params)
+                bm25_future = executor.submit(self._bm25_search, query, params)
+                
+                # 결과 대기 (각각 완료될 때까지)
                 try:
-                    self.search_stats["vector_searches"] += 1
-                    vector_results = self.interact_manager.retrieve_data(
-                        query=query,
-                        top_k=params["vector_top_k"],
-                        filter_conditions=params["filter_conditions"]
-                    )
-                    
-                    # Vector 결과 형식 통일
-                    for result in vector_results:
-                        if isinstance(result, dict):
-                            result["search_strategy"] = "vector"
-                            result["vector_score"] = result.get("score", 0.0)
-                    
+                    vector_results = vector_future.result(timeout=30)  # 30초 타임아웃
                     search_results["vector"] = vector_results
-                    self.logger.debug(f"Vector 검색: {len(vector_results)}개 결과")
-                    
+                    self.logger.debug(f"Vector 검색 완료: {len(vector_results)}개 결과")
                 except Exception as e:
                     self.logger.error(f"Vector 검색 중 오류: {e}")
-            
-            # BM25 검색 (Meilisearch)
-            try:
-                self.search_stats["bm25_searches"] += 1
-                bm25_results = self.meilisearch_engine.search(
-                    query=query,
-                    limit=params["bm25_top_k"],
-                    filters=params["filter_conditions"]
-                )
+                    search_results["vector"] = []
                 
-                search_results["bm25"] = bm25_results
-                self.logger.debug(f"BM25 검색: {len(bm25_results)}개 결과")
-                
-            except Exception as e:
-                self.logger.error(f"BM25 검색 중 오류: {e}")
+                try:
+                    bm25_results = bm25_future.result(timeout=30)  # 30초 타임아웃
+                    search_results["bm25"] = bm25_results
+                    self.logger.debug(f"BM25 검색 완료: {len(bm25_results)}개 결과")
+                except Exception as e:
+                    self.logger.error(f"BM25 검색 중 오류: {e}")
+                    search_results["bm25"] = []
             
             self.search_stats["hybrid_searches"] += 1
             return search_results
@@ -242,6 +239,47 @@ class HybridSearchEngine:
         except Exception as e:
             self.logger.error(f"병렬 검색 실행 중 오류: {e}")
             return {"vector": [], "bm25": []}
+    
+    def _vector_search(self, query: str, params: Dict) -> List[Dict]:
+        """Vector 검색 (별도 메서드로 분리)"""
+        try:
+            if not self.interact_manager:
+                return []
+            
+            self.search_stats["vector_searches"] += 1
+            vector_results = self.interact_manager.retrieve_data(
+                query=query,
+                top_k=params["vector_top_k"],
+                filter_conditions=params["filter_conditions"]
+            )
+            
+            # Vector 결과 형식 통일
+            for result in vector_results:
+                if isinstance(result, dict):
+                    result["search_strategy"] = "vector"
+                    result["vector_score"] = result.get("score", 0.0)
+            
+            return vector_results
+            
+        except Exception as e:
+            self.logger.error(f"Vector 검색 중 오류: {e}")
+            return []
+    
+    def _bm25_search(self, query: str, params: Dict) -> List[Dict]:
+        """BM25 검색 (별도 메서드로 분리)"""
+        try:
+            self.search_stats["bm25_searches"] += 1
+            bm25_results = self.meilisearch_engine.search(
+                query=query,
+                limit=params["bm25_top_k"],
+                filters=params["filter_conditions"]
+            )
+            
+            return bm25_results
+            
+        except Exception as e:
+            self.logger.error(f"BM25 검색 중 오류: {e}")
+            return []
     
     def _apply_pattern_boost(self, search_results: Dict, query: str, context: Dict) -> Dict[str, List]:
         """패턴 부스트 적용"""
@@ -269,8 +307,6 @@ class HybridSearchEngine:
     
     def _extract_query_patterns(self, query: str) -> Dict[str, List[str]]:
         """쿼리에서 패턴 추출"""
-        import re
-        
         patterns = {
             "articles": re.findall(r'제\s*(\d+)\s*조', query),
             "paragraphs": re.findall(r'제?\s*(\d+)\s*항', query),
@@ -317,7 +353,7 @@ class HybridSearchEngine:
                         boost_score += context["weights"]["lawname_boost"]
                         break
             
-            return min(boost_score, 0.5)  # 최대 0.5로 제한
+            return min(boost_score, self.config.MAX_PATTERN_BOOST)  # 상수 사용
             
         except Exception as e:
             self.logger.error(f"패턴 부스트 계산 중 오류: {e}")
@@ -458,23 +494,23 @@ class HybridSearchEngine:
         
         # 기본 로직
         tokens = len(query.split())
-        if tokens <= 3:
-            adjustments["length_bias"] = 0.05
-        elif tokens >= 8:
-            adjustments["length_bias"] = 0.05
+        if tokens <= self.config.SHORT_QUERY_THRESHOLD:
+            adjustments["length_bias"] = self.config.LENGTH_BIAS_ADJUSTMENT
+        elif tokens >= self.config.LONG_QUERY_THRESHOLD:
+            adjustments["length_bias"] = self.config.LENGTH_BIAS_ADJUSTMENT
         
         query_articles = re.findall(r'제\s*(\d+)\s*조', query)
         doc_article = result.get("article_number", "")
         for num in query_articles:
             if f"제{num}조" in doc_article:
-                adjustments["exact_numeric"] = 0.05
+                adjustments["exact_numeric"] = self.config.EXACT_MATCH_BONUS
                 break
         
         title = result.get("title", "")
         query_terms = [term for term in query.split() if len(term) >= 2]
         for term in query_terms:
             if term in title:
-                adjustments["title_hit"] = 0.05
+                adjustments["title_hit"] = self.config.TITLE_HIT_BONUS
                 break
         
         adjustments["total"] = sum([adjustments["length_bias"], adjustments["exact_numeric"], adjustments["title_hit"]])

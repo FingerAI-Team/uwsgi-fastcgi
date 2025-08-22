@@ -60,6 +60,12 @@ class LegalSchema(BaseHierarchicalSchema):
                     description="법령 유형 (법률/시행령/시행규칙/고시)"
                 ),
                 FieldSchema(
+                    name="law_name",
+                    dtype=DataType.VARCHAR,
+                    max_length=256,
+                    description="법령명 (개인정보보호법, 전자상거래법 등)"
+                ),
+                FieldSchema(
                     name="law_number",
                     dtype=DataType.VARCHAR,
                     max_length=128,
@@ -114,27 +120,31 @@ class LegalSchema(BaseHierarchicalSchema):
                 # === 필수 인덱스만 ===
                 {
                     "field_name": "law_type",
-                    "index_type": "STL_SORT"
+                    "index_type": "FLAT"  # VARCHAR 필드는 FLAT 인덱스 사용
+                },
+                {
+                    "field_name": "law_name",
+                    "index_type": "FLAT"
                 },
                 {
                     "field_name": "law_number", 
-                    "index_type": "STL_SORT"
+                    "index_type": "FLAT"
                 },
                 {
                     "field_name": "article_number",
-                    "index_type": "STL_SORT"
+                    "index_type": "FLAT"
                 },
                 {
                     "field_name": "paragraph_number",
-                    "index_type": "STL_SORT"
+                    "index_type": "FLAT"
                 },
                 {
                     "field_name": "item_number",
-                    "index_type": "STL_SORT"
+                    "index_type": "FLAT"
                 },
                 {
                     "field_name": "enactment_date",
-                    "index_type": "STL_SORT"
+                    "index_type": "FLAT"
                 }
             ]
             
@@ -158,7 +168,7 @@ class LegalSchema(BaseHierarchicalSchema):
             
             # 법령 필수 필드 확인 (날짜 필드 포함)
             legal_required_fields = [
-                "law_type", "law_number", "article_number", "enactment_date"
+                "law_type", "law_name", "law_number", "article_number", "enactment_date"
             ]
             
             for required_field in legal_required_fields:
@@ -223,6 +233,7 @@ class LegalSchema(BaseHierarchicalSchema):
             
             # === Legal 필드 (6개) ===
             "law_type": "법률",
+            "law_name": "개인정보보호법",
             "law_number": "법률 제11690호",
             "article_number": "제1조",
             "paragraph_number": "",  # 단일 조문이므로 비어있음

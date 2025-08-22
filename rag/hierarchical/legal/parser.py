@@ -15,9 +15,8 @@ class LegalParser:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         
-        # 설정 로더 초기화
-        from ..config.config_loader import HierarchicalConfigLoader
-        self.config_loader = HierarchicalConfigLoader()
+        # 설정 로더 지연 초기화 (순환 참조 방지)
+        self.config_loader = None
         
         # 법령 패턴 정의
         self.patterns = self._init_legal_patterns()
@@ -47,12 +46,16 @@ class LegalParser:
             "부칙": "supplementary"
         }
     
+    def _get_config_loader(self):
+        """설정 로더 지연 초기화"""
+        if self.config_loader is None:
+            from ..config.config_loader import get_config_loader
+            self.config_loader = get_config_loader()
+        return self.config_loader
+    
     def _init_legal_patterns(self) -> Dict[str, str]:
         """법령 패턴 초기화"""
         return {
-            # 법령명
-            "law_title": r"^(.+?법)(?:\s*\(.+?\))?\s*$",
-            
             # 편/장/절
             "part": r"제(\d+)편\s+(.+?)$",
             "chapter": r"제(\d+)장\s+(.+?)$", 
@@ -75,18 +78,6 @@ class LegalParser:
             
             # 법령 번호
             "law_number": r"(법률|대통령령|총리령|부령)\s*제(\d+)호",
-            
-            # 날짜
-            "date": r"(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일",
-            
-            # 법령 제정일
-            "enactment_date": r"제정\s*(\d{4})[.년]\s*(\d{1,2})[.월]\s*(\d{1,2})[.일]?",
-            
-            # 법령 시행일
-            "enforcement_date": r"시행\s*(\d{4})[.년]\s*(\d{1,2})[.월]\s*(\d{1,2})[.일]?",
-            
-            # 개정일
-            "amendment_date": r"개정\s*(\d{4})[.년]\s*(\d{1,2})[.월]\s*(\d{1,2})[.일]?",
             
             # 조문 참조
             "article_ref": r"제(\d+)조(?:의(\d+))?(?:\s*제(\d+)항)?(?:\s*제(\d+)호)?",
@@ -145,6 +136,7 @@ class LegalParser:
             metadata = {
                 "original_doc": document,
                 "law_title": document.get("title", ""),
+                "law_name": document.get("title", ""),  # 기본값: 문서 title
                 "law_type": document.get("law_type", "법률"),
                 "law_number": document.get("law_number", ""),
                 "ministry": document.get("ministry", ""),
@@ -152,6 +144,13 @@ class LegalParser:
                 "enforcement_date": document.get("enforcement_date", ""),
                 "domain": document.get("domain", "legal"),
             }
+            
+            # 법령명 자동 추출 시도 (title이 없거나 비어있으면 텍스트에서 추출)
+            if not metadata["law_name"]:
+                extracted_law_name = self._extract_law_name(document.get("text", ""))
+                if extracted_law_name:
+                    metadata["law_name"] = extracted_law_name
+                    metadata["law_title"] = extracted_law_name  # law_title도 함께 업데이트
             
             # 법령 번호 자동 추출 시도
             if not metadata["law_number"]:
@@ -176,12 +175,78 @@ class LegalParser:
         try:
             match = re.search(self.patterns["law_number"], text)
             if match:
-                law_type = match.group(1)
-                number = match.group(2)
-                return f"{law_type} 제{number}호"
+                law_type = match.group(1) or ""
+                number = match.group(2) or ""
+                if law_type and number:
+                    return f"{law_type} 제{number}호"
             return None
         except Exception:
             return None
+    
+    def _extract_law_name(self, text: str) -> Optional[str]:
+        """텍스트에서 법령명 추출 (설정 파일 패턴 사용)"""
+        try:
+            # 설정에서 law_name 추출 패턴 가져오기
+            law_name_config = self._get_config_loader().get_config().get("legal_patterns", {}).get("metadata_detection", {}).get("law_name_extraction", {})
+            patterns = law_name_config.get("patterns", [])
+            validation = law_name_config.get("validation", {})
+            
+            if not patterns:
+                self.logger.warning("law_name 추출 패턴이 설정되지 않음")
+                return None
+            
+            # 첫 번째 라인에서 법령명 패턴 찾기
+            lines = text.split('\n')
+            for line in lines[:5]:  # 처음 5줄만 확인
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # 설정된 패턴들을 순서대로 시도
+                for pattern_config in patterns:
+                    pattern = pattern_config.get("pattern", "")
+                    if not pattern:
+                        continue
+                    
+                    match = re.search(pattern, line)
+                    if match:
+                        law_name = match.group(1)
+                        
+                        # 검증 규칙 적용
+                        if self._validate_law_name(law_name, validation):
+                            return law_name
+            
+            return None
+            
+        except (ValueError, AttributeError) as e:
+            self.logger.error(f"법령명 추출 패턴 처리 오류: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"법령명 추출 중 예상치 못한 오류: {e}")
+            raise
+    
+    def _validate_law_name(self, law_name: str, validation: Dict[str, Any]) -> bool:
+        """법령명 검증"""
+        try:
+            if not law_name:
+                return False
+            
+            # "법"으로 끝나는지 확인
+            must_end_with = validation.get("must_end_with", "법")
+            if not law_name.endswith(must_end_with):
+                return False
+            
+            # 길이 검증
+            min_length = validation.get("min_length", 3)
+            max_length = validation.get("max_length", 50)
+            
+            if len(law_name) < min_length or len(law_name) > max_length:
+                return False
+            
+            return True
+        except Exception as e:
+            self.logger.error(f"법령명 검증 중 오류: {e}")
+            return False
     
     def _extract_enactment_date(self, text: str) -> str:
         """텍스트에서 제정일 추출 (JSON 설정 기반)"""
@@ -207,6 +272,61 @@ class LegalParser:
             self.logger.error(f"개정일 추출 중 오류: {e}")
             return ""
     
+    def _extract_date_by_priority(self, text: str, date_type: str) -> str:
+        """우선순위 기반 날짜 추출 (설정 파일 패턴 사용)"""
+        try:
+            # 설정에서 날짜 패턴 가져오기
+            date_config = self._get_config_loader().get_config().get("date_extraction_patterns", {})
+            date_type_patterns = date_config.get("date_type_patterns", {})
+            
+            # 해당 날짜 타입의 패턴들 가져오기
+            patterns = date_type_patterns.get(date_type, [])
+            
+            if not patterns:
+                self.logger.warning(f"{date_type} 날짜 패턴이 설정되지 않음")
+                return ""
+            
+            # 우선순위 순으로 정렬
+            sorted_patterns = sorted(patterns, key=lambda x: x.get("priority", 0), reverse=True)
+            
+            for pattern_config in sorted_patterns:
+                pattern = pattern_config.get("pattern", "")
+                if not pattern:
+                    continue
+                
+                match = re.search(pattern, text)
+                if match:
+                    # 그룹 개수에 따라 처리
+                    if len(match.groups()) >= 3:
+                        year = match.group(1)
+                        month = match.group(2).zfill(2)
+                        day = match.group(3).zfill(2)
+                        return f"{year}.{month}.{day}"
+                    elif len(match.groups()) == 1:
+                        # 전체 날짜가 하나의 그룹인 경우
+                        date_str = match.group(1)
+                        # YYYY.MM.DD 형식으로 변환 시도
+                        date_match = re.search(r"(\d{4})[.년]\s*(\d{1,2})[.월]\s*(\d{1,2})[.일]?", date_str)
+                        if date_match:
+                            year = date_match.group(1)
+                            month = date_match.group(2).zfill(2)
+                            day = date_match.group(3).zfill(2)
+                            return f"{year}.{month}.{day}"
+                    elif len(match.groups()) == 2:
+                        # 연도와 월만 있는 경우 (일은 1일로 가정)
+                        year = match.group(1)
+                        month = match.group(2).zfill(2)
+                        return f"{year}.{month}.01"
+            
+            return ""
+            
+        except (ValueError, AttributeError) as e:
+            self.logger.error(f"날짜 패턴 처리 오류: {e}")
+            return ""
+        except Exception as e:
+            self.logger.error(f"날짜 추출 중 예상치 못한 오류: {e}")
+            raise
+    
     def _init_parsing_context(self, doc_metadata: Dict[str, Any]) -> Dict[str, Any]:
         """파싱 컨텍스트 초기화"""
         return {
@@ -220,7 +340,7 @@ class LegalParser:
             "current_item": "",
             "current_subitem": "",
             "provision_type": "본칙",  # 기본값
-            "hierarchy_path": f"/{doc_metadata.get('law_title', '')}",
+            "hierarchy_path": f"/{doc_metadata.get('law_name', '')}",  # law_name 사용
         }
     
     def _parse_line(self, line: str, context: Dict[str, Any], line_num: int) -> Optional[Dict[str, Any]]:
@@ -292,7 +412,12 @@ class LegalParser:
                 "line_number": line_num,
                 "part_number": part_num,
                 "part_title": part_title,
-                "context": context.copy()
+                "current_hierarchy": {
+                    "part": context.get("current_part"),
+                    "chapter": context.get("current_chapter"),
+                    "section": context.get("current_section"),
+                    "article": context.get("current_article")
+                }
             }
         }
     
@@ -315,7 +440,12 @@ class LegalParser:
                 "line_number": line_num,
                 "chapter_number": chapter_num,
                 "chapter_title": chapter_title,
-                "context": context.copy()
+                "current_hierarchy": {
+                    "part": context.get("current_part"),
+                    "chapter": context.get("current_chapter"),
+                    "section": context.get("current_section"),
+                    "article": context.get("current_article")
+                }
             }
         }
     
@@ -337,13 +467,18 @@ class LegalParser:
                 "line_number": line_num,
                 "section_number": section_num,
                 "section_title": section_title,
-                "context": context.copy()
+                "current_hierarchy": {
+                    "part": context.get("current_part"),
+                    "chapter": context.get("current_chapter"),
+                    "section": context.get("current_section"),
+                    "article": context.get("current_article")
+                }
             }
         }
     
     def _create_article_chunk(self, match, context: Dict[str, Any], line_num: int) -> Dict[str, Any]:
         """조 청크 생성"""
-        article_num = match.group(1)
+        article_num = match.group(1) or ""
         article_sub = match.group(2) or ""  # 조의2, 조의3 등
         article_title = match.group(3) or ""
         article_content = match.group(4) or ""
@@ -392,8 +527,8 @@ class LegalParser:
     
     def _create_paragraph_chunk(self, match, context: Dict[str, Any], line_num: int) -> Dict[str, Any]:
         """항 청크 생성"""
-        paragraph_symbol = match.group(1)
-        paragraph_content = match.group(2)
+        paragraph_symbol = match.group(1) or ""
+        paragraph_content = match.group(2) or ""
         
         context["current_paragraph"] = paragraph_symbol
         context["current_item"] = ""
@@ -417,8 +552,8 @@ class LegalParser:
     
     def _create_item_chunk(self, match, context: Dict[str, Any], line_num: int) -> Dict[str, Any]:
         """호 청크 생성"""
-        item_num = match.group(1)
-        item_content = match.group(2)
+        item_num = match.group(1) or ""
+        item_content = match.group(2) or ""
         
         context["current_item"] = f"{item_num}."
         context["current_subitem"] = ""
@@ -442,8 +577,8 @@ class LegalParser:
     
     def _create_subitem_chunk(self, match, context: Dict[str, Any], line_num: int) -> Dict[str, Any]:
         """목 청크 생성"""
-        subitem_letter = match.group(1)
-        subitem_content = match.group(2)
+        subitem_letter = match.group(1) or ""
+        subitem_content = match.group(2) or ""
         
         context["current_subitem"] = f"{subitem_letter}."
         
@@ -488,23 +623,24 @@ class LegalParser:
         """조문 유형 분류"""
         try:
             # 제목 기반 분류
-            if article_title:
+            if article_title and article_title.strip():
                 for keyword, article_type in self.article_types.items():
                     if keyword in article_title:
                         return article_type
             
             # 내용 기반 분류 (간단한 키워드 매칭)
-            content = article_content.lower()
-            if "목적" in content or "하기 위하여" in content:
-                return "purpose"
-            elif "정의" in content or "라 함은" in content:
-                return "definition"
-            elif "적용범위" in content or "적용한다" in content:
-                return "scope"
-            elif "벌금" in content or "징역" in content or "처벌" in content:
-                return "penalty"
-            else:
-                return "general"
+            if article_content and article_content.strip():
+                content = article_content.lower()
+                if "목적" in content or "하기 위하여" in content:
+                    return "purpose"
+                elif "정의" in content or "라 함은" in content:
+                    return "definition"
+                elif "적용범위" in content or "적용한다" in content:
+                    return "scope"
+                elif "벌금" in content or "징역" in content or "처벌" in content:
+                    return "penalty"
+            
+            return "general"
                 
         except Exception as e:
             self.logger.error(f"조문 유형 분류 중 오류: {e}")
@@ -520,6 +656,7 @@ class LegalParser:
                 # 공통 메타데이터 추가
                 chunk.update({
                     "law_type": doc_metadata.get("law_type", ""),
+                    "law_name": doc_metadata.get("law_name", ""),
                     "law_number": doc_metadata.get("law_number", ""),
                     "law_title": doc_metadata.get("law_title", ""),
                     "ministry": doc_metadata.get("ministry", ""),
@@ -570,10 +707,10 @@ class LegalParser:
             matches = re.finditer(self.patterns["article_ref"], text)
             
             for match in matches:
-                article_num = match.group(1)
-                article_sub = match.group(2)
-                paragraph_num = match.group(3)
-                item_num = match.group(4)
+                article_num = match.group(1) or ""
+                article_sub = match.group(2) or ""
+                paragraph_num = match.group(3) or ""
+                item_num = match.group(4) or ""
                 
                 ref = f"제{article_num}조"
                 if article_sub:

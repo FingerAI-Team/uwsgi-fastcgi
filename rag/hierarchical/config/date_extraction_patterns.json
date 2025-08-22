@@ -11,6 +11,68 @@
             "example": "2021년 1월 1일"
         }
     ],
+    "date_type_patterns": {
+        "enactment": [
+            {
+                "name": "bracketed_enactment",
+                "pattern": "\\[.*제정.*\\]\\s*(\\d{4})[.년]\\s*(\\d{1,2})[.월]\\s*(\\d{1,2})[.일]?",
+                "description": "대괄호 제정일",
+                "priority": 100
+            },
+            {
+                "name": "basic_enactment",
+                "pattern": "제정\\s*(\\d{4})[.년]\\s*(\\d{1,2})[.월]\\s*(\\d{1,2})[.일]?",
+                "description": "기본 제정일",
+                "priority": 80
+            },
+            {
+                "name": "korean_enactment",
+                "pattern": "제정\\s*(\\d{4})년\\s*(\\d{1,2})월\\s*(\\d{1,2})일",
+                "description": "한국어 제정일",
+                "priority": 70
+            }
+        ],
+        "enforcement": [
+            {
+                "name": "bracketed_enforcement",
+                "pattern": "\\[.*시행.*\\]\\s*(\\d{4})[.년]\\s*(\\d{1,2})[.월]\\s*(\\d{1,2})[.일]?",
+                "description": "대괄호 시행일",
+                "priority": 90
+            },
+            {
+                "name": "basic_enforcement",
+                "pattern": "시행\\s*(\\d{4})[.년]\\s*(\\d{1,2})[.월]\\s*(\\d{1,2})[.일]?",
+                "description": "기본 시행일",
+                "priority": 30
+            },
+            {
+                "name": "korean_enforcement",
+                "pattern": "시행\\s*(\\d{4})년\\s*(\\d{1,2})월\\s*(\\d{1,2})일",
+                "description": "한국어 시행일",
+                "priority": 25
+            }
+        ],
+        "amendment": [
+            {
+                "name": "bracketed_amendment",
+                "pattern": "\\[.*개정.*\\]\\s*(\\d{4})[.년]\\s*(\\d{1,2})[.월]\\s*(\\d{1,2})[.일]?",
+                "description": "대괄호 개정일",
+                "priority": 95
+            },
+            {
+                "name": "basic_amendment",
+                "pattern": "개정\\s*(\\d{4})[.년]\\s*(\\d{1,2})[.월]\\s*(\\d{1,2})[.일]?",
+                "description": "기본 개정일",
+                "priority": 50
+            },
+            {
+                "name": "korean_amendment",
+                "pattern": "개정\\s*(\\d{4})년\\s*(\\d{1,2})월\\s*(\\d{1,2})일",
+                "description": "한국어 개정일",
+                "priority": 45
+            }
+        ]
+    },
     "priority_rules": [
         {
             "context": "\\[.*개정.*\\]",
