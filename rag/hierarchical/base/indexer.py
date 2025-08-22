@@ -418,12 +418,12 @@ class BaseHierarchicalIndexer(ABC):
                      "created_at": self._get_current_timestamp(),
                  }
                 
-                # 청크의 다른 필드들도 병합
-                for key, value in chunk.items():
-                    if key not in prepared_chunk:
-                        prepared_chunk[key] = value
+                 # 청크의 다른 필드들도 병합
+                 for key, value in chunk.items():
+                     if key not in prepared_chunk:
+                         prepared_chunk[key] = value
                 
-                prepared_chunks.append(prepared_chunk)
+                 prepared_chunks.append(prepared_chunk)
             
             # 4. 처리된 문서 기록 (기존 시스템과 동일)
             if hasattr(self.interact_manager, 'processed_documents'):
