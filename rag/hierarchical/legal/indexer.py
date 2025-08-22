@@ -81,7 +81,7 @@ class LegalIndexer(BaseHierarchicalIndexer):
             for chunk_idx, chunk in enumerate(chunks):
                 node = {
                     # === Base 필드 (10개) ===
-                    "node_id": self._generate_node_id(document_id, chunk_idx, chunk),
+                    "node_id": self._generate_node_id(document, chunk_idx),
                     "document_id": document_id,
                     "hierarchy_level": chunk.get("hierarchy_level", 0),
                     "parent_node_id": "",  # 나중에 설정
@@ -110,14 +110,17 @@ class LegalIndexer(BaseHierarchicalIndexer):
             self.logger.error(f"노드 변환 중 오류: {e}")
             return []
     
-    def _generate_node_id(self, document_id: str, chunk_idx: int, chunk: Dict[str, Any]) -> str:
+    def _generate_node_id(self, document: Dict[str, Any], chunk_idx: int) -> str:
         """위계형 노드 ID 생성"""
         try:
-            # 법령 특화 ID 생성
-            law_number = chunk.get("law_number", "").replace(" ", "_") if chunk.get("law_number") else ""
-            article_number = chunk.get("article_number", "").replace("제", "").replace("조", "") if chunk.get("article_number") else ""
-            paragraph_number = chunk.get("paragraph_number", "") if chunk.get("paragraph_number") else ""
-            item_number = chunk.get("item_number", "") if chunk.get("item_number") else ""
+            # document에서 필요한 정보 추출
+            document_id = self._generate_document_id(document)
+            
+            # 법령 특화 ID 생성(chunk 정보는 document에서 추출)
+            law_number = document.get("law_number", "").replace(" ", "_") if document.get("law_number") else ""
+            article_number = document.get("article_number", "").replace("제", "").replace("조", "") if document.get("article_number") else ""
+            paragraph_number = document.get("paragraph_number", "") if document.get("paragraph_number") else ""
+            item_number = document.get("item_number", "") if document.get("item_number") else ""
             
             id_parts = [self.node_id_prefix]
             

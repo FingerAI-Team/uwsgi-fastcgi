@@ -97,6 +97,14 @@ class HybridSearchEngine:
                 "explanation_mode": search_params.get("explanation_mode", False)
             }
             
+            # domains 파라미터를 filter_conditions에 추가
+            if "domains" in search_params and search_params["domains"]:
+                domains = search_params["domains"]
+                if isinstance(domains, list) and len(domains) > 0:
+                    # 첫 번째 도메인을 사용 (단일 도메인 검색)
+                    params["filter_conditions"]["domain"] = domains[0]
+                    self.logger.info(f"도메인 설정: {domains[0]} (전체: {domains})")
+                    
             self.logger.info(f"🚀 하이브리드 검색 시작: '{query}'")
             
             # 1. 의도 감지 및 동적 가중치 설정

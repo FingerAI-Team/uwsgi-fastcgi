@@ -758,11 +758,17 @@ class InteractManager:
         # 도메인 필터
         domain = None
         if filter_conditions:
-            if 'domain' in filter_conditions:
+            if 'domains' in filter_conditions:
+                # domains 배열에서 첫 번째 도메인 사용
+                domains = filter_conditions['domains']
+                if isinstance(domains, list) and len(domains) > 0:
+                    domain = domains[0]
+                    print(f"[DEBUG] Using domain from domains array: {domain}")
+                else:
+                    print(f"[DEBUG] Invalid domains array: {domains}")
+                    return []
+            elif 'domain' in filter_conditions:
                 domain = filter_conditions['domain']
-            elif 'domains' in filter_conditions:
-                # domains가 있으면 단일 도메인 검색에서는 무시 (app.py에서 처리)
-                return []
         
         if not domain:
             # 도메인이 지정되지 않은 경우 기본 도메인 사용
