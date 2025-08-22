@@ -83,8 +83,14 @@ class HybridSearchEngine:
             start_time = time.time()
             self.search_stats["total_searches"] += 1
             
+            self.logger.info(f"🚀 === HYBRID SEARCH START ===")
+            self.logger.info(f"📝 검색 쿼리: '{query}'")
+            self.logger.info(f"📋 원본 search_params: {search_params}")
+    
+            
             if not search_params:
                 search_params = {}
+                self.logger.info("ℹ️ search_params가 None이므로 빈 딕셔너리로 초기화")
             
             # 기본 파라미터 설정
             params = {
@@ -96,10 +102,18 @@ class HybridSearchEngine:
                 "filter_conditions": search_params.get("filter_conditions", {}),
                 "explanation_mode": search_params.get("explanation_mode", False)
             }
+            self.logger.info(f"⚙️ 기본 파라미터 설정 완료:")
+            self.logger.info(f"   top_k: {params['top_k']}")
+            self.logger.info(f"   vector_top_k: {params['vector_top_k']}")
+            self.logger.info(f"   bm25_top_k: {params['bm25_top_k']}")
+            self.logger.info(f"   enable_intent_detection: {params['enable_intent_detection']}")
+            self.logger.info(f"   enable_pattern_boost: {params['enable_pattern_boost']}")
+            self.logger.info(f"   explanation_mode: {params['explanation_mode']}")
             
             # domains 파라미터를 filter_conditions에 추가
             if "domains" in search_params and search_params["domains"]:
                 domains = search_params["domains"]
+                self.logger.info(f"domains 파라미터 발견: {domains}")
                 if isinstance(domains, list) and len(domains) > 0:
                     # 첫 번째 도메인을 사용 (단일 도메인 검색)
                     params["filter_conditions"]["domains"] = domains  # domain이 아닌 domains로 전달
@@ -107,34 +121,56 @@ class HybridSearchEngine:
                 else:
                     self.logger.warning(f"⚠️ 잘못된 domains 형식: {domains}")
             else:
+                params["filter_conditions"]["domains"] = ["legal"]
                 self.logger.info("ℹ️ domains 파라미터 없음, 기본 도메인 사용")
 
             self.logger.info(f"🔍 최종 filter_conditions: {params['filter_conditions']}")
             self.logger.info(f"🚀 하이브리드 검색 시작: '{query}'")
             
+            
             # 1. 의도 감지 및 동적 가중치 설정
+            self.logger.info(f"1단계: 의도 감지 및 동적 가중치 설정 시작...")
             search_context = self._analyze_search_context(query, params)
+            self.logger.info(f"✅ 1단계 완료: search_context = {search_context}")
             
             # 2. 병렬 검색 실행
+            self.logger.info(f"🔍 2단계: 병렬 검색 실행 시작...")
             search_results = self._execute_parallel_search(query, params, search_context)
+            self.logger.info(f"✅ 2단계 완료: vector={len(search_results.get('vector', []))}개, bm25={len(search_results.get('bm25', []))}개")
             
             # 3. 패턴 부스트 적용
             if params["enable_pattern_boost"]:
+                self.logger.info(f"🚀 3단계: 패턴 부스트 적용 시작...")
                 search_results = self._apply_pattern_boost(search_results, query, search_context)
+                self.logger.info(f"✅ 3단계 완료: 패턴 부스트 적용됨")
+            else:
+                self.logger.info(f"⏭️ 3단계: 패턴 부스트 건너뜀")
             
             # 4. 하이브리드 스코어링
+            self.logger.info(f"4단계: 하이브리드 스코어링 시작...")
             scored_results = self._hybrid_scoring(search_results, search_context)
+            self.logger.info(f"✅ 4단계 완료: {len(scored_results)}개 결과 스코어링됨")
             
             # 5. 중복 제거 및 그룹화
             if self.config.enable_deduplication:
+                self.logger.info(f"🔄 5단계: 중복 제거 및 그룹화 시작...")
                 scored_results = self._deduplicate_and_group(scored_results)
+                self.logger.info(f"✅ 5단계 완료: 중복 제거 및 그룹화됨")
+            else:
+                self.logger.info(f"⏭️ 5단계: 중복 제거 건너뜀")
             
             # 6. 최종 정렬 및 제한
+            self.logger.info(f"6단계: 최종 정렬 및 제한 시작...")
             final_results = self._finalize_results(scored_results, params)
+            self.logger.info(f"✅ 6단계 완료: {len(final_results)}개 최종 결과")
             
             # 7. 검색 설명 생성
             if params["explanation_mode"]:
+                self.logger.info(f"💡 7단계: 검색 설명 생성 시작...")
                 self._add_search_explanations(final_results, search_context, query)
+                self.logger.info(f"✅ 7단계 완료: 검색 설명 생성됨")
+            else:
+                self.logger.info(f"⏭️ 7단계: 검색 설명 건너뜀")
             
             end_time = time.time()
             search_time = end_time - start_time
@@ -158,11 +194,25 @@ class HybridSearchEngine:
                 }
             }
             
-            self.logger.info(f"✅ 하이브리드 검색 완료: {len(final_results)}개 결과, {search_time:.3f}초")
+            self.logger.info(f"✅ === HYBRID SEARCH COMPLETE ===")
+            self.logger.info(f"📊 최종 결과: {len(final_results)}개")
+            self.logger.info(f"⏱️ 총 소요시간: {search_time:.3f}초")
+            self.logger.info(f"🎯 검색 의도: {search_context.get('intent', 'DEFAULT')}")
+            self.logger.info(f"📈 성능: vector={len(search_results.get('vector', []))}개, bm25={len(search_results.get('bm25', []))}개")
+            self.logger.info(f"🔧 전략: {search_context.get('strategy', 'balanced')}")
             return result
             
         except Exception as e:
-            self.logger.error(f"하이브리드 검색 중 오류: {e}")
+            end_time = time.time()
+            search_time = end_time - start_time
+            self.logger.error(f"❌ === HYBRID SEARCH ERROR ===")
+            self.logger.error(f"❌ 하이브리드 검색 중 오류: {e}")
+            self.logger.error(f"⏱️ 오류 시점: {search_time:.3f}초")
+            self.logger.error(f"📝 쿼리: '{query}'")
+            self.logger.error(f"📋 파라미터: {search_params}")
+            self.logger.error(f"�� 오류 상세: {str(e)}")
+            import traceback
+            self.logger.error(f"📚 스택 트레이스: {traceback.format_exc()}")
             return {
                 "query": query,
                 "total_results": 0,

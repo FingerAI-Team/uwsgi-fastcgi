@@ -2808,38 +2808,50 @@ def legal_search():
         logger.info(f"🔍 검색 쿼리: '{query}'")
         logger.info(f"📏 쿼리 길이: {len(query)}자")
         
-        # 검색 파라미터 구성
-        domains = data.get("domains", ["nanet_related_law_cstt"])
+        # # 검색 파라미터 구성
+        # domains = data.get("domains", ["nanet_related_law_cstt"])
+        # search_params = {
+        #     "top_k": data.get("top_k", 15),
+        #     "domains": domains,
+        #     "enable_explanation": data.get("enable_explanation", True),
+        #     "enable_context": data.get("enable_context", True),
+        #     "filter_conditions": data.get("filter_conditions", {}),
+        #     "explanation_mode": data.get("explanation_mode", True)
+        # }
+         # 검색 파라미터 설정
         search_params = {
-            "top_k": data.get("top_k", 15),
-            "domains": domains,
-            "enable_explanation": data.get("enable_explanation", True),
-            "enable_context": data.get("enable_context", True),
-            "filter_conditions": data.get("filter_conditions", {}),
-            "explanation_mode": data.get("explanation_mode", True)
+            "query": query,
+            "top_k": data.get('top_k', 20),
+            "domains": data.get('domains', ['legal']),  # 기본값을 legal로 설정
+            "enable_intent_detection": data.get('enable_intent_detection', True),
+            "enable_pattern_boost": data.get('enable_pattern_boost', True),
+            "filter_conditions": data.get('filter_conditions', {})
         }
         
         logger.info(f"⚙️ 검색 파라미터:")
         logger.info(f"   top_k: {search_params['top_k']}")
-        logger.info(f"   domains: {domains}")
-        logger.info(f"   enable_explanation: {search_params['enable_explanation']}")
-        logger.info(f"   enable_context: {search_params['enable_context']}")
-        logger.info(f"   filter_conditions: {search_params['filter_conditions']}")
+        logger.info(f"   query: {search_params['query']}")
+        logger.info(f"   domains: {search_params['domains']}")
+        # logger.info(f"   domain: {search_params['domain']}")
         
         # 통합 검색 시스템 초기화
         logger.info("🔧 통합 검색 시스템 초기화 시작...")
         search_system = get_or_init_integrated_search()
         logger.info("✅ 통합 검색 시스템 초기화 완료")
         
-        # 검색 실행
-        logger.info("🚀 검색 실행 시작...")
-        result = search_system.search(query, search_params)
-        logger.info("✅ 검색 실행 완료")
+        # 검색 수행
+        search_start_time = time.time()
+        query = search_params.pop('query')  # ✅ search_params에서 query 제거
+        result = search_system.search(query, search_params)  # ✅ 올바른 호출 방식
+        search_duration = time.time() - search_start_time
+
+        # 결과 로깅
+        total_results = len(result.get('results', []))
+        logger.info(f"📊 검색 결과: {total_results}개")
+        logger.info(f"⏱️ 검색 소요시간: {search_duration:.3f}초")
         
-        # 응답 시간 추가
-        end_time = time.time()
-        api_duration = end_time - api_start_time
-        result["api_response_time_ms"] = int(api_duration * 1000)
+        api_duration = time.time() - api_start_time
+        logger.info(f"✅ 법령 검색 완료: {total_results}개 결과, 총 {api_duration:.3f}초")
         
         total_results = result.get('total_results', 0)
         logger.info(f"📊 검색 결과: {total_results}개")
@@ -2848,8 +2860,12 @@ def legal_search():
         
         return jsonify({
             "status": "success",
-            "data": result
-        }), 200
+            "data": result,
+            "performance": {
+                "search_time_seconds": round(search_duration, 3),
+                "total_time_seconds": round(api_duration, 3)
+            }
+        })
         
     except Exception as e:
         api_duration = time.time() - api_start_time
@@ -3117,7 +3133,7 @@ def legal_insert():
                 else:
                     logger.info(f"✅ 기존 컬렉션 사용: {domain}")
                 
-                # 파싱된 노드들을 직접 인덱싱
+               # Milvus 인덱싱 수행
                 logger.info(f"🚀 Milvus 인덱싱 시작: {len(parsed_nodes)}개 노드")
                 milvus_result = indexer._index_parsed_nodes(
                     collection_name=domain,
@@ -3125,7 +3141,20 @@ def legal_insert():
                     document=document,
                     ignore_duplicates=ignore_duplicates
                 )
-                logger.info(f"✅ Milvus 인덱싱 완료: {milvus_result.get('indexed_count', 0)}개 노드")
+
+                # milvus_result가 bool이므로 수정
+                if milvus_result:
+                    logger.info(f"✅ Milvus 인덱싱 완료: {len(parsed_nodes)}개 노드")
+                    milvus_result_dict = {
+                        "status": "success",
+                        "indexed_count": len(parsed_nodes)
+                    }
+                else:
+                    logger.error(f"❌ Milvus 인덱싱 실패")
+                    milvus_result_dict = {
+                        "status": "failed",
+                        "indexed_count": 0
+                    }
                 
                 # 3. Meilisearch에 키워드 인덱싱 (활성화된 경우)
                 meilisearch_result = None
