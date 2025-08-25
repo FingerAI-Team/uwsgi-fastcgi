@@ -87,6 +87,9 @@ interact_manager = InteractManager(data_p=env_manager.data_p, vectorenv=milvus_d
 # 통합 법령 검색 시스템 초기화
 integrated_search_system = None
 
+# 법령 검색기 초기화
+legal_retriever = None
+
 # 자주 사용하는 컬렉션을 미리 로드하는 함수
 def load_common_collections():
     """
@@ -2751,28 +2754,29 @@ def test_or_operator():
 
 
 # ==============================
-# 🚀 통합 법령 검색 시스템 API
+# 🚀 법령 검색 시스템 API
 # ==============================
 
-def get_or_init_integrated_search():
-    """통합 검색 시스템 인스턴스 조회 또는 초기화"""
-    global integrated_search_system
-    if integrated_search_system is None:
+def get_or_init_legal_retriever():
+    """법령 검색기 인스턴스 조회 또는 초기화"""
+    global legal_retriever
+    if legal_retriever is None:
         try:
-            integrated_search_system = get_integrated_search_system(interact_manager)
-            logger.info("통합 법령 검색 시스템 초기화 완료")
+            from rag.hierarchical.legal.retriever import LegalRetriever
+            legal_retriever = LegalRetriever(interact_manager)
+            logger.info("법령 검색기 초기화 완료")
         except Exception as e:
-            logger.error(f"통합 법령 검색 시스템 초기화 실패: {e}")
+            logger.error(f"법령 검색기 초기화 실패: {e}")
             raise
-    return integrated_search_system
+    return legal_retriever
 
 
 @app.route('/rag/legal/search', methods=['POST'])
 def legal_search():
     """
-    통합 법령 검색 API
+    법령 검색 API
     
-    Vector + BM25 하이브리드 검색, 고급 재랭킹, 위계 컨텍스트, 결과 설명을 모두 제공
+    LegalRetriever를 직접 사용하여 content_embedding 필드로 올바른 검색 수행
     """
     api_start_time = time.time()
     logger.info("=== LEGAL SEARCH API START ===")
@@ -2808,54 +2812,87 @@ def legal_search():
         logger.info(f"🔍 검색 쿼리: '{query}'")
         logger.info(f"📏 쿼리 길이: {len(query)}자")
         
-        # # 검색 파라미터 구성
-        # domains = data.get("domains", ["nanet_related_law_cstt"])
-        # search_params = {
-        #     "top_k": data.get("top_k", 15),
-        #     "domains": domains,
-        #     "enable_explanation": data.get("enable_explanation", True),
-        #     "enable_context": data.get("enable_context", True),
-        #     "filter_conditions": data.get("filter_conditions", {}),
-        #     "explanation_mode": data.get("explanation_mode", True)
-        # }
-         # 검색 파라미터 설정
+        # 검색 파라미터 설정
         search_params = {
-            "query": query,
             "top_k": data.get('top_k', 20),
             "domains": data.get('domains', ['legal']),  # 기본값을 legal로 설정
             "enable_intent_detection": data.get('enable_intent_detection', True),
             "enable_pattern_boost": data.get('enable_pattern_boost', True),
-            "filter_conditions": data.get('filter_conditions', {})
+            "filter_conditions": data.get('filter_conditions', {}),
+            "search_mode": data.get('search_mode', 'hybrid'),
+            "include_context": data.get('include_context', True),
+            "expand_hierarchy": data.get('expand_hierarchy', True)
         }
         
         logger.info(f"⚙️ 검색 파라미터:")
         logger.info(f"   top_k: {search_params['top_k']}")
-        logger.info(f"   query: {search_params['query']}")
+        logger.info(f"   query: {query}")
         logger.info(f"   domains: {search_params['domains']}")
-        # logger.info(f"   domain: {search_params['domain']}")
+        logger.info(f"   search_mode: {search_params['search_mode']}")
         
-        # 통합 검색 시스템 초기화
-        logger.info("🔧 통합 검색 시스템 초기화 시작...")
-        search_system = get_or_init_integrated_search()
-        logger.info("✅ 통합 검색 시스템 초기화 완료")
+        # 법령 검색기 초기화
+        logger.info("🔧 법령 검색기 초기화 시작...")
+        legal_retriever = get_or_init_legal_retriever()
+        logger.info("✅ 법령 검색기 초기화 완료")
         
-        # 검색 수행
-        search_start_time = time.time()
-        query = search_params.pop('query')  # ✅ search_params에서 query 제거
-        result = search_system.search(query, search_params)  # ✅ 올바른 호출 방식
-        search_duration = time.time() - search_start_time
+        # 다중 도메인 검색 처리
+        all_results = []
+        total_results = 0
+        
+        for domain in search_params['domains']:
+            logger.info(f"🔍 도메인 '{domain}' 검색 시작...")
+            domain_start_time = time.time()
+            
+            try:
+                # LegalRetriever를 사용하여 content_embedding 필드로 검색
+                domain_results = legal_retriever.search_legal_documents(
+                    collection_name=domain,
+                    query=query,
+                    search_params=search_params
+                )
+                
+                domain_duration = time.time() - domain_start_time
+                logger.info(f"✅ 도메인 '{domain}' 검색 완료: {len(domain_results)}개 결과, {domain_duration:.3f}초")
+                
+                # 결과에 도메인 정보 추가
+                for result in domain_results:
+                    result['domain'] = domain
+                    result['search_score'] = result.get('final_score', result.get('score', 0.0))
+                
+                all_results.extend(domain_results)
+                total_results += len(domain_results)
+                
+            except Exception as domain_error:
+                logger.error(f"❌ 도메인 '{domain}' 검색 오류: {domain_error}")
+                continue
+        
+        # 검색 수행 시간 계산
+        search_duration = time.time() - api_start_time
+        
+        # 결과 정렬 (점수순)
+        all_results.sort(key=lambda x: x.get('search_score', 0.0), reverse=True)
+        
+        # top_k 제한 적용
+        final_results = all_results[:search_params['top_k']]
+        
+        # 응답 구성
+        result = {
+            "query": query,
+            "total_results": len(final_results),
+            "results": final_results,
+            "search_params": search_params,
+            "performance": {
+                "search_time_seconds": round(search_duration, 3),
+                "domains_searched": search_params['domains']
+            }
+        }
 
         # 결과 로깅
-        total_results = len(result.get('results', []))
-        logger.info(f"📊 검색 결과: {total_results}개")
+        logger.info(f"📊 검색 결과: {len(final_results)}개")
         logger.info(f"⏱️ 검색 소요시간: {search_duration:.3f}초")
         
         api_duration = time.time() - api_start_time
-        logger.info(f"✅ 법령 검색 완료: {total_results}개 결과, 총 {api_duration:.3f}초")
-        
-        total_results = result.get('total_results', 0)
-        logger.info(f"📊 검색 결과: {total_results}개")
-        logger.info(f"⏱️ API 처리 시간: {api_duration:.3f}초")
+        logger.info(f"✅ 법령 검색 완료: {len(final_results)}개 결과, 총 {api_duration:.3f}초")
         logger.info("=== LEGAL SEARCH API END ===")
         
         return jsonify({

@@ -352,7 +352,20 @@ class MeilisearchEngine:
                 for key, values in filters.items():
                     if not values:  # 빈 값 스킵
                         continue
-                    if isinstance(values, list):
+                    
+                    # domains 배열을 다중 도메인 필터로 변환
+                    if key == "domains" and isinstance(values, list) and len(values) > 0:
+                        if len(values) == 1:
+                            # 단일 도메인
+                            domain_value = values[0]
+                            filter_expressions.append(f"domain = '{domain_value}'")
+                            self.logger.info(f"🌐 단일 도메인: {domain_value}")
+                        else:
+                            # 다중 도메인 - OR 조건으로 처리
+                            domain_list = "', '".join(str(v) for v in values if v)
+                            filter_expressions.append(f"domain IN ['{domain_list}']")
+                            self.logger.info(f"🌐 다중 도메인 검색: {values}")
+                    elif isinstance(values, list):
                         if len(values) == 1:
                             filter_expressions.append(f"{key} = '{values[0]}'")
                         else:
@@ -364,6 +377,7 @@ class MeilisearchEngine:
                 
                 if filter_expressions:
                     search_options["filter"] = " AND ".join(filter_expressions)
+                    self.logger.info(f"🔍 Meilisearch 필터: {search_options['filter']}")
             
             self.logger.debug(f"Meilisearch 검색: '{query}' with options: {search_options}")
             

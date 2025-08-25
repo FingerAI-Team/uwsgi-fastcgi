@@ -115,9 +115,12 @@ class HybridSearchEngine:
                 domains = search_params["domains"]
                 self.logger.info(f"domains 파라미터 발견: {domains}")
                 if isinstance(domains, list) and len(domains) > 0:
-                    # 첫 번째 도메인을 사용 (단일 도메인 검색)
-                    params["filter_conditions"]["domains"] = domains  # domain이 아닌 domains로 전달
-                    self.logger.info(f"🌐 도메인 설정: {domains[0]} (전체: {domains})")
+                    # 다중 도메인 지원
+                    params["filter_conditions"]["domains"] = domains
+                    if len(domains) == 1:
+                        self.logger.info(f"🌐 단일 도메인: {domains[0]}")
+                    else:
+                        self.logger.info(f"🌐 다중 도메인 검색: {domains}")
                 else:
                     self.logger.warning(f"⚠️ 잘못된 domains 형식: {domains}")
             else:
