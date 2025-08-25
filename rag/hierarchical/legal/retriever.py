@@ -1294,27 +1294,32 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
         """의미적 의도 기반 검색 (config 기반)"""
         try:
             config_loader = get_config_loader()
-            intent_config = analyzed_query.get("semantic_intent")
+            intent_name = analyzed_query.get("semantic_intent")
             intent_confidence = analyzed_query.get("semantic_intent_confidence", 0.0)
             
-            if not intent_config:
+            if not intent_name:
                 self.logger.warning("의미적 의도가 감지되지 않음")
                 return []
             
-            # 의도별 검색 전략 가져오기
+            # 의도 설정에서 검색 전략 이름 가져오기
+            intents = config_loader.get_semantic_intents()
+            intent_config = intents.get(intent_name, {})
+            search_strategy_name = intent_config.get("search_strategy", "semantic_focused")
+            
+            # 검색 전략 설정 가져오기
             search_strategies = config_loader.get_search_strategies_config()
-            strategy_config = search_strategies.get(intent_config, {})
+            strategy_config = search_strategies.get(search_strategy_name, {})
             
             if not strategy_config:
-                self.logger.warning(f"의도 '{intent_config}'에 대한 검색 전략이 없음")
+                self.logger.warning(f"검색 전략 '{search_strategy_name}'에 대한 설정이 없음")
                 return []
             
-            self.logger.info(f"🎯 의도 기반 검색: {intent_config} (전략: {strategy_config})")
+            self.logger.info(f"🎯 의도 기반 검색: {intent_name} (전략: {search_strategy_name})")
             
             # 의도별 쿼리 강화
             enhanced_query = self._enhance_query_by_intent(
                 analyzed_query["processed_query"], 
-                intent_config, 
+                intent_name, 
                 intent_confidence
             )
             
@@ -1344,7 +1349,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             enhanced_results = []
             for result in results:
                 enhanced_result = self._apply_intent_scoring(
-                    result, intent_config, intent_confidence, strategy_config
+                    result, intent_name, intent_confidence, strategy_config
                 )
                 enhanced_results.append(enhanced_result)
             
@@ -1438,3 +1443,20 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
         except Exception as e:
             self.logger.error(f"의도별 점수 보정 중 오류: {e}")
             return result
+
+    def _encode_query(self, query: str) -> List[float]:
+        """쿼리를 임베딩으로 변환"""
+        try:
+            if hasattr(self, 'interact_manager') and self.interact_manager:
+                # interact_manager의 emb_model 사용
+                embeddings = self.interact_manager.emb_model.bge_batch_embed_data([query])
+                if embeddings and len(embeddings) > 0:
+                    return embeddings[0].tolist()
+            
+            # fallback: 기본 임베딩 (0으로 채움)
+            self.logger.warning("interact_manager가 없어 기본 임베딩 사용")
+            return [0.0] * 1024  # BGE 모델의 기본 차원
+            
+        except Exception as e:
+            self.logger.error(f"쿼리 임베딩 변환 중 오류: {e}")
+            return [0.0] * 1024

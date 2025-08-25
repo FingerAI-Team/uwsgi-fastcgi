@@ -9,7 +9,7 @@
     },
     "definition": {
       "keywords": ["정의", "정의는", "의미", "뜻", "개념", "란", "용어", "해석", "뭐야", "무엇", "뭐인가요", "뭐라고", "무엇인가"],
-      "confidence_threshold": 0.3,
+      "confidence_threshold": 0.2,
       "boost_weight": 0.3,
       "search_strategy": "definition_focused",
       "description": "용어나 개념의 정의를 묻는 의도"
@@ -52,7 +52,7 @@
   },
   
   "intent_detection": {
-    "min_confidence": 0.5,
+    "min_confidence": 0.2,
     "max_intents_per_query": 2,
     "context_window_size": 5,
     "enable_fuzzy_matching": true,
