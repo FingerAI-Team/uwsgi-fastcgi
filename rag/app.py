@@ -2867,12 +2867,25 @@ def legal_search():
                     result['domain'] = domain
                     result['search_score'] = result.get('final_score', result.get('score', 0.0))
                     
+                    # 디버깅: 결과 구조 로깅
+                    logger.info(f"🔍 결과 구조 확인: {list(result.keys())}")
+                    if 'entity' in result:
+                        logger.info(f"🔍 entity 타입: {type(result['entity'])}, 키: {list(result['entity'].keys()) if isinstance(result['entity'], dict) else 'N/A'}")
+                    
                     # content 필드가 없으면 entity에서 가져오기
                     if 'content' not in result and 'entity' in result:
                         if isinstance(result['entity'], dict) and 'content' in result['entity']:
                             result['content'] = result['entity']['content']
+                            logger.info(f"✅ content를 entity에서 가져옴: {result['content'][:50]}...")
                         elif hasattr(result['entity'], 'content'):
                             result['content'] = getattr(result['entity'], 'content', '')
+                            logger.info(f"✅ content를 entity 객체에서 가져옴: {result['content'][:50]}...")
+                        else:
+                            logger.warning(f"⚠️ content 필드를 찾을 수 없음")
+                    elif 'content' in result:
+                        logger.info(f"✅ content 필드 존재: {result['content'][:50]}...")
+                    else:
+                        logger.warning(f"⚠️ content 필드 없음, entity도 없음")
                     
                     # title 필드도 보장
                     if 'title' not in result and 'entity' in result:

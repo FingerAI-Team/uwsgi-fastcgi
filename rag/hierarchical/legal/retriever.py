@@ -973,6 +973,13 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                                 if attr in hit.entity:
                                     result[attr] = hit.entity[attr]
                         
+                        # content 필드가 없으면 entity에서 강제로 가져오기
+                        if 'content' not in result and hasattr(hit, 'entity') and isinstance(hit.entity, dict):
+                            if 'content' in hit.entity:
+                                result['content'] = hit.entity['content']
+                            elif 'text' in hit.entity:
+                                result['content'] = hit.entity['text']
+                        
                         formatted_results.append(result)
                         
                     except Exception as e:
