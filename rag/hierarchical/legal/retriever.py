@@ -489,7 +489,6 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 
                 results = self.interact_manager.retrieve_data(
                     query=query,
-                    collection_name=collection_name,
                     top_k=search_params.get('top_k', 10),
                     filter_conditions=search_params.get('filter_conditions', {})
                 )

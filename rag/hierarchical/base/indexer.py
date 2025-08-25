@@ -132,16 +132,32 @@ class BaseHierarchicalIndexer(ABC):
             
             for index_config in indexes:
                 try:
-                    collection.create_index(
-                        field_name=index_config["field_name"],
-                        index_params={
-                            "index_type": index_config["index_type"],
-                            "metric_type": index_config.get("metric_type", "COSINE"),
-                            "params": index_config.get("params", {})
-                        }
-                    )
-                    self.logger.info(f"인덱스 생성: {index_config['field_name']}")
+                    field_name = index_config["field_name"]
+                    index_type = index_config["index_type"]
                     
+                    # 벡터 필드인 경우에만 벡터 인덱스 생성
+                    if index_type in ["IVF_FLAT", "IVF_SQ8", "HNSW"]:
+                        collection.create_index(
+                            field_name=field_name,
+                            index_params={
+                                "index_type": index_type,
+                                "metric_type": index_config.get("metric_type", "COSINE"),
+                                "params": index_config.get("params", {})
+                            }
+                        )
+                        self.logger.info(f"벡터 인덱스 생성: {field_name}")
+                    # VARCHAR 필드는 FLAT 인덱스 생성
+                    elif index_type == "FLAT":
+                        collection.create_index(
+                            field_name=field_name,
+                            index_params={
+                                "index_type": "FLAT"
+                            }
+                        )
+                        self.logger.info(f"FLAT 인덱스 생성: {field_name}")
+                    else:
+                        self.logger.debug(f"인덱스 생성 건너뜀: {field_name} ({index_type})")
+                        
                 except Exception as e:
                     self.logger.warning(f"인덱스 생성 실패 ({index_config['field_name']}): {e}")
                     
