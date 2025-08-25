@@ -2762,7 +2762,7 @@ def get_or_init_legal_retriever():
     global legal_retriever
     if legal_retriever is None:
         try:
-            from rag.hierarchical.legal.retriever import LegalRetriever
+            from hierarchical.legal.retriever import LegalRetriever
             legal_retriever = LegalRetriever(interact_manager)
             logger.info("법령 검색기 초기화 완료")
         except Exception as e:
@@ -2952,8 +2952,30 @@ def legal_search_simple():
         
         logger.info(f"🏛️ 간소 법령 검색: '{query}' (top_k={search_params['top_k']})")
         
-        search_system = get_or_init_integrated_search()
-        result = search_system.search(query, search_params)
+        # LegalRetriever를 사용하여 간소 검색 수행
+        legal_retriever = get_or_init_legal_retriever()
+        
+        # 간소화된 검색 파라미터
+        simple_search_params = {
+            "top_k": search_params['top_k'],
+            "search_mode": "semantic",  # 간단한 의미 검색만
+            "include_context": False,   # 컨텍스트 비활성화
+            "expand_hierarchy": False   # 위계 확장 비활성화
+        }
+        
+        # 기본 도메인에서 검색
+        domain = search_params.get('domains', ['legal'])[0] if search_params.get('domains') else 'legal'
+        result_list = legal_retriever.search_legal_documents(
+            collection_name=domain,
+            query=query,
+            search_params=simple_search_params
+        )
+        
+        # 결과 형식 맞추기
+        result = {
+            "results": result_list,
+            "total_results": len(result_list)
+        }
         
         # 간소화된 응답 (핵심 정보만)
         simplified_results = []
