@@ -3000,8 +3000,16 @@ def legal_search_simple():
 def legal_search_status():
     """법령 검색 시스템 상태 조회"""
     try:
-        search_system = get_or_init_integrated_search()
-        status = search_system.get_system_status()
+        legal_retriever = get_or_init_legal_retriever()
+        
+        # 간단한 상태 정보 반환
+        status = {
+            "system": "legal_search",
+            "status": "running",
+            "retriever_initialized": legal_retriever is not None,
+            "available_collections": ["legal", "nanet_related_law_cstt", "nanet_related_law_rule"],
+            "timestamp": datetime.now().isoformat()
+        }
         
         return jsonify({
             "status": "success",
@@ -3020,8 +3028,21 @@ def legal_search_status():
 def legal_search_stats():
     """법령 검색 시스템 통계 조회"""
     try:
-        search_system = get_or_init_integrated_search()
-        stats = search_system.get_search_statistics()
+        legal_retriever = get_or_init_legal_retriever()
+        
+        # 기본 통계 정보 반환
+        stats = {
+            "system": "legal_search",
+            "retriever_available": legal_retriever is not None,
+            "search_engines": ["LegalRetriever"],
+            "supported_features": [
+                "semantic_search",
+                "legal_reference_search", 
+                "hybrid_search",
+                "hierarchy_search"
+            ],
+            "timestamp": datetime.now().isoformat()
+        }
         
         return jsonify({
             "status": "success",
