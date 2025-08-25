@@ -1467,10 +1467,12 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 exclude_conditions = [f'article_number not like "{article}%"' for article in exclude_articles]
                 base_conditions.append(f"({' and '.join(exclude_conditions)})")
             
-            # 최소 조문 번호 조건
+            # 최소 조문 번호 조건 (단순화)
             if "min_article_number" in hierarchy_conditions:
                 min_num = hierarchy_conditions["min_article_number"]
-                base_conditions.append(f"CAST(SUBSTRING(article_number, 2, LOCATE('조', article_number)-2) AS INT) >= {min_num}")
+                # 단순한 문자열 패턴 매칭으로 대체
+                article_conditions = [f'article_number like "제{i}조%"' for i in range(min_num, min_num + 10)]
+                base_conditions.append(f"({' or '.join(article_conditions)})")
             
             # 내용 키워드 조건
             if "content_keywords" in hierarchy_conditions:
@@ -1482,7 +1484,8 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             law_type_conditions = []
             if "law_type_preference" in strategy_config:
                 preferred_types = strategy_config["law_type_preference"]
-                law_type_conditions.append(f"law_type in ({', '.join([f'\"{t}\"' for t in preferred_types])})")
+                quoted_types = [f'"{t}"' for t in preferred_types]
+                law_type_conditions.append(f"law_type in ({', '.join(quoted_types)})")
             
             # 모든 조건을 결합
             all_conditions = []

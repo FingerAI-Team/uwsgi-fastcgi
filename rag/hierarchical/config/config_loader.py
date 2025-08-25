@@ -503,8 +503,21 @@ class HierarchicalConfigLoader:
         return self._config_cache.get("semantic_intent", {}).get("search_strategies", {})
     
     def get_result_merging_config(self) -> Dict[str, Any]:
-        """결과 병합 설정 조회"""
-        return self._config_cache.get("semantic_intent", {}).get("result_merging", {})
+        """결과 병합 설정"""
+        try:
+            config = self.get_semantic_intent_config()
+            return config.get("result_merging", {})
+        except Exception as e:
+            self.logger.error(f"결과 병합 설정 로드 중 오류: {e}")
+            return {}
+    
+    def get_semantic_intent_config(self) -> Dict[str, Any]:
+        """의미적 의도 설정 전체"""
+        try:
+            return self._config_cache.get("semantic_intent", {})
+        except Exception as e:
+            self.logger.error(f"의미적 의도 설정 로드 중 오류: {e}")
+            return {}
     
     def detect_semantic_intent(self, query: str) -> Dict[str, Any]:
         """쿼리에서 의미적 의도 감지"""
