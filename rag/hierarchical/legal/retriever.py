@@ -11,6 +11,7 @@ from pymilvus import Collection
 
 from ..base.retriever import BaseHierarchicalRetriever
 from ..base.advanced_retriever import AdvancedHierarchicalRetriever
+from ..config.config_loader import HierarchicalConfigLoader
 
 
 class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
@@ -24,8 +25,55 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
         super().__init__(existing_interact_manager)
         self.logger = logging.getLogger(__name__)
         
-        # 법령 검색 특화 설정
-        self.legal_node_types = ["law", "part", "chapter", "section", "article", "paragraph", "item", "subitem"]
+        # 설정 로더 초기화
+        self.config_loader = HierarchicalConfigLoader()
+        self.logger.info("📚 설정 로더 초기화 완료")
+        
+        # 설정 파일에서 로드
+        self._load_configs()
+        
+        self.logger.info("✅ 법령 검색기 초기화 완료")
+    
+    def _load_configs(self):
+        """설정 파일에서 모든 설정 로드"""
+        try:
+            # 법령 노드 타입
+            self.legal_node_types = ["law", "part", "chapter", "section", "article", "paragraph", "item", "subitem"]
+            
+            # 법령 검색 가중치 (설정 파일에서 로드)
+            self.legal_search_weights = self.config_loader.get_legal_hierarchy_weights()
+            self.logger.info(f"⚖️ 법령 위계 가중치 로드: {len(self.legal_search_weights)}개")
+            
+            # 법령 쿼리 패턴 (설정 파일에서 로드)
+            patterns_config = self.config_loader._config_cache.get("patterns", {})
+            query_patterns = patterns_config.get("text_patterns", {}).get("query_patterns", {})
+            
+            self.legal_patterns = {
+                "article_ref": query_patterns.get("article_ref", r"제(\d+)조(?:의(\d+))?"),
+                "paragraph_ref": query_patterns.get("paragraph_ref", r"제(\d+)항"),
+                "item_ref": query_patterns.get("item_ref", r"제(\d+)호"),
+                "law_ref": query_patterns.get("law_ref", r"「(.+?)」"),
+                "article_range": query_patterns.get("article_range", r"제(\d+)조부터\s*제(\d+)조까지"),
+            }
+            self.logger.info(f"🔍 법령 패턴 로드: {len(self.legal_patterns)}개")
+            
+            # 법률 용어 사전 (설정 파일에서 로드)
+            self.legal_thesaurus = self.config_loader._config_cache.get("thesaurus", {})
+            self.logger.info(f"📚 법률 용어 사전 로드: {len(self.legal_thesaurus.get('legal_keywords', {}))}개 키워드")
+            
+            # 의도 키워드 (설정 파일에서 로드)
+            self.intent_keywords = self.config_loader._config_cache.get("intent_keywords", {})
+            self.logger.info(f"🎯 의도 키워드 로드: {len(self.intent_keywords.get('intent_patterns', {}))}개 패턴")
+            
+        except Exception as e:
+            self.logger.error(f"설정 로드 중 오류: {e}")
+            # 기본값으로 폴백
+            self._load_default_configs()
+    
+    def _load_default_configs(self):
+        """기본 설정값 로드 (설정 파일 로드 실패 시)"""
+        self.logger.warning("⚠️ 기본 설정값으로 폴백")
+        
         self.legal_search_weights = {
             "article": 1.0,      # 조문이 가장 중요
             "paragraph": 0.9,    # 항
@@ -37,7 +85,6 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             "law": 0.3           # 법령명
         }
         
-        # 법령 쿼리 패턴
         self.legal_patterns = {
             "article_ref": r"제(\d+)조(?:의(\d+))?",
             "paragraph_ref": r"제(\d+)항",
@@ -46,7 +93,480 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             "article_range": r"제(\d+)조부터\s*제(\d+)조까지",
         }
         
-        self.logger.info("법령 검색기 초기화 완료")
+        self.legal_thesaurus = {}
+        self.intent_keywords = {}
+    
+    def _deduplicate_results(self, results: List[Dict]) -> List[Dict]:
+        """결과 중복 제거"""
+        try:
+            seen_ids = set()
+            unique_results = []
+            for result in results:
+                result_id = result.get('node_id') or result.get('doc_id') or result.get('passage_uid')
+                if result_id not in seen_ids:
+                    seen_ids.add(result_id)
+                    unique_results.append(result)
+            return unique_results
+        except Exception as e:
+            self.logger.error(f"중복 제거 중 오류: {e}")
+            return results
+    
+    def _get_child_nodes(self, parent_id: str, collection_name: str) -> List[Dict]:
+        """자식 노드 조회 - 위계 구조 활용"""
+        try:
+            self.logger.info(f"🔍 자식 노드 조회 시작: parent_id={parent_id}, collection={collection_name}")
+            
+            if not parent_id:
+                self.logger.warning("⚠️ parent_id가 비어있어 자식 노드 조회를 건너뜁니다")
+                return []
+            
+            collection = Collection(collection_name)
+            collection.load()
+            self.logger.debug(f"📚 컬렉션 로드 완료: {collection_name}")
+            
+            # 부모 노드의 자식들 검색
+            expr = f'parent_node_id == "{parent_id}"'
+            self.logger.debug(f"🔍 검색 표현식: {expr}")
+            
+            search_params = {
+                "data": [[0.0] * 1024],  # 더미 벡터
+                "anns_field": "content_embedding",
+                "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
+                "limit": 50,  # 자식 노드 수 제한
+                "expr": expr,
+                "output_fields": ["*"]
+            }
+            
+            self.logger.debug(f"⚙️ 검색 파라미터: limit={search_params['limit']}, anns_field={search_params['anns_field']}")
+            
+            results = collection.search(**search_params)
+            child_results = self._format_milvus_results(results)
+            
+            self.logger.info(f"📊 자식 노드 검색 결과: {len(child_results)}개 발견")
+            
+            # 위계 레벨별 정렬
+            child_results.sort(key=lambda x: x.get("hierarchy_level", 0))
+            self.logger.debug(f"📈 위계 레벨별 정렬 완료")
+            
+            # 설정 기반 가중치 적용
+            weighted_count = 0
+            for result in child_results:
+                node_type = result.get("entity", {}).get("node_type", "")
+                weight = self.legal_search_weights.get(node_type, 0.5)
+                original_score = result.get("score", 0.0)
+                result["hierarchy_score"] = original_score * weight
+                
+                if weight != 0.5:  # 기본값이 아닌 경우만 로깅
+                    self.logger.debug(f"⚖️ 가중치 적용: node_type={node_type}, weight={weight}, score={original_score:.3f}→{result['hierarchy_score']:.3f}")
+                    weighted_count += 1
+            
+            self.logger.info(f"✅ 자식 노드 조회 완료: {len(child_results)}개 결과, 가중치 적용 {weighted_count}개")
+            return child_results
+            
+        except Exception as e:
+            self.logger.error(f"자식 노드 조회 중 오류: {e}")
+            return []
+    
+    def _get_nodes_by_id(self, node_ids: List[str], collection_name: str) -> List[Dict]:
+        """ID로 노드 조회 - Milvus expr 활용"""
+        try:
+            self.logger.info(f"🔍 ID 기반 노드 조회 시작: {len(node_ids)}개 ID, collection={collection_name}")
+            
+            if not node_ids:
+                self.logger.warning("⚠️ node_ids가 비어있어 노드 조회를 건너뜁니다")
+                return []
+            
+            collection = Collection(collection_name)
+            collection.load()
+            self.logger.debug(f"📚 컬렉션 로드 완료: {collection_name}")
+            
+            # 배치 처리로 성능 최적화 (최대 100개씩)
+            all_results = []
+            batch_size = 100
+            total_batches = (len(node_ids) + batch_size - 1) // batch_size
+            
+            self.logger.info(f"📦 배치 처리 시작: 총 {total_batches}개 배치, 배치 크기={batch_size}")
+            
+            for i in range(0, len(node_ids), batch_size):
+                batch_num = i // batch_size + 1
+                batch_ids = node_ids[i:i + batch_size]
+                
+                self.logger.debug(f"🔄 배치 {batch_num}/{total_batches} 처리 중: {len(batch_ids)}개 ID")
+                
+                # IN 연산자로 배치 검색
+                id_conditions = [f'node_id == "{node_id}"' for node_id in batch_ids]
+                expr = " or ".join(id_conditions)
+                
+                search_params = {
+                    "data": [[0.0] * 1024],  # 더미 벡터
+                    "anns_field": "content_embedding",
+                    "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
+                    "limit": len(batch_ids),
+                    "expr": expr,
+                    "output_fields": ["*"]
+                }
+                
+                results = collection.search(**search_params)
+                batch_results = self._format_milvus_results(results)
+                all_results.extend(batch_results)
+                
+                self.logger.debug(f"✅ 배치 {batch_num} 완료: {len(batch_results)}개 결과")
+            
+            self.logger.info(f"📊 전체 배치 처리 완료: {len(all_results)}개 결과")
+            
+            # 원본 순서 유지
+            id_to_result = {result.get("id"): result for result in all_results}
+            ordered_results = []
+            found_count = 0
+            
+            for node_id in node_ids:
+                if node_id in id_to_result:
+                    ordered_results.append(id_to_result[node_id])
+                    found_count += 1
+                else:
+                    self.logger.warning(f"⚠️ ID를 찾을 수 없음: {node_id}")
+            
+            self.logger.info(f"✅ ID 기반 노드 조회 완료: 요청 {len(node_ids)}개, 찾음 {found_count}개")
+            return ordered_results
+            
+        except Exception as e:
+            self.logger.error(f"노드 조회 중 오류: {e}")
+            return []
+    
+    def _search_by_article_pattern(self, query: str, collection_name: str) -> List[Dict]:
+        """조문 패턴 검색 - 정규식 + 설정 활용"""
+        try:
+            self.logger.info(f"🔍 조문 패턴 검색 시작: query='{query}', collection={collection_name}")
+            
+            collection = Collection(collection_name)
+            collection.load()
+            self.logger.debug(f"📚 컬렉션 로드 완료: {collection_name}")
+            
+            # 조문 패턴 매칭
+            article_matches = list(re.finditer(self.legal_patterns["article_ref"], query))
+            self.logger.info(f"📋 조문 패턴 매칭 결과: {len(article_matches)}개 패턴 발견")
+            
+            results = []
+            
+            for i, match in enumerate(article_matches):
+                article_num = match.group(1)
+                article_sub = match.group(2)
+                
+                self.logger.debug(f"🔍 패턴 {i+1} 분석: 조문번호={article_num}, 조문의조={article_sub}")
+                
+                # 정확한 조문 매칭
+                if article_sub:
+                    expr = f'article_number == "제{article_num}조의{article_sub}"'
+                    pattern_desc = f"제{article_num}조의{article_sub}"
+                else:
+                    expr = f'article_number == "제{article_num}조"'
+                    pattern_desc = f"제{article_num}조"
+                
+                self.logger.debug(f"🔍 검색 표현식: {expr}")
+                
+                search_params = {
+                    "data": [[0.0] * 1024],
+                    "anns_field": "content_embedding",
+                    "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
+                    "limit": 10,
+                    "expr": expr,
+                    "output_fields": ["*"]
+                }
+                
+                pattern_results = collection.search(**search_params)
+                formatted_results = self._format_milvus_results(pattern_results, score_boost=1.2)
+                
+                self.logger.debug(f"📊 패턴 '{pattern_desc}' 검색 결과: {len(formatted_results)}개")
+                
+                # 패턴 매칭 결과에 태그 추가
+                for result in formatted_results:
+                    result["pattern_match"] = pattern_desc
+                    result["search_type"] = "article_pattern"
+                
+                results.extend(formatted_results)
+            
+            self.logger.info(f"✅ 조문 패턴 검색 완료: 총 {len(results)}개 결과")
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"조문 패턴 검색 중 오류: {e}")
+            return []
+    
+    def _search_by_legal_concept(self, concept: str, collection_name: str) -> List[Dict]:
+        """법률 개념 검색 - thesaurus 활용"""
+        try:
+            self.logger.info(f"🔍 법률 개념 검색 시작: concept='{concept}', collection={collection_name}")
+            
+            # 설정 파일에서 법률 용어 사전 로드
+            legal_keywords = self.legal_thesaurus.get("legal_keywords", {})
+            legal_concepts = self.legal_thesaurus.get("legal_concepts", {})
+            
+            # 개념 확장
+            expanded_terms = [concept]
+            
+            # 1. legal_keywords에서 동의어 및 관련 용어 찾기
+            if concept in legal_keywords:
+                keyword_info = legal_keywords[concept]
+                synonyms = keyword_info.get("synonyms", [])
+                related_terms = keyword_info.get("related_terms", [])
+                
+                expanded_terms.extend(synonyms)
+                expanded_terms.extend(related_terms)
+                
+                self.logger.info(f"📚 키워드 확장: '{concept}' → {len(expanded_terms)}개 용어")
+                self.logger.debug(f"📋 동의어: {synonyms}")
+                self.logger.debug(f"📋 관련용어: {related_terms}")
+            
+            # 2. legal_concepts에서 개념 확장
+            elif concept in legal_concepts:
+                concept_terms = legal_concepts[concept]
+                expanded_terms.extend(concept_terms)
+                
+                self.logger.info(f"📚 개념 확장: '{concept}' → {len(expanded_terms)}개 용어")
+                self.logger.debug(f"📋 확장된 용어들: {concept_terms}")
+            
+            else:
+                self.logger.info(f"📚 개념 확장 없음: '{concept}' (사전에 없음)")
+            
+            # 중복 제거
+            expanded_terms = list(set(expanded_terms))
+            
+            collection = Collection(collection_name)
+            collection.load()
+            self.logger.debug(f"📚 컬렉션 로드 완료: {collection_name}")
+            
+            all_results = []
+            
+            for i, term in enumerate(expanded_terms):
+                self.logger.debug(f"🔍 용어 {i+1}/{len(expanded_terms)} 검색: '{term}'")
+                
+                # 개념 기반 검색 (제목과 내용에서 검색)
+                expr = f'title like "%{term}%" or content like "%{term}%"'
+                
+                search_params = {
+                    "data": [[0.0] * 1024],
+                    "anns_field": "content_embedding",
+                    "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
+                    "limit": 20,
+                    "expr": expr,
+                    "output_fields": ["*"]
+                }
+                
+                results = collection.search(**search_params)
+                formatted_results = self._format_milvus_results(results, score_boost=1.1)
+                
+                self.logger.debug(f"📊 용어 '{term}' 검색 결과: {len(formatted_results)}개")
+                
+                # 개념 매칭 결과에 태그 추가
+                for result in formatted_results:
+                    result["concept_match"] = term
+                    result["original_concept"] = concept
+                    result["search_type"] = "legal_concept"
+                
+                all_results.extend(formatted_results)
+            
+            self.logger.info(f"📊 전체 개념 검색 결과: {len(all_results)}개")
+            
+            # 중복 제거 및 정렬
+            unique_results = self._remove_duplicates(all_results)
+            self.logger.info(f"🔄 중복 제거: {len(all_results)}개 → {len(unique_results)}개")
+            
+            unique_results.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+            final_results = unique_results[:30]  # 상위 30개만 반환
+            
+            self.logger.info(f"✅ 법률 개념 검색 완료: 최종 {len(final_results)}개 결과")
+            return final_results
+            
+        except Exception as e:
+            self.logger.error(f"법률 개념 검색 중 오류: {e}")
+            return []
+    
+    def _search_by_legal_keyword(self, keyword: str, collection_name: str) -> List[Dict]:
+        """법률 키워드 검색 - intent_keywords 활용"""
+        try:
+            self.logger.info(f"🔍 법률 키워드 검색 시작: keyword='{keyword}', collection={collection_name}")
+            
+            # 설정 파일에서 의도 키워드 로드
+            intent_patterns = self.intent_keywords.get("intent_patterns", {})
+            
+            collection = Collection(collection_name)
+            collection.load()
+            self.logger.debug(f"📚 컬렉션 로드 완료: {collection_name}")
+            
+            # 키워드 의도 분석
+            detected_intent = None
+            intent_priority = 0
+            
+            for intent_name, intent_config in intent_patterns.items():
+                keywords = intent_config.get("keywords", [])
+                regex_patterns = intent_config.get("regex_patterns", [])
+                priority = intent_config.get("priority", 0)
+                
+                # 키워드 매칭
+                if keyword in keywords:
+                    if priority > intent_priority:
+                        detected_intent = intent_name
+                        intent_priority = priority
+                        self.logger.debug(f"🎯 키워드 매칭: '{keyword}' → '{intent_name}' (우선순위: {priority})")
+                
+                # 정규식 패턴 매칭
+                for pattern in regex_patterns:
+                    if re.search(pattern, keyword):
+                        if priority > intent_priority:
+                            detected_intent = intent_name
+                            intent_priority = priority
+                            self.logger.debug(f"🎯 패턴 매칭: '{keyword}' → '{intent_name}' (패턴: {pattern})")
+            
+            if detected_intent:
+                self.logger.info(f"🎯 의도 감지: '{keyword}' → '{detected_intent}' (우선순위: {intent_priority})")
+            else:
+                self.logger.info(f"⚠️ 의도 미감지: '{keyword}' (사전에 없음)")
+            
+            # 키워드 기반 검색
+            expr = f'title like "%{keyword}%" or content like "%{keyword}%"'
+            self.logger.debug(f"🔍 검색 표현식: {expr}")
+            
+            search_params = {
+                "data": [[0.0] * 1024],
+                "anns_field": "content_embedding",
+                "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
+                "limit": 30,
+                "expr": expr,
+                "output_fields": ["*"]
+            }
+            
+            results = collection.search(**search_params)
+            formatted_results = self._format_milvus_results(results, score_boost=1.0)
+            
+            self.logger.info(f"📊 키워드 검색 결과: {len(formatted_results)}개")
+            
+            # 키워드 매칭 결과에 태그 추가
+            intent_boost_count = 0
+            for result in formatted_results:
+                result["keyword_match"] = keyword
+                result["detected_intent"] = detected_intent
+                result["search_type"] = "legal_keyword"
+                
+                # 의도가 감지된 경우 가중치 부여
+                if detected_intent:
+                    original_score = result.get("score", 0.0)
+                    # 우선순위에 따른 가중치 계산 (높은 우선순위일수록 높은 가중치)
+                    intent_boost = 1.0 + (intent_priority * 0.1)  # 우선순위 1당 0.1씩 증가
+                    result["intent_score"] = original_score * intent_boost
+                    result["intent_priority"] = intent_priority
+                    result["intent_boost"] = intent_boost
+                    intent_boost_count += 1
+                else:
+                    result["intent_score"] = result.get("score", 0.0)
+                    result["intent_priority"] = 0
+                    result["intent_boost"] = 1.0
+            
+            if detected_intent:
+                intent_boost = 1.0 + (intent_priority * 0.1)
+                self.logger.info(f"⚖️ 의도 가중치 적용: {intent_boost_count}개 결과에 {intent_boost:.2f}배 가중치 (우선순위: {intent_priority})")
+            else:
+                self.logger.info(f"⚖️ 의도 가중치 없음: {len(formatted_results)}개 결과")
+            
+            # 의도 점수로 재정렬
+            formatted_results.sort(key=lambda x: x.get("intent_score", 0.0), reverse=True)
+            
+            self.logger.info(f"✅ 법률 키워드 검색 완료: {len(formatted_results)}개 결과")
+            return formatted_results
+            
+        except Exception as e:
+            self.logger.error(f"법률 키워드 검색 중 오류: {e}")
+            return []
+    
+    def _vector_search(self, collection_name: str, query: str, search_params: Dict) -> List[Dict[str, Any]]:
+        """벡터 검색 수행"""
+        try:
+            self.logger.info(f"🔍 벡터 검색 시작: query='{query}', collection={collection_name}")
+            self.logger.debug(f"⚙️ 검색 파라미터: {search_params}")
+            
+            # InteractManager의 벡터 검색 기능 활용
+            if hasattr(self, 'interact_manager') and self.interact_manager:
+                self.logger.info("🔄 InteractManager를 통한 벡터 검색 수행")
+                
+                results = self.interact_manager.retrieve_data(
+                    query=query,
+                    collection_name=collection_name,
+                    top_k=search_params.get('top_k', 10),
+                    filter_conditions=search_params.get('filter_conditions', {})
+                )
+                
+                self.logger.info(f"✅ InteractManager 검색 완료: {len(results)}개 결과")
+                return results
+            else:
+                # 기본 구현
+                self.logger.info("🔄 기본 Milvus 벡터 검색 수행")
+                
+                collection = Collection(collection_name)
+                collection.load()
+                self.logger.debug(f"📚 컬렉션 로드 완료: {collection_name}")
+                
+                # 쿼리 임베딩 생성 (간단한 더미 벡터)
+                dummy_embedding = [0.0] * 1024
+                self.logger.debug(f"🔢 더미 임베딩 생성: {len(dummy_embedding)}차원")
+                
+                search_params_milvus = {
+                    "data": [dummy_embedding],
+                    "anns_field": "content_embedding",
+                    "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
+                    "limit": search_params.get('top_k', 10),
+                    "output_fields": ["*"]
+                }
+                
+                self.logger.debug(f"⚙️ Milvus 검색 파라미터: limit={search_params_milvus['limit']}, anns_field={search_params_milvus['anns_field']}")
+                
+                results = collection.search(**search_params_milvus)
+                formatted_results = self._format_milvus_results(results)
+                
+                self.logger.info(f"✅ 기본 벡터 검색 완료: {len(formatted_results)}개 결과")
+                return formatted_results
+                
+        except Exception as e:
+            self.logger.error(f"벡터 검색 중 오류: {e}")
+            return []
+    
+    def _remove_duplicates(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """결과 중복 제거"""
+        try:
+            self.logger.info(f"🔄 중복 제거 시작: {len(results)}개 결과")
+            
+            seen_ids = set()
+            unique_results = []
+            id_based_removed = 0
+            content_based_removed = 0
+            no_id_count = 0
+            
+            for result in results:
+                result_id = result.get('id') or result.get('node_id') or result.get('doc_id')
+                if result_id and result_id not in seen_ids:
+                    seen_ids.add(result_id)
+                    unique_results.append(result)
+                elif result_id and result_id in seen_ids:
+                    id_based_removed += 1
+                elif not result_id:
+                    no_id_count += 1
+                    # ID가 없는 경우 내용 기반 중복 제거
+                    content = result.get('content', '') or result.get('title', '')
+                    if content and content not in seen_ids:
+                        seen_ids.add(content)
+                        unique_results.append(result)
+                    elif content and content in seen_ids:
+                        content_based_removed += 1
+                    else:
+                        # 내용도 없는 경우 그냥 추가
+                        unique_results.append(result)
+            
+            self.logger.info(f"✅ 중복 제거 완료: {len(results)}개 → {len(unique_results)}개")
+            self.logger.debug(f"📊 중복 제거 상세: ID 기반 제거 {id_based_removed}개, 내용 기반 제거 {content_based_removed}개, ID 없음 {no_id_count}개")
+            
+            return unique_results
+            
+        except Exception as e:
+            self.logger.error(f"중복 제거 중 오류: {e}")
+            return results
     
     def search_legal_documents(self, collection_name: str, query: str,
                               search_params: Optional[Dict] = None) -> List[Dict[str, Any]]:
@@ -244,7 +764,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             
             search_params = {
                 "data": [[0.0] * 1024],  # 더미 벡터 (expr 기반 검색)
-                "anns_field": "content_embedding",
+                "anns_field": "content_embedding",  # content_embedding 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 100,
                 "expr": expr,
@@ -266,7 +786,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             
             search_params = {
                 "data": [[0.0] * 1024],
-                "anns_field": "content_embedding", 
+                "anns_field": "content_embedding",  # content_embedding 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 50,
                 "expr": expr,
@@ -288,7 +808,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             
             search_params = {
                 "data": [[0.0] * 1024],
-                "anns_field": "content_embedding",
+                "anns_field": "content_embedding",  # content_embedding 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 30,
                 "expr": expr,
@@ -310,7 +830,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             
             search_params = {
                 "data": [[0.0] * 1024],
-                "anns_field": "content_embedding",
+                "anns_field": "content_embedding",  # content_embedding 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 100,
                 "expr": expr,
@@ -341,7 +861,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             
             search_params = {
                 "data": [[0.0] * 1024],
-                "anns_field": "content_embedding",
+                "anns_field": "content_embedding",  # content_embedding 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 200,
                 "expr": expr,
@@ -551,7 +1071,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             expr = f'node_id == "{parent_node_id}"'
             search_params = {
                 "data": [[0.0] * 1024],
-                "anns_field": "content_embedding",
+                "anns_field": "content_embedding",  # content_embedding 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 5,
                 "expr": expr,
@@ -589,7 +1109,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             expr = f'parent_node_id == "{current_node_id}"'
             search_params = {
                 "data": [[0.0] * 1024],
-                "anns_field": "content_embedding",
+                "anns_field": "content_embedding",  # content_embedding 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 20,
                 "expr": expr,
@@ -661,7 +1181,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             expr = f'article_number == "{article_number}"'
             search_params = {
                 "data": [[0.0] * 1024],
-                "anns_field": "content_embedding",
+                "anns_field": "content_embedding",  # content_embedding 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 100,
                 "expr": expr,
