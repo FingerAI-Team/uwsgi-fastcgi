@@ -431,14 +431,25 @@ class HierarchicalConfigLoader:
                 confidence = 0.0
                 matched_keywords = []
                 
-                # 키워드 매칭
-                for keyword in intent_config.get("keywords", []):
+                # 키워드 매칭 (더 정교한 매칭)
+                keywords = intent_config.get("keywords", [])
+                for keyword in keywords:
+                    # 정확한 키워드 매칭 (높은 가중치)
                     if keyword in query_lower:
-                        confidence += 0.3
+                        if keyword in ["목적", "정의", "벌칙", "절차", "예외", "적용", "범위", "권리"]:
+                            confidence += 0.6  # 핵심 키워드는 높은 가중치
+                        else:
+                            confidence += 0.3  # 보조 키워드는 낮은 가중치
                         matched_keywords.append(keyword)
+                    
+                    # 부분 매칭 (낮은 가중치)
+                    elif any(word in keyword for word in query_lower.split()):
+                        confidence += 0.1
+                        matched_keywords.append(f"부분매칭:{keyword}")
                 
                 # 신뢰도 임계값 확인
-                if confidence >= intent_config.get("confidence_threshold", 0.5):
+                threshold = intent_config.get("confidence_threshold", 0.3)
+                if confidence >= threshold:
                     detected_intents.append({
                         "intent": intent_name,
                         "confidence": min(confidence, 1.0),
