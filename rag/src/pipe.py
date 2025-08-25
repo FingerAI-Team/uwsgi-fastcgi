@@ -719,7 +719,7 @@ class InteractManager:
             print(f"[ERROR] Failed to insert data: {str(e)}")
             raise
     
-    def retrieve_data(self, query, top_k, filter_conditions=None):
+    def retrieve_data(self, query, top_k, filter_conditions=None, use_content=False):
         """
         텍스트 검색과 다양한 필터링 조건을 조합하여 검색을 수행합니다.
         
@@ -751,6 +751,10 @@ class InteractManager:
         
         # 기본 출력 필드 설정
         output_fields = ["doc_id", "raw_doc_id", "passage_id", "domain", "title", "author", "text", "info", "tags"]
+        
+        # Legal search인 경우 content 필드 추가
+        if use_content:
+            output_fields.append("content")
         
         # 검색 표현식 구성
         expr_parts = []

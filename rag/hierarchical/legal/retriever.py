@@ -490,8 +490,11 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 results = self.interact_manager.retrieve_data(
                     query=query,
                     top_k=search_params.get('top_k', 10),
-                    filter_conditions=search_params.get('filter_conditions', {})
+                    filter_conditions=search_params.get('filter_conditions', {}),
+                    use_content=True
                 )
+                
+
                 
                 self.logger.info(f"✅ InteractManager 검색 완료: {len(results)}개 결과")
                 return results
@@ -512,7 +515,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                     "anns_field": "text_emb",
                     "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                     "limit": search_params.get('top_k', 10),
-                    "output_fields": ["*"]
+                    "output_fields": ["*", "content"]
                 }
                 
                 self.logger.debug(f"⚙️ Milvus 검색 파라미터: limit={search_params_milvus['limit']}, anns_field={search_params_milvus['anns_field']}")
@@ -980,9 +983,16 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                             elif 'text' in hit.entity:
                                 result['content'] = hit.entity['text']
                         
-                        # InteractManager에서 반환된 text 필드를 content로 매핑
+                        # LegalRetriever에서만 text를 content로 매핑 (기존 RAG에 영향 없음)
                         if 'content' not in result and 'text' in result:
-                            result['content'] = result['text']
+                            # LegalRetriever에서 호출된 경우에만 매핑
+                            # InteractManager에서는 이 매핑을 하지 않음
+                            if hasattr(self, 'interact_manager') and self.interact_manager:
+                                # InteractManager를 통해 호출된 경우는 매핑하지 않음
+                                pass
+                            else:
+                                # LegalRetriever에서 직접 호출된 경우에만 매핑
+                                result['content'] = result['text']
                         
                         formatted_results.append(result)
                         
