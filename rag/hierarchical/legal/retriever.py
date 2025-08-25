@@ -619,7 +619,10 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             List[Dict]: 검색 결과
         """
         try:
-            self.logger.info(f"법령 검색 시작: {query}")
+            self.logger.info(f"🔍 법령 검색 시작")
+            self.logger.info(f"   📝 쿼리: {query}")
+            self.logger.info(f"   📋 컬렉션: {collection_name}")
+            self.logger.info(f"   ⚙️ 검색 파라미터: {search_params}")
             
             # 기본 파라미터 설정
             params = {
@@ -634,10 +637,20 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 **(search_params or {})
             }
             
+            self.logger.info(f"   📊 설정된 파라미터: {params}")
+            
             # 쿼리 분석 및 전처리
+            self.logger.info(f"🔍 쿼리 분석 시작")
             analyzed_query = self._analyze_legal_query(query)
             
             # 검색 모드에 따른 처리 (개선된 버전)
+            self.logger.info(f"🔍 검색 모드 분석:")
+            self.logger.info(f"   📋 검색 모드: {params['search_mode']}")
+            self.logger.info(f"   📋 조문 참조: {analyzed_query['has_legal_references']}")
+            self.logger.info(f"   🎯 의미적 의도: {analyzed_query['has_semantic_intent']}")
+            if analyzed_query['has_semantic_intent']:
+                self.logger.info(f"   🎯 감지된 의도: {analyzed_query['semantic_intent']} (신뢰도: {analyzed_query['semantic_intent_confidence']:.3f})")
+            
             reference_results = []
             semantic_results = []
             
@@ -647,6 +660,9 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 reference_results = self._search_by_legal_references(
                     collection_name, analyzed_query, params
                 )
+                self.logger.info(f"   📊 조문 참조 검색 결과: {len(reference_results)}개")
+            else:
+                self.logger.info("   ❌ 조문 참조 검색 건너뜀 (조문 참조 없음 또는 모드 불일치)")
             
             # 2. 의미적 의도 기반 검색 (새로 추가)
             if analyzed_query["has_semantic_intent"] and params["search_mode"] in ["semantic", "hybrid"]:
@@ -654,22 +670,33 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 semantic_results = self._search_by_semantic_intent(
                     collection_name, analyzed_query, params
                 )
+                self.logger.info(f"   📊 의도 기반 검색 결과: {len(semantic_results)}개")
             # 3. 일반 의미 검색 (의도가 없을 때)
             elif params["search_mode"] in ["semantic", "hybrid"]:
                 self.logger.info("🔍 일반 의미 검색 실행")
                 semantic_results = self._search_by_semantics(
                     collection_name, analyzed_query["processed_query"], params
                 )
+                self.logger.info(f"   📊 일반 의미 검색 결과: {len(semantic_results)}개")
+            else:
+                self.logger.info("   ❌ 의미 검색 건너뜀 (의도 없음 또는 모드 불일치)")
             
             # 결과 병합 및 후처리
+            self.logger.info(f"🔗 결과 병합 시작")
+            self.logger.info(f"   📊 조문 참조 결과: {len(reference_results)}개")
+            self.logger.info(f"   📊 의미 검색 결과: {len(semantic_results)}개")
+            
             combined_results = self._combine_search_results(
                 reference_results, semantic_results, params
             )
+            self.logger.info(f"   📊 병합된 결과: {len(combined_results)}개")
             
             # 법령 특화 후처리
+            self.logger.info(f"🔧 후처리 시작")
             final_results = self._post_process_legal_results(combined_results, params)
+            self.logger.info(f"   📊 최종 결과: {len(final_results)}개")
             
-            self.logger.info(f"법령 검색 완료: {len(final_results)}개 결과")
+            self.logger.info(f"✅ 법령 검색 완료: {len(final_results)}개 결과")
             return final_results
             
         except Exception as e:
@@ -1084,18 +1111,55 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             semantic_intent_boost = merging_config.get("semantic_intent_boost", 0.5)
             general_semantic_boost = merging_config.get("general_semantic_boost", 0.3)
             
-            for result in semantic_results:
+            self.logger.info(f"📊 결과 병합 설정:")
+            self.logger.info(f"   🎯 의도 기반 부스트: {semantic_intent_boost}")
+            self.logger.info(f"   🔍 일반 의미 부스트: {general_semantic_boost}")
+            self.logger.info(f"   📋 의미 검색 결과 수: {len(semantic_results)}개")
+            
+            for i, result in enumerate(semantic_results):
+                self.logger.info(f"   🔍 결과 {i+1}/{len(semantic_results)} 처리:")
+                self.logger.info(f"      📝 ID: {result.get('id', 'N/A')}")
+                self.logger.info(f"      📄 제목: {result.get('title', 'N/A')[:50]}...")
+                self.logger.info(f"      📊 원본 점수: {result.get('score', 0.0):.4f}")
+                
                 # 의도 기반 검색 결과인지 확인
                 if "intent_info" in result:
                     result["search_type"] = "semantic_intent"
                     intent_boost = semantic_intent_boost * result["intent_info"]["confidence"]
                     result["final_score"] = result.get("score", 0.0) + intent_boost
                     result["priority"] = 2  # 중간 우선순위
+                    
+                    self.logger.info(f"      🎯 의도 기반 결과:")
+                    self.logger.info(f"         - 의도: {result['intent_info']['detected_intent']}")
+                    self.logger.info(f"         - 신뢰도: {result['intent_info']['confidence']:.3f}")
+                    self.logger.info(f"         - 부스트: {intent_boost:.4f}")
+                    self.logger.info(f"         - 최종 점수: {result['final_score']:.4f}")
+                    self.logger.info(f"         - 우선순위: {result['priority']}")
+                    
+                    # 상세 부스트 정보 로깅
+                    intent_info = result["intent_info"]
+                    self.logger.info(f"         📈 상세 부스트 정보:")
+                    self.logger.info(f"            - 의도 부스트: {intent_info.get('intent_boost', 0.0):.4f}")
+                    self.logger.info(f"            - 위계 부스트: {intent_info.get('hierarchy_boost', 0.0):.4f}")
+                    self.logger.info(f"            - 법령타입 부스트: {intent_info.get('law_type_boost', 0.0):.4f}")
+                    self.logger.info(f"            - 법령명 부스트: {intent_info.get('law_name_boost', 0.0):.4f}")
+                    self.logger.info(f"            - 날짜 부스트: {intent_info.get('date_boost', 0.0):.4f}")
+                    self.logger.info(f"            - 법령번호 부스트: {intent_info.get('law_number_boost', 0.0):.4f}")
+                    self.logger.info(f"            - 내용 부스트: {intent_info.get('field_boost', 0.0):.4f}")
+                    self.logger.info(f"            - 구조 부스트: {intent_info.get('structure_boost', 0.0):.4f}")
+                    self.logger.info(f"            - 컨텍스트 부스트: {intent_info.get('context_boost', 0.0):.4f}")
+                    self.logger.info(f"            - 총 부스트: {intent_info.get('total_boost', 0.0):.4f}")
+                    
                     self.logger.info(f"🎯 의도 기반 결과 스코어링: {result['intent_info']['detected_intent']} (보너스: {intent_boost:.3f})")
                 else:
                     result["search_type"] = "semantic"
                     result["final_score"] = result.get("score", 0.0) + general_semantic_boost
                     result["priority"] = 3  # 낮은 우선순위
+                    
+                    self.logger.info(f"      🔍 일반 의미 결과:")
+                    self.logger.info(f"         - 부스트: {general_semantic_boost:.4f}")
+                    self.logger.info(f"         - 최종 점수: {result['final_score']:.4f}")
+                    self.logger.info(f"         - 우선순위: {result['priority']}")
             
             # 중복 제거 (ID 기반, config 기반 임계값)
             duplicate_threshold = merging_config.get("duplicate_removal_threshold", 0.9)
@@ -1120,6 +1184,14 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             combined_results = combined_results[:max_results]
             
             self.logger.info(f"🔗 결과 병합 완료: 참조={len(reference_results)}개, 의미={len(semantic_results)}개, 최종={len(combined_results)}개")
+            
+            # 최종 랭킹 결과 로깅
+            self.logger.info(f"🏆 최종 랭킹 결과:")
+            for i, result in enumerate(combined_results[:5]):  # 상위 5개만 로깅
+                self.logger.info(f"   {i+1}위: ID={result.get('id', 'N/A')}, 점수={result.get('final_score', 0.0):.4f}, 타입={result.get('search_type', 'N/A')}")
+                if "intent_info" in result:
+                    self.logger.info(f"      🎯 의도: {result['intent_info']['detected_intent']}, 신뢰도: {result['intent_info']['confidence']:.3f}")
+                self.logger.info(f"      📄 제목: {result.get('title', 'N/A')[:100]}...")
             
             return combined_results
             
@@ -1323,6 +1395,12 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                                   params: Dict) -> List[Dict[str, Any]]:
         """의미적 의도 기반 검색 (위계 구조 및 필드 가중치 활용)"""
         try:
+            self.logger.info(f"🔍 의도 기반 검색 시작")
+            self.logger.info(f"   📝 컬렉션: {collection_name}")
+            self.logger.info(f"   🎯 의도: {analyzed_query.get('semantic_intent')}")
+            self.logger.info(f"   📊 신뢰도: {analyzed_query.get('semantic_intent_confidence', 0.0)}")
+            self.logger.info(f"   🔧 기본 파라미터: {params}")
+            
             config_loader = get_config_loader()
             intent_name = analyzed_query.get("semantic_intent")
             intent_confidence = analyzed_query.get("semantic_intent_confidence", 0.0)
@@ -1336,6 +1414,11 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             intent_config = intents.get(intent_name, {})
             search_strategy_name = intent_config.get("search_strategy", "semantic_focused")
             
+            self.logger.info(f"📋 의도 설정 조회:")
+            self.logger.info(f"   🎯 의도: {intent_name}")
+            self.logger.info(f"   📝 설정: {intent_config}")
+            self.logger.info(f"   🔍 검색 전략: {search_strategy_name}")
+            
             # 검색 전략 설정 가져오기
             search_strategies = config_loader.get_search_strategies_config()
             strategy_config = search_strategies.get(search_strategy_name, {})
@@ -1344,19 +1427,39 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 self.logger.warning(f"검색 전략 '{search_strategy_name}'에 대한 설정이 없음")
                 return []
             
+            self.logger.info(f"⚙️ 검색 전략 설정:")
+            self.logger.info(f"   🔍 전략명: {search_strategy_name}")
+            self.logger.info(f"   📊 벡터 가중치: {strategy_config.get('vector_weight', 'N/A')}")
+            self.logger.info(f"   📊 키워드 가중치: {strategy_config.get('keyword_weight', 'N/A')}")
+            self.logger.info(f"   🔍 nprobe: {strategy_config.get('nprobe', 'N/A')}")
+            self.logger.info(f"   📊 limit_multiplier: {strategy_config.get('limit_multiplier', 'N/A')}")
+            self.logger.info(f"   🏗️ 위계 조건: {strategy_config.get('hierarchy_conditions', 'N/A')}")
+            self.logger.info(f"   ⚖️ 법령 타입 선호: {strategy_config.get('law_type_preference', 'N/A')}")
+            self.logger.info(f"   📈 부스트 규칙: {strategy_config.get('boost_rules', 'N/A')}")
+            
             self.logger.info(f"🎯 의도 기반 검색: {intent_name} (전략: {search_strategy_name})")
             
             # 의도별 검색 파라미터 조정 (쿼리 확장 대신)
+            self.logger.info(f"🔧 검색 파라미터 조정 시작")
             adjusted_params = self._adjust_search_params_by_intent(
                 intent_name, intent_confidence, strategy_config, params
             )
+            self.logger.info(f"   📊 조정된 파라미터: {adjusted_params}")
             
             # 벡터 검색 수행 (원본 쿼리 사용)
+            self.logger.info(f"🔍 Milvus 검색 시작")
+            self.logger.info(f"   📝 컬렉션 로딩: {collection_name}")
             collection = Collection(collection_name)
             collection.load()
+            self.logger.info(f"   ✅ 컬렉션 로딩 완료")
+            
+            # 쿼리 인코딩
+            self.logger.info(f"   🔤 쿼리 인코딩: '{analyzed_query['processed_query']}'")
+            encoded_query = self._encode_query(analyzed_query["processed_query"])
+            self.logger.info(f"   ✅ 쿼리 인코딩 완료 (차원: {len(encoded_query)})")
             
             search_params = {
-                "data": [self._encode_query(analyzed_query["processed_query"])],
+                "data": [encoded_query],
                 "anns_field": "text_emb",
                 "param": {
                     "metric_type": "COSINE", 
@@ -1369,20 +1472,38 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             # 의도별 필터 조건 추가
             if adjusted_params.get("expr"):
                 search_params["expr"] = adjusted_params["expr"]
+                self.logger.info(f"   🔍 필터 조건 추가: {adjusted_params['expr']}")
+            
+            self.logger.info(f"   📊 Milvus 검색 파라미터:")
+            self.logger.info(f"      - nprobe: {search_params['param']['params']['nprobe']}")
+            self.logger.info(f"      - limit: {search_params['limit']}")
+            self.logger.info(f"      - metric_type: {search_params['param']['metric_type']}")
+            self.logger.info(f"      - 필터: {search_params.get('expr', '없음')}")
             
             results = collection.search(**search_params)
+            self.logger.info(f"   ✅ Milvus 검색 완료: {len(results)}개 결과 세트")
             
             # 의도별 점수 보정 및 위계 구조 활용
+            self.logger.info(f"📊 결과 처리 및 점수 보정 시작")
             enhanced_results = []
+            total_hits = sum(len(hits) for hits in results)
+            self.logger.info(f"   📋 총 {total_hits}개 결과 처리 예정")
+            
+            hit_count = 0
             for hits in results:
                 for hit in hits:
+                    hit_count += 1
                     try:
+                        self.logger.info(f"   🔍 결과 {hit_count}/{total_hits} 처리 중...")
+                        
                         # hit를 딕셔너리로 변환
                         result = {
                             "id": getattr(hit, 'id', ''),
                             "score": getattr(hit, 'distance', 0.0),
                             "entity": {}
                         }
+                        
+                        self.logger.info(f"      📝 기본 정보: ID={result['id']}, 원본점수={result['score']:.4f}")
                         
                         # entity 정보 추출
                         if hasattr(hit, 'entity') and hit.entity:
@@ -1405,10 +1526,24 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                             elif 'text' in hit.entity:
                                 result['content'] = hit.entity['text']
                         
+                        self.logger.info(f"      📄 필드 정보:")
+                        self.logger.info(f"         - node_id: {result.get('node_id', 'N/A')}")
+                        self.logger.info(f"         - document_id: {result.get('document_id', 'N/A')}")
+                        self.logger.info(f"         - node_type: {result.get('node_type', 'N/A')}")
+                        self.logger.info(f"         - title: {result.get('title', 'N/A')[:50]}...")
+                        self.logger.info(f"         - hierarchy_level: {result.get('hierarchy_level', 'N/A')}")
+                        self.logger.info(f"         - article_number: {result.get('article_number', 'N/A')}")
+                        self.logger.info(f"         - content: {result.get('content', 'N/A')[:100]}...")
+                        
                         # 의도별 점수 보정 적용 (위계 구조 및 필드 가중치 활용)
+                        self.logger.info(f"      🎯 의도별 점수 보정 시작")
                         enhanced_result = self._apply_intent_scoring_with_hierarchy(
                             result, intent_name, intent_confidence, strategy_config, collection_name
                         )
+                        
+                        final_score = enhanced_result.get("score", 0.0)
+                        self.logger.info(f"      📊 최종 점수: {final_score:.4f} (변화: {final_score - result['score']:.4f})")
+                        
                         enhanced_results.append(enhanced_result)
                         
                     except Exception as e:
@@ -1521,16 +1656,24 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 self.logger.warning(f"result가 딕셔너리가 아님: {type(result)}")
                 return {"score": 0.0, "error": "invalid_result_type"}
             
+            self.logger.info(f"         🎯 점수 보정 시작: 의도={intent}, 신뢰도={confidence:.3f}")
+            
             config_loader = get_config_loader()
             original_score = result.get("score", 0.0)
             entity = result.get("entity", {})
+            
+            self.logger.info(f"         📊 원본 점수: {original_score:.4f}")
+            self.logger.info(f"         📄 엔티티 정보: {list(entity.keys())}")
             
             # 검색 전략 설정 가져오기
             strategy_name = strategy_config.get("search_strategy", "semantic_focused")
             boost_rules = config_loader.get_boost_rules(strategy_name)
             
+            self.logger.info(f"         ⚙️ 부스트 규칙: {boost_rules}")
+            
             # 1. 의도별 보너스 점수
             intent_boost = strategy_config.get("boost_weight", 0.2) * confidence
+            self.logger.info(f"         🎯 의도 부스트: {intent_boost:.4f} (가중치: {strategy_config.get('boost_weight', 0.2)}, 신뢰도: {confidence:.3f})")
             
             # 2. 위계 구조 기반 보너스
             hierarchy_boost = 0.0
@@ -1539,6 +1682,8 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             if "hierarchy_boost" in boost_rules:
                 hierarchy_boost = boost_rules["hierarchy_boost"]
             
+            self.logger.info(f"         🏗️ 위계 부스트: {hierarchy_boost:.4f} (레벨: {hierarchy_level})")
+            
             # 3. 법령 유형별 보너스 (설정에서 가져오기)
             law_type_boost = 0.0
             law_type = entity.get("law_type", "")
@@ -1546,6 +1691,8 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             
             if law_type in law_type_weights and intent in law_type_weights[law_type]:
                 law_type_boost = law_type_weights[law_type][intent]
+            
+            self.logger.info(f"         ⚖️ 법령타입 부스트: {law_type_boost:.4f} (타입: {law_type})")
             
             # 4. 법령명 기반 보너스 (설정에서 가져오기)
             law_name_boost = 0.0
@@ -1556,6 +1703,8 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 if keyword in law_name and intent in weights:
                     law_name_boost = weights[intent]
                     break
+            
+            self.logger.info(f"         📜 법령명 부스트: {law_name_boost:.4f} (이름: {law_name})")
             
             # 5. 제정일 기반 보너스 (설정에서 가져오기)
             date_boost = 0.0
@@ -1572,6 +1721,8 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 except:
                     pass
             
+            self.logger.info(f"         📅 날짜 부스트: {date_boost:.4f} (제정일: {enactment_date})")
+            
             # 6. 법령 번호 기반 보너스 (설정에서 가져오기)
             law_number_boost = 0.0
             law_number = entity.get("law_number", "")
@@ -1584,6 +1735,8 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 except:
                     pass
             
+            self.logger.info(f"         🔢 법령번호 부스트: {law_number_boost:.4f} (번호: {law_number})")
+            
             # 7. 필드별 보너스 (내용에서 의도 관련 키워드 확인)
             field_boost = 0.0
             content = entity.get("content", "")
@@ -1593,8 +1746,21 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 hierarchy_conditions = config_loader.get_hierarchy_conditions(strategy_name)
                 content_keywords = hierarchy_conditions.get("content_keywords", [])
                 
-                if any(keyword in content for keyword in content_keywords):
+                self.logger.info(f"         🔍 내용 키워드 검색: {content_keywords}")
+                self.logger.info(f"         📄 내용 미리보기: {content[:200]}...")
+                
+                matched_keywords = []
+                for keyword in content_keywords:
+                    if keyword in content:
+                        matched_keywords.append(keyword)
+                
+                if matched_keywords:
                     field_boost = boost_rules["content_boost"]
+                    self.logger.info(f"         ✅ 내용 키워드 매칭: {matched_keywords}")
+                else:
+                    self.logger.info(f"         ❌ 내용 키워드 매칭 없음")
+                
+                self.logger.info(f"         📝 내용 부스트: {field_boost:.4f}")
             
             # 8. 조문 구조 기반 보너스 (설정에서 가져오기)
             structure_boost = 0.0
@@ -1620,14 +1786,17 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                     if item_num and item_num in ["1.", "2.", "3."]:
                         structure_boost += intent_structure["numbered_items"]
             
+            self.logger.info(f"         🏗️ 구조 부스트: {structure_boost:.4f} (조문: {article_num}, 항: {paragraph_num}, 호: {item_num})")
+            
             # 9. 컨텍스트 확장 (의도에 따라 관련 조문들도 포함)
             context_boost = 0.0
             if intent in ["definition", "purpose"] and hierarchy_level <= 3:
                 context_boost = 0.1  # 기본값
             
+            self.logger.info(f"         🔗 컨텍스트 부스트: {context_boost:.4f}")
+            
             # 최종 점수 계산 (모든 보너스 적용)
-            final_score = (original_score + 
-                          intent_boost + 
+            total_boost = (intent_boost + 
                           hierarchy_boost + 
                           law_type_boost + 
                           law_name_boost + 
@@ -1636,6 +1805,13 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                           field_boost + 
                           structure_boost + 
                           context_boost)
+            
+            final_score = original_score + total_boost
+            
+            self.logger.info(f"         📊 최종 점수 계산:")
+            self.logger.info(f"            - 원본 점수: {original_score:.4f}")
+            self.logger.info(f"            - 총 부스트: {total_boost:.4f}")
+            self.logger.info(f"            - 최종 점수: {final_score:.4f}")
             
             # 결과에 메타데이터 추가 (상세한 점수 분석)
             result["intent_info"] = {
@@ -1653,10 +1829,12 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 "context_boost": context_boost,
                 "original_score": original_score,
                 "final_score": final_score,
-                "total_boost": final_score - original_score
+                "total_boost": total_boost
             }
             
             result["score"] = final_score
+            
+            self.logger.info(f"         ✅ 점수 보정 완료: {original_score:.4f} → {final_score:.4f} (+{total_boost:.4f})")
             
             return result
             

@@ -2779,6 +2779,14 @@ def legal_search():
             LegalRetriever를 직접 사용하여 text_emb 필드로 올바른 검색 수행
     """
     api_start_time = time.time()
+    
+    logger.info("")
+    logger.info("")
+    logger.info("")
+    logger.info("")
+    logger.info("")
+    logger.info("")
+    logger.info("")
     logger.info("=== LEGAL SEARCH API START ===")
     
     try:
@@ -2929,6 +2937,13 @@ def legal_search():
         api_duration = time.time() - api_start_time
         logger.info(f"✅ 법령 검색 완료: {len(final_results)}개 결과, 총 {api_duration:.3f}초")
         logger.info("=== LEGAL SEARCH API END ===")
+        logger.info("")
+        logger.info("")
+        logger.info("")
+        logger.info("")
+        logger.info("")
+        logger.info("")
+        logger.info("")
         
         return jsonify({
             "status": "success",
@@ -2944,6 +2959,13 @@ def legal_search():
         logger.error(f"❌ 검색 API 오류: {e}")
         logger.error(f"⏱️ 오류 시점: {api_duration:.3f}초")
         logger.info("=== LEGAL SEARCH API END (ERROR) ===")
+        logger.info("")
+        logger.info("")
+        logger.info("")
+        logger.info("")
+        logger.info("")
+        logger.info("")
+        logger.info("")
         return jsonify({
             "status": "error",
             "message": f"법령 검색 중 오류가 발생했습니다: {str(e)}",

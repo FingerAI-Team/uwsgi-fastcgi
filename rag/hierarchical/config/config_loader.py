@@ -522,15 +522,26 @@ class HierarchicalConfigLoader:
     def detect_semantic_intent(self, query: str) -> Dict[str, Any]:
         """쿼리에서 의미적 의도 감지"""
         try:
+            self.logger.info(f"🔍 의도 감지 시작: '{query}'")
+            
             intents = self.get_semantic_intents()
             detection_config = self.get_intent_detection_config()
+            
+            self.logger.info(f"📋 설정된 의도 개수: {len(intents)}개")
+            self.logger.info(f"⚙️ 감지 설정: min_confidence={detection_config.get('min_confidence', 0.2)}, max_intents={detection_config.get('max_intents_per_query', 2)}")
             
             detected_intents = []
             query_lower = query.lower()
             
+            self.logger.info(f"🔍 쿼리 분석: 원본='{query}' → 소문자='{query_lower}'")
+            
             for intent_name, intent_config in intents.items():
                 confidence = 0.0
                 matched_keywords = []
+                
+                self.logger.info(f"🎯 의도 '{intent_name}' 분석 시작")
+                self.logger.info(f"   📝 키워드 목록: {intent_config.get('keywords', [])}")
+                self.logger.info(f"   📊 임계값: {intent_config.get('confidence_threshold', 0.3)}")
                 
                 # 키워드 매칭 (더 정교한 매칭)
                 keywords = intent_config.get("keywords", [])
@@ -539,8 +550,10 @@ class HierarchicalConfigLoader:
                     if keyword in query_lower:
                         if keyword in ["목적", "정의", "벌칙", "절차", "예외", "적용", "범위", "권리"]:
                             confidence += 0.6  # 핵심 키워드는 높은 가중치
+                            self.logger.info(f"   ✅ 핵심키워드 매칭: '{keyword}' (+0.6)")
                         else:
                             confidence += 0.3  # 보조 키워드는 낮은 가중치
+                            self.logger.info(f"   ✅ 보조키워드 매칭: '{keyword}' (+0.3)")
                         matched_keywords.append(keyword)
                     
                     # 부분 매칭 (더 엄격한 조건)
@@ -549,6 +562,10 @@ class HierarchicalConfigLoader:
                         if keyword not in ["뭐가", "뭐인가요", "뭐라고", "무엇", "어떻게", "되나요"]:
                             confidence += 0.1
                             matched_keywords.append(f"부분매칭:{keyword}")
+                            self.logger.info(f"   🔍 부분매칭: '{keyword}' (+0.1)")
+                
+                self.logger.info(f"   📊 의도 '{intent_name}' 최종 신뢰도: {confidence:.3f} (임계값: {intent_config.get('confidence_threshold', 0.3)})")
+                self.logger.info(f"   🎯 매칭된 키워드: {matched_keywords}")
                 
                 # 신뢰도 임계값 확인
                 threshold = intent_config.get("confidence_threshold", 0.3)
@@ -559,6 +576,9 @@ class HierarchicalConfigLoader:
                         "matched_keywords": matched_keywords,
                         "config": intent_config
                     })
+                    self.logger.info(f"   ✅ 의도 '{intent_name}' 감지 성공!")
+                else:
+                    self.logger.info(f"   ❌ 의도 '{intent_name}' 임계값 미달")
             
             # 신뢰도 순으로 정렬
             detected_intents.sort(key=lambda x: x["confidence"], reverse=True)
@@ -567,11 +587,18 @@ class HierarchicalConfigLoader:
             max_intents = detection_config.get("max_intents_per_query", 2)
             detected_intents = detected_intents[:max_intents]
             
-            return {
+            self.logger.info(f"📋 최종 감지된 의도: {len(detected_intents)}개")
+            for i, intent in enumerate(detected_intents):
+                self.logger.info(f"   {i+1}. {intent['intent']} (신뢰도: {intent['confidence']:.3f}, 키워드: {intent['matched_keywords']})")
+            
+            result = {
                 "has_semantic_intent": len(detected_intents) > 0,
                 "detected_intents": detected_intents,
                 "primary_intent": detected_intents[0] if detected_intents else None
             }
+            
+            self.logger.info(f"🎯 의도 감지 완료: {result['has_semantic_intent']}")
+            return result
             
         except Exception as e:
             self.logger.error(f"의미적 의도 감지 중 오류: {e}")
