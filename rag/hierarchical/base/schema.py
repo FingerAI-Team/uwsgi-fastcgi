@@ -195,14 +195,7 @@ class BaseHierarchicalSchema(ABC):
                     "field_name": "document_id",
                     "index_type": "FLAT"
                 },
-                {
-                    "field_name": "domain",
-                    "index_type": "STL_SORT"
-                },
-                {
-                    "field_name": "document_id",
-                    "index_type": "STL_SORT"
-                }
+                # STL_SORT는 Milvus에서 지원하지 않으므로 제거
             ]
             
             self.logger.info(f"기본 인덱스 {len(base_indexes)}개 정의")

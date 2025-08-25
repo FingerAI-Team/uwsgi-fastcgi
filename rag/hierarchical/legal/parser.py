@@ -187,7 +187,7 @@ class LegalParser:
         """텍스트에서 법령명 추출 (설정 파일 패턴 사용)"""
         try:
             # 설정에서 law_name 추출 패턴 가져오기
-            law_name_config = self._get_config_loader().get_config().get("legal_patterns", {}).get("metadata_detection", {}).get("law_name_extraction", {})
+            law_name_config = self._get_config_loader().get_metadata_detection_patterns().get("law_name_extraction", {})
             patterns = law_name_config.get("patterns", [])
             validation = law_name_config.get("validation", {})
             
@@ -276,7 +276,7 @@ class LegalParser:
         """우선순위 기반 날짜 추출 (설정 파일 패턴 사용)"""
         try:
             # 설정에서 날짜 패턴 가져오기
-            date_config = self._get_config_loader().get_config().get("date_extraction_patterns", {})
+            date_config = self._get_config_loader().get_date_extraction_patterns()
             date_type_patterns = date_config.get("date_type_patterns", {})
             
             # 해당 날짜 타입의 패턴들 가져오기

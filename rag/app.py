@@ -2821,7 +2821,11 @@ def legal_search():
             "filter_conditions": data.get('filter_conditions', {}),
             "search_mode": data.get('search_mode', 'hybrid'),
             "include_context": data.get('include_context', True),
-            "expand_hierarchy": data.get('expand_hierarchy', True)
+            "expand_hierarchy": data.get('expand_hierarchy', True),
+            # 누락된 파라미터들 추가
+            "enable_explanation": data.get('enable_explanation', False),
+            "enable_context": data.get('enable_context', False),
+            "explanation_mode": data.get('explanation_mode', False)
         }
         
         logger.info(f"⚙️ 검색 파라미터:")
@@ -2829,6 +2833,10 @@ def legal_search():
         logger.info(f"   query: {query}")
         logger.info(f"   domains: {search_params['domains']}")
         logger.info(f"   search_mode: {search_params['search_mode']}")
+        logger.info(f"   enable_explanation: {search_params['enable_explanation']}")
+        logger.info(f"   enable_context: {search_params['enable_context']}")
+        logger.info(f"   explanation_mode: {search_params['explanation_mode']}")
+        logger.info(f"   filter_conditions: {search_params['filter_conditions']}")
         
         # 법령 검색기 초기화
         logger.info("🔧 법령 검색기 초기화 시작...")

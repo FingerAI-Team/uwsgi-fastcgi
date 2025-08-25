@@ -595,7 +595,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 "include_context": True,
                 "law_type_filter": None,
                 "date_range": None,
-                "top_k": 10,
+                "top_k": search_params.get('top_k', 10) if search_params else 10,  # 사용자 요청값 우선 사용
                 "expand_hierarchy": True,
                 "hierarchy_weight": 0.4,
                 **(search_params or {})
@@ -886,8 +886,10 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             if node_type_filter:
                 filter_conditions["node_type_filter"] = node_type_filter
             
+            # 사용자가 요청한 top_k 값을 정확히 사용
+            requested_top_k = params.get("top_k", 10)
             search_params = {
-                "top_k": params.get("top_k", 10) * 2,  # 더 많이 검색해서 필터링
+                "top_k": requested_top_k,  # 사용자 요청값 그대로 사용
                 "expand_hierarchy": False,  # 의미 검색에서는 확장 안함
                 "filter_conditions": filter_conditions
             }

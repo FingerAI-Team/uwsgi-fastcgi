@@ -155,6 +155,9 @@ class BaseHierarchicalIndexer(ABC):
                             }
                         )
                         self.logger.info(f"FLAT 인덱스 생성: {field_name}")
+                    # STL_SORT는 지원하지 않으므로 건너뛰기
+                    elif index_type == "STL_SORT":
+                        self.logger.debug(f"STL_SORT 인덱스 건너뜀: {field_name}")
                     else:
                         self.logger.debug(f"인덱스 생성 건너뜀: {field_name} ({index_type})")
                         
