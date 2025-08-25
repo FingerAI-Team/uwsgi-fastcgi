@@ -96,22 +96,118 @@ class HierarchicalConfigLoader:
             "keyword_matching": 0.7
         })
     
-    def get_legal_hierarchy_weights(self) -> Dict[str, float]:
-        """법령 위계별 가중치 조회"""
-        return self._config_cache.get("hierarchical", {}).get("legal_hierarchy_weights", {
-            "article": 1.3,
-            "paragraph": 1.2,
-            "chapter": 1.0,
-            "section": 1.1
-        })
+    def get_boost_rules(self, strategy_name: str) -> Dict[str, float]:
+        """검색 전략의 점수 보정 규칙"""
+        try:
+            strategy_config = self.get_search_strategy_config(strategy_name)
+            return strategy_config.get("boost_rules", {})
+        except Exception as e:
+            self.logger.error(f"점수 보정 규칙 로드 중 오류: {e}")
+            return {}
     
-    def get_law_type_weights(self) -> Dict[str, float]:
-        """법령 유형별 가중치 조회"""
-        return self._config_cache.get("hierarchical", {}).get("law_type_weights", {
-            "법률": 0.3,
-            "시행령": 0.2,
-            "규칙": 0.1
-        })
+    def get_search_parameters(self) -> Dict[str, Any]:
+        """검색 파라미터 설정"""
+        try:
+            config = self.get_semantic_intent_config()
+            return config.get("search_parameters", {})
+        except Exception as e:
+            self.logger.error(f"검색 파라미터 로드 중 오류: {e}")
+            return {}
+    
+    def get_score_boosts(self) -> Dict[str, float]:
+        """점수 보정 설정"""
+        try:
+            search_params = self.get_search_parameters()
+            return search_params.get("score_boosts", {})
+        except Exception as e:
+            self.logger.error(f"점수 보정 설정 로드 중 오류: {e}")
+            return {}
+    
+    def get_search_limits(self) -> Dict[str, int]:
+        """검색 제한 설정"""
+        try:
+            search_params = self.get_search_parameters()
+            return search_params.get("limits", {})
+        except Exception as e:
+            self.logger.error(f"검색 제한 설정 로드 중 오류: {e}")
+            return {}
+    
+    def get_legal_hierarchy_weights(self) -> Dict[str, float]:
+        """법령 위계 가중치 설정"""
+        try:
+            config = self.get_semantic_intent_config()
+            return config.get("legal_hierarchy_weights", {})
+        except Exception as e:
+            self.logger.error(f"법령 위계 가중치 로드 중 오류: {e}")
+            return {}
+    
+    def get_default_search_params(self) -> Dict[str, Any]:
+        """기본 검색 파라미터"""
+        try:
+            search_params = self.get_search_parameters()
+            return {
+                "default_nprobe": search_params.get("default_nprobe", 16),
+                "default_limit": search_params.get("default_limit", 10),
+                "intent_priority_multiplier": search_params.get("intent_priority_multiplier", 0.1),
+                "default_weight": search_params.get("default_weight", 0.5)
+            }
+        except Exception as e:
+            self.logger.error(f"기본 검색 파라미터 로드 중 오류: {e}")
+            return {"default_nprobe": 16, "default_limit": 10, "intent_priority_multiplier": 0.1, "default_weight": 0.5}
+    
+    def get_law_type_weights(self) -> Dict[str, Dict[str, float]]:
+        """법령 유형별 의도 가중치 설정"""
+        try:
+            config = self.get_semantic_intent_config()
+            return config.get("law_type_weights", {})
+        except Exception as e:
+            self.logger.error(f"법령 유형 가중치 로드 중 오류: {e}")
+            return {}
+    
+    def get_law_name_keywords(self) -> Dict[str, Dict[str, float]]:
+        """법령명 키워드별 의도 가중치 설정"""
+        try:
+            config = self.get_semantic_intent_config()
+            return config.get("law_name_keywords", {})
+        except Exception as e:
+            self.logger.error(f"법령명 키워드 가중치 로드 중 오류: {e}")
+            return {}
+    
+    def get_date_weights(self) -> Dict[str, Any]:
+        """날짜 관련 가중치 설정"""
+        try:
+            config = self.get_semantic_intent_config()
+            return config.get("date_weights", {})
+        except Exception as e:
+            self.logger.error(f"날짜 가중치 로드 중 오류: {e}")
+            return {}
+    
+    def get_structure_weights(self) -> Dict[str, Dict[str, float]]:
+        """조문 구조별 가중치 설정"""
+        try:
+            config = self.get_semantic_intent_config()
+            return config.get("structure_weights", {})
+        except Exception as e:
+            self.logger.error(f"구조 가중치 로드 중 오류: {e}")
+            return {}
+    
+    def get_search_strategy_config(self, strategy_name: str) -> Dict[str, Any]:
+        """특정 검색 전략 설정"""
+        try:
+            strategies = self.get_search_strategies_config()
+            return strategies.get(strategy_name, {})
+        except Exception as e:
+            self.logger.error(f"검색 전략 설정 로드 중 오류: {e}")
+            return {}
+    
+    def get_hierarchy_conditions(self, strategy_name: str) -> Dict[str, Any]:
+        """검색 전략의 위계 조건 설정"""
+        try:
+            strategy_config = self.get_search_strategy_config(strategy_name)
+            return strategy_config.get("hierarchy_conditions", {})
+        except Exception as e:
+            self.logger.error(f"위계 조건 로드 중 오류: {e}")
+            return {}
     
     def get_legal_thesaurus(self) -> Dict[str, Any]:
         """법령 시소러스 조회"""
@@ -136,14 +232,6 @@ class HierarchicalConfigLoader:
     def get_metadata_detection_patterns(self) -> Dict[str, Any]:
         """메타데이터 감지 패턴 조회"""
         return self._config_cache.get("patterns", {}).get("metadata_detection", {})
-    
-    def get_search_limits(self) -> Dict[str, Any]:
-        """검색 제한 설정 조회"""
-        return self._config_cache.get("hierarchical", {}).get("search_settings", {}).get("search_limits", {
-            "max_traversal_depth": 5,
-            "max_expansion_results": 50,
-            "top_k_multiplier": 3
-        })
     
     def get_reference_strengths(self) -> Dict[str, float]:
         """참조 강도 설정 조회"""

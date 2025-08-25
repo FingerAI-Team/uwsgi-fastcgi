@@ -74,17 +74,24 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
         """기본 설정값 로드 (설정 파일 로드 실패 시)"""
         self.logger.warning("⚠️ 기본 설정값으로 폴백")
         
-        self.legal_search_weights = {
-            "article": 1.0,      # 조문이 가장 중요
-            "paragraph": 0.9,    # 항
-            "item": 0.8,         # 호
-            "chapter": 0.7,      # 장
-            "section": 0.6,      # 절
-            "subitem": 0.5,      # 목
-            "part": 0.4,         # 편
-            "law": 0.3           # 법령명
-        }
+        # 설정에서 기본값 가져오기
+        config_loader = get_config_loader()
         
+        # 법령 위계 가중치
+        self.legal_search_weights = config_loader.get_legal_hierarchy_weights()
+        if not self.legal_search_weights:
+            self.legal_search_weights = {
+                "article": 1.0,      # 조문이 가장 중요
+                "paragraph": 0.9,    # 항
+                "item": 0.8,         # 호
+                "chapter": 0.7,      # 장
+                "section": 0.6,      # 절
+                "subitem": 0.5,      # 목
+                "part": 0.4,         # 편
+                "law": 0.3           # 법령명
+            }
+        
+        # 법령 패턴
         self.legal_patterns = {
             "article_ref": r"제(\d+)조(?:의(\d+))?",
             "paragraph_ref": r"제(\d+)항",
@@ -120,6 +127,11 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 self.logger.warning("⚠️ parent_id가 비어있어 자식 노드 조회를 건너뜁니다")
                 return []
             
+            # 설정에서 파라미터 가져오기
+            config_loader = get_config_loader()
+            default_params = config_loader.get_default_search_params()
+            search_limits = config_loader.get_search_limits()
+            
             collection = Collection(collection_name)
             collection.load()
             self.logger.debug(f"📚 컬렉션 로드 완료: {collection_name}")
@@ -131,8 +143,8 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             search_params = {
                 "data": [[0.0] * 1024],  # 더미 벡터
                 "anns_field": "text_emb",
-                "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
-                "limit": 50,  # 자식 노드 수 제한
+                "param": {"metric_type": "COSINE", "params": {"nprobe": default_params["default_nprobe"]}},
+                "limit": search_limits.get("child_nodes", 50),  # 설정에서 가져오기
                 "expr": expr,
                 "output_fields": ["*"]
             }
@@ -152,11 +164,11 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             weighted_count = 0
             for result in child_results:
                 node_type = result.get("entity", {}).get("node_type", "")
-                weight = self.legal_search_weights.get(node_type, 0.5)
+                weight = self.legal_search_weights.get(node_type, default_params["default_weight"])
                 original_score = result.get("score", 0.0)
                 result["hierarchy_score"] = original_score * weight
                 
-                if weight != 0.5:  # 기본값이 아닌 경우만 로깅
+                if weight != default_params["default_weight"]:  # 기본값이 아닌 경우만 로깅
                     self.logger.debug(f"⚖️ 가중치 적용: node_type={node_type}, weight={weight}, score={original_score:.3f}→{result['hierarchy_score']:.3f}")
                     weighted_count += 1
             
@@ -238,6 +250,12 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
         try:
             self.logger.info(f"🔍 조문 패턴 검색 시작: query='{query}', collection={collection_name}")
             
+            # 설정에서 파라미터 가져오기
+            config_loader = get_config_loader()
+            default_params = config_loader.get_default_search_params()
+            search_limits = config_loader.get_search_limits()
+            score_boosts = config_loader.get_score_boosts()
+            
             collection = Collection(collection_name)
             collection.load()
             self.logger.debug(f"📚 컬렉션 로드 완료: {collection_name}")
@@ -267,14 +285,17 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 search_params = {
                     "data": [[0.0] * 1024],
                     "anns_field": "text_emb",
-                    "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
-                    "limit": 10,
+                    "param": {"metric_type": "COSINE", "params": {"nprobe": default_params["default_nprobe"]}},
+                    "limit": search_limits.get("article_pattern", 10),  # 설정에서 가져오기
                     "expr": expr,
                     "output_fields": ["*"]
                 }
                 
                 pattern_results = collection.search(**search_params)
-                formatted_results = self._format_milvus_results(pattern_results, score_boost=1.2)
+                formatted_results = self._format_milvus_results(
+                    pattern_results, 
+                    score_boost=score_boosts.get("article_pattern", 1.2)  # 설정에서 가져오기
+                )
                 
                 self.logger.debug(f"📊 패턴 '{pattern_desc}' 검색 결과: {len(formatted_results)}개")
                 
@@ -386,6 +407,12 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
         try:
             self.logger.info(f"🔍 법률 키워드 검색 시작: keyword='{keyword}', collection={collection_name}")
             
+            # 설정에서 파라미터 가져오기
+            config_loader = get_config_loader()
+            default_params = config_loader.get_default_search_params()
+            search_limits = config_loader.get_search_limits()
+            score_boosts = config_loader.get_score_boosts()
+            
             # 설정 파일에서 의도 키워드 로드
             intent_patterns = self.intent_keywords.get("intent_patterns", {})
             
@@ -429,14 +456,17 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             search_params = {
                 "data": [[0.0] * 1024],
                 "anns_field": "text_emb",
-                "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
-                "limit": 30,
+                "param": {"metric_type": "COSINE", "params": {"nprobe": default_params["default_nprobe"]}},
+                "limit": search_limits.get("legal_keyword", 30),  # 설정에서 가져오기
                 "expr": expr,
                 "output_fields": ["*"]
             }
             
             results = collection.search(**search_params)
-            formatted_results = self._format_milvus_results(results, score_boost=1.0)
+            formatted_results = self._format_milvus_results(
+                results, 
+                score_boost=score_boosts.get("legal_keyword", 1.0)  # 설정에서 가져오기
+            )
             
             self.logger.info(f"📊 키워드 검색 결과: {len(formatted_results)}개")
             
@@ -450,8 +480,8 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 # 의도가 감지된 경우 가중치 부여
                 if detected_intent:
                     original_score = result.get("score", 0.0)
-                    # 우선순위에 따른 가중치 계산 (높은 우선순위일수록 높은 가중치)
-                    intent_boost = 1.0 + (intent_priority * 0.1)  # 우선순위 1당 0.1씩 증가
+                    # 우선순위에 따른 가중치 계산 (설정에서 가져오기)
+                    intent_boost = 1.0 + (intent_priority * default_params["intent_priority_multiplier"])
                     result["intent_score"] = original_score * intent_boost
                     result["intent_priority"] = intent_priority
                     result["intent_boost"] = intent_boost
@@ -462,7 +492,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                     result["intent_boost"] = 1.0
             
             if detected_intent:
-                intent_boost = 1.0 + (intent_priority * 0.1)
+                intent_boost = 1.0 + (intent_priority * default_params["intent_priority_multiplier"])
                 self.logger.info(f"⚖️ 의도 가중치 적용: {intent_boost_count}개 결과에 {intent_boost:.2f}배 가중치 (우선순위: {intent_priority})")
             else:
                 self.logger.info(f"⚖️ 의도 가중치 없음: {len(formatted_results)}개 결과")
@@ -1289,9 +1319,9 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             return {"error": str(e)}
     
     def _search_by_semantic_intent(self, collection_name: str, 
-                                 analyzed_query: Dict[str, Any],
-                                 params: Dict) -> List[Dict[str, Any]]:
-        """의미적 의도 기반 검색 (config 기반)"""
+                                  analyzed_query: Dict[str, Any],
+                                  params: Dict) -> List[Dict[str, Any]]:
+        """의미적 의도 기반 검색 (위계 구조 및 필드 가중치 활용)"""
         try:
             config_loader = get_config_loader()
             intent_name = analyzed_query.get("semantic_intent")
@@ -1316,42 +1346,74 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             
             self.logger.info(f"🎯 의도 기반 검색: {intent_name} (전략: {search_strategy_name})")
             
-            # 의도별 쿼리 강화
-            enhanced_query = self._enhance_query_by_intent(
-                analyzed_query["processed_query"], 
-                intent_name, 
-                intent_confidence
+            # 의도별 검색 파라미터 조정 (쿼리 확장 대신)
+            adjusted_params = self._adjust_search_params_by_intent(
+                intent_name, intent_confidence, strategy_config, params
             )
             
-            # 벡터 검색 수행
+            # 벡터 검색 수행 (원본 쿼리 사용)
             collection = Collection(collection_name)
             collection.load()
             
-            # 의도별 가중치 적용
-            vector_weight = strategy_config.get("vector_weight", 0.7)
-            keyword_weight = strategy_config.get("keyword_weight", 0.3)
-            
-            # 검색 파라미터 조정
             search_params = {
-                "data": [self._encode_query(enhanced_query)],
+                "data": [self._encode_query(analyzed_query["processed_query"])],
                 "anns_field": "text_emb",
                 "param": {
                     "metric_type": "COSINE", 
-                    "params": {"nprobe": 16}
+                    "params": {"nprobe": adjusted_params.get("nprobe", 16)}
                 },
-                "limit": params.get("top_k", 10) * 2,  # 더 많은 후보 검색
+                "limit": adjusted_params.get("limit", params.get("top_k", 10) * 2),
                 "output_fields": ["*"]
             }
             
+            # 의도별 필터 조건 추가
+            if adjusted_params.get("expr"):
+                search_params["expr"] = adjusted_params["expr"]
+            
             results = collection.search(**search_params)
             
-            # 의도별 점수 보정
+            # 의도별 점수 보정 및 위계 구조 활용
             enhanced_results = []
-            for result in results:
-                enhanced_result = self._apply_intent_scoring(
-                    result, intent_name, intent_confidence, strategy_config
-                )
-                enhanced_results.append(enhanced_result)
+            for hits in results:
+                for hit in hits:
+                    try:
+                        # hit를 딕셔너리로 변환
+                        result = {
+                            "id": getattr(hit, 'id', ''),
+                            "score": getattr(hit, 'distance', 0.0),
+                            "entity": {}
+                        }
+                        
+                        # entity 정보 추출
+                        if hasattr(hit, 'entity') and hit.entity:
+                            if isinstance(hit.entity, dict):
+                                result["entity"] = hit.entity
+                        
+                        # 추가 필드들 추출
+                        for attr in ['node_id', 'document_id', 'node_type', 'title', 'content',
+                                   'hierarchy_level', 'article_number', 'paragraph_number']:
+                            if hasattr(hit, attr):
+                                result[attr] = getattr(hit, attr)
+                            elif hasattr(hit, 'entity') and isinstance(hit.entity, dict):
+                                if attr in hit.entity:
+                                    result[attr] = hit.entity[attr]
+                        
+                        # content 필드가 없으면 entity에서 강제로 가져오기
+                        if 'content' not in result and hasattr(hit, 'entity') and isinstance(hit.entity, dict):
+                            if 'content' in hit.entity:
+                                result['content'] = hit.entity['content']
+                            elif 'text' in hit.entity:
+                                result['content'] = hit.entity['text']
+                        
+                        # 의도별 점수 보정 적용 (위계 구조 및 필드 가중치 활용)
+                        enhanced_result = self._apply_intent_scoring_with_hierarchy(
+                            result, intent_name, intent_confidence, strategy_config, collection_name
+                        )
+                        enhanced_results.append(enhanced_result)
+                        
+                    except Exception as e:
+                        self.logger.warning(f"결과 처리 중 오류: {e}")
+                        continue
             
             # 점수 순으로 정렬
             enhanced_results.sort(key=lambda x: x.get("score", 0.0), reverse=True)
@@ -1367,73 +1429,228 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             self.logger.error(f"의미적 의도 기반 검색 중 오류: {e}")
             return []
     
-    def _enhance_query_by_intent(self, query: str, intent: str, confidence: float) -> str:
-        """의도에 따른 쿼리 강화"""
+    def _adjust_search_params_by_intent(self, intent: str, confidence: float, 
+                                      strategy_config: Dict[str, Any], 
+                                      base_params: Dict) -> Dict[str, Any]:
+        """의도별 검색 파라미터 조정 (설정 기반)"""
         try:
             config_loader = get_config_loader()
-            intents = config_loader.get_semantic_intents()
-            intent_config = intents.get(intent, {})
+            adjusted_params = base_params.copy()
             
-            enhanced_query = query
+            # 검색 전략 설정 가져오기
+            strategy_name = strategy_config.get("search_strategy", "semantic_focused")
+            strategy_config = config_loader.get_search_strategy_config(strategy_name)
+            hierarchy_conditions = config_loader.get_hierarchy_conditions(strategy_name)
             
-            # 의도별 키워드 추가
-            if intent == "purpose":
-                enhanced_query += " 목적 취지 의도"
-            elif intent == "definition":
-                enhanced_query += " 정의 의미 개념 용어"
-            elif intent == "penalty":
-                enhanced_query += " 벌칙 처벌 과태료"
-            elif intent == "procedure":
-                enhanced_query += " 절차 방법 요건"
-            elif intent == "exception":
-                enhanced_query += " 예외 단서 다만"
-            elif intent == "scope":
-                enhanced_query += " 적용 범위 대상"
-            elif intent == "rights":
-                enhanced_query += " 권리 의무 책임"
+            if not strategy_config:
+                self.logger.warning(f"검색 전략 '{strategy_name}' 설정을 찾을 수 없음")
+                return adjusted_params
             
-            # 신뢰도에 따른 가중치 조정
-            if confidence > 0.8:
-                enhanced_query += f" {intent_config.get('description', '')}"
+            # 기본 검색 조건들 (설정에서 가져오기)
+            base_conditions = []
             
-            self.logger.info(f"🔍 쿼리 강화: '{query}' → '{enhanced_query}'")
-            return enhanced_query
+            # 위계 레벨 조건
+            if "max_level" in hierarchy_conditions:
+                base_conditions.append(f"hierarchy_level <= {hierarchy_conditions['max_level']}")
+            if "min_level" in hierarchy_conditions:
+                base_conditions.append(f"hierarchy_level >= {hierarchy_conditions['min_level']}")
+            
+            # 선호 조문 조건
+            if "preferred_articles" in hierarchy_conditions:
+                preferred_articles = hierarchy_conditions["preferred_articles"]
+                article_conditions = [f'article_number like "{article}%"' for article in preferred_articles]
+                base_conditions.append(f"({' or '.join(article_conditions)})")
+            
+            # 제외 조문 조건
+            if "exclude_articles" in hierarchy_conditions:
+                exclude_articles = hierarchy_conditions["exclude_articles"]
+                exclude_conditions = [f'article_number not like "{article}%"' for article in exclude_articles]
+                base_conditions.append(f"({' and '.join(exclude_conditions)})")
+            
+            # 최소 조문 번호 조건
+            if "min_article_number" in hierarchy_conditions:
+                min_num = hierarchy_conditions["min_article_number"]
+                base_conditions.append(f"CAST(SUBSTRING(article_number, 2, LOCATE('조', article_number)-2) AS INT) >= {min_num}")
+            
+            # 내용 키워드 조건
+            if "content_keywords" in hierarchy_conditions:
+                content_keywords = hierarchy_conditions["content_keywords"]
+                keyword_conditions = [f'content like "%{keyword}%"' for keyword in content_keywords]
+                base_conditions.append(f"({' or '.join(keyword_conditions)})")
+            
+            # 법령 유형 선호 조건
+            law_type_conditions = []
+            if "law_type_preference" in strategy_config:
+                preferred_types = strategy_config["law_type_preference"]
+                law_type_conditions.append(f"law_type in ({', '.join([f'\"{t}\"' for t in preferred_types])})")
+            
+            # 모든 조건을 결합
+            all_conditions = []
+            if base_conditions:
+                all_conditions.append(f"({' or '.join(base_conditions)})")
+            if law_type_conditions:
+                all_conditions.append(f"({' or '.join(law_type_conditions)})")
+            
+            if all_conditions:
+                adjusted_params["expr"] = " and ".join(all_conditions)
+            
+            # 검색 파라미터 설정
+            adjusted_params.update({
+                "limit": base_params.get("top_k", 10) * strategy_config.get("limit_multiplier", 2),
+                "nprobe": strategy_config.get("nprobe", 16),
+            })
+            
+            self.logger.info(f"🔧 의도별 검색 파라미터 조정: {intent} (전략: {strategy_name})")
+            self.logger.debug(f"🔍 검색 조건: {adjusted_params.get('expr', '없음')}")
+            
+            return adjusted_params
             
         except Exception as e:
-            self.logger.error(f"쿼리 강화 중 오류: {e}")
-            return query
+            self.logger.error(f"의도별 검색 파라미터 조정 중 오류: {e}")
+            return base_params
     
-    def _apply_intent_scoring(self, result: Dict[str, Any], intent: str, 
-                            confidence: float, strategy_config: Dict[str, Any]) -> Dict[str, Any]:
-        """의도별 점수 보정"""
+    def _apply_intent_scoring_with_hierarchy(self, result: Dict[str, Any], intent: str, 
+                                           confidence: float, strategy_config: Dict[str, Any],
+                                           collection_name: str) -> Dict[str, Any]:
+        """의도별 점수 보정 (설정 기반)"""
         try:
+            if not isinstance(result, dict):
+                self.logger.warning(f"result가 딕셔너리가 아님: {type(result)}")
+                return {"score": 0.0, "error": "invalid_result_type"}
+            
+            config_loader = get_config_loader()
             original_score = result.get("score", 0.0)
-            
-            # 의도별 보너스 점수
-            intent_boost = strategy_config.get("boost_weight", 0.2) * confidence
-            
-            # 필드별 보너스
-            field_boost = 0.0
             entity = result.get("entity", {})
             
-            if intent == "definition" and "정의" in entity.get("content", ""):
-                field_boost += strategy_config.get("definition_field_boost", 0.3)
-            elif intent == "penalty" and any(word in entity.get("content", "") for word in ["벌칙", "처벌", "과태료"]):
-                field_boost += strategy_config.get("penalty_field_boost", 0.2)
-            elif intent == "procedure" and any(word in entity.get("content", "") for word in ["절차", "방법", "요건"]):
-                field_boost += strategy_config.get("procedure_field_boost", 0.2)
+            # 검색 전략 설정 가져오기
+            strategy_name = strategy_config.get("search_strategy", "semantic_focused")
+            boost_rules = config_loader.get_boost_rules(strategy_name)
             
-            # 최종 점수 계산
-            final_score = original_score + intent_boost + field_boost
+            # 1. 의도별 보너스 점수
+            intent_boost = strategy_config.get("boost_weight", 0.2) * confidence
             
-            # 결과에 메타데이터 추가
+            # 2. 위계 구조 기반 보너스
+            hierarchy_boost = 0.0
+            hierarchy_level = entity.get("hierarchy_level", 999)
+            
+            if "hierarchy_boost" in boost_rules:
+                hierarchy_boost = boost_rules["hierarchy_boost"]
+            
+            # 3. 법령 유형별 보너스 (설정에서 가져오기)
+            law_type_boost = 0.0
+            law_type = entity.get("law_type", "")
+            law_type_weights = config_loader.get_law_type_weights()
+            
+            if law_type in law_type_weights and intent in law_type_weights[law_type]:
+                law_type_boost = law_type_weights[law_type][intent]
+            
+            # 4. 법령명 기반 보너스 (설정에서 가져오기)
+            law_name_boost = 0.0
+            law_name = entity.get("law_name", "")
+            law_name_keywords = config_loader.get_law_name_keywords()
+            
+            for keyword, weights in law_name_keywords.items():
+                if keyword in law_name and intent in weights:
+                    law_name_boost = weights[intent]
+                    break
+            
+            # 5. 제정일 기반 보너스 (설정에서 가져오기)
+            date_boost = 0.0
+            enactment_date = entity.get("enactment_date", "")
+            date_weights = config_loader.get_date_weights()
+            
+            if enactment_date and "recent_years" in date_weights:
+                try:
+                    year = int(enactment_date.split('.')[0])
+                    for year_threshold, weight in date_weights["recent_years"].items():
+                        if year >= int(year_threshold):
+                            date_boost = weight
+                            break
+                except:
+                    pass
+            
+            # 6. 법령 번호 기반 보너스 (설정에서 가져오기)
+            law_number_boost = 0.0
+            law_number = entity.get("law_number", "")
+            
+            if law_number and "law_number_threshold" in date_weights:
+                try:
+                    law_num = int(law_number.split('제')[1].split('호')[0])
+                    if law_num >= date_weights["law_number_threshold"]:
+                        law_number_boost = 0.05  # 기본값
+                except:
+                    pass
+            
+            # 7. 필드별 보너스 (내용에서 의도 관련 키워드 확인)
+            field_boost = 0.0
+            content = entity.get("content", "")
+            
+            if "content_boost" in boost_rules:
+                # 설정에서 키워드 가져오기
+                hierarchy_conditions = config_loader.get_hierarchy_conditions(strategy_name)
+                content_keywords = hierarchy_conditions.get("content_keywords", [])
+                
+                if any(keyword in content for keyword in content_keywords):
+                    field_boost = boost_rules["content_boost"]
+            
+            # 8. 조문 구조 기반 보너스 (설정에서 가져오기)
+            structure_boost = 0.0
+            article_num = entity.get("article_number", "")
+            paragraph_num = entity.get("paragraph_number", "")
+            item_num = entity.get("item_number", "")
+            structure_weights = config_loader.get_structure_weights()
+            
+            if intent in structure_weights:
+                intent_structure = structure_weights[intent]
+                
+                if "first_paragraph" in intent_structure:
+                    if article_num and not paragraph_num:
+                        structure_boost += intent_structure["first_paragraph"]
+                    elif paragraph_num == "①" or paragraph_num == "1":
+                        structure_boost += intent_structure["first_paragraph"]
+                
+                if "first_item" in intent_structure:
+                    if item_num == "1.":
+                        structure_boost += intent_structure["first_item"]
+                
+                if "numbered_items" in intent_structure:
+                    if item_num and item_num in ["1.", "2.", "3."]:
+                        structure_boost += intent_structure["numbered_items"]
+            
+            # 9. 컨텍스트 확장 (의도에 따라 관련 조문들도 포함)
+            context_boost = 0.0
+            if intent in ["definition", "purpose"] and hierarchy_level <= 3:
+                context_boost = 0.1  # 기본값
+            
+            # 최종 점수 계산 (모든 보너스 적용)
+            final_score = (original_score + 
+                          intent_boost + 
+                          hierarchy_boost + 
+                          law_type_boost + 
+                          law_name_boost + 
+                          date_boost + 
+                          law_number_boost + 
+                          field_boost + 
+                          structure_boost + 
+                          context_boost)
+            
+            # 결과에 메타데이터 추가 (상세한 점수 분석)
             result["intent_info"] = {
                 "detected_intent": intent,
                 "confidence": confidence,
+                "strategy_name": strategy_name,
                 "intent_boost": intent_boost,
+                "hierarchy_boost": hierarchy_boost,
+                "law_type_boost": law_type_boost,
+                "law_name_boost": law_name_boost,
+                "date_boost": date_boost,
+                "law_number_boost": law_number_boost,
                 "field_boost": field_boost,
+                "structure_boost": structure_boost,
+                "context_boost": context_boost,
                 "original_score": original_score,
-                "final_score": final_score
+                "final_score": final_score,
+                "total_boost": final_score - original_score
             }
             
             result["score"] = final_score
@@ -1451,7 +1668,15 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 # interact_manager의 emb_model 사용
                 embeddings = self.interact_manager.emb_model.bge_batch_embed_data([query])
                 if embeddings and len(embeddings) > 0:
-                    return embeddings[0].tolist()
+                    embedding = embeddings[0]
+                    # embedding이 이미 리스트인지 확인
+                    if isinstance(embedding, list):
+                        return embedding
+                    elif hasattr(embedding, 'tolist'):
+                        return embedding.tolist()
+                    else:
+                        self.logger.warning(f"예상치 못한 임베딩 타입: {type(embedding)}")
+                        return [0.0] * 1024
             
             # fallback: 기본 임베딩 (0으로 채움)
             self.logger.warning("interact_manager가 없어 기본 임베딩 사용")

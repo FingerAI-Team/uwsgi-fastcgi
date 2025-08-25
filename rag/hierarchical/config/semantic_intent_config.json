@@ -1,10 +1,10 @@
 {
   "semantic_intents": {
     "purpose": {
-      "keywords": ["목적", "목적은", "목적이", "취지", "취지는", "의도", "의도는", "뭐야", "무엇"],
+      "keywords": ["목적", "취지", "의도", "뭐야", "무엇", "어떻게", "되나요", "뭐가", "있나요", "어떤"],
       "confidence_threshold": 0.3,
       "boost_weight": 0.3,
-      "search_strategy": "semantic_focused",
+      "search_strategy": "purpose_focused",
       "description": "법령의 목적이나 취지를 묻는 의도"
     },
     "definition": {
@@ -15,14 +15,14 @@
       "description": "용어나 개념의 정의를 묻는 의도"
     },
     "penalty": {
-      "keywords": ["벌칙", "처벌", "벌금", "과태료", "형사처벌", "행정처분", "징역", "금고", "어떻게", "되나요"],
+      "keywords": ["벌칙", "처벌", "과태료", "벌금", "형벌", "제재", "어떻게", "되나요", "뭐가", "있나요", "어떤"],
       "confidence_threshold": 0.3,
       "boost_weight": 0.2,
       "search_strategy": "penalty_focused",
       "description": "벌칙이나 처벌 관련 의도"
     },
     "procedure": {
-      "keywords": ["절차", "방법", "요건", "신고", "허가", "제출", "신청", "승인", "수속", "어떻게", "되나요"],
+      "keywords": ["절차", "방법", "요건", "순서", "어떻게", "되나요", "뭐가", "있나요", "어떤"],
       "confidence_threshold": 0.3,
       "boost_weight": 0.2,
       "search_strategy": "procedure_focused",
@@ -36,21 +36,20 @@
       "description": "예외나 단서 조항 관련 의도"
     },
     "scope": {
-      "keywords": ["적용", "범위", "대상", "포함", "해당", "관련"],
-      "confidence_threshold": 0.6,
-      "boost_weight": 0.15,
+      "keywords": ["범위", "적용", "대상", "포함", "한계", "영역", "어디까지", "어떤", "뭐가", "있나요"],
+      "confidence_threshold": 0.3,
+      "boost_weight": 0.2,
       "search_strategy": "scope_focused",
       "description": "적용 범위나 대상 관련 의도"
     },
     "rights": {
-      "keywords": ["권리", "의무", "책임", "보호", "보장", "요구"],
-      "confidence_threshold": 0.6,
-      "boost_weight": 0.15,
+      "keywords": ["권리", "의무", "보호", "권한", "책임", "자유", "어떻게", "보호", "뭐가", "있나요"],
+      "confidence_threshold": 0.3,
+      "boost_weight": 0.2,
       "search_strategy": "rights_focused",
       "description": "권리나 의무 관련 의도"
     }
   },
-  
   "intent_detection": {
     "min_confidence": 0.2,
     "max_intents_per_query": 2,
@@ -58,50 +57,267 @@
     "enable_fuzzy_matching": true,
     "fuzzy_threshold": 0.8
   },
-  
   "search_strategies": {
     "semantic_focused": {
       "vector_weight": 0.8,
       "keyword_weight": 0.2,
-      "context_boost": 0.1
+      "nprobe": 16,
+      "limit_multiplier": 2
+    },
+    "purpose_focused": {
+      "vector_weight": 0.7,
+      "keyword_weight": 0.3,
+      "nprobe": 24,
+      "limit_multiplier": 2,
+      "hierarchy_conditions": {
+        "max_level": 2,
+        "preferred_articles": ["제1조"],
+        "content_keywords": ["목적", "취지", "의도"]
+      },
+      "law_type_preference": ["법률"],
+      "boost_rules": {
+        "hierarchy_boost": 0.3,
+        "article_boost": 0.3,
+        "content_boost": 0.3,
+        "law_type_boost": 0.2
+      }
     },
     "definition_focused": {
       "vector_weight": 0.6,
       "keyword_weight": 0.4,
-      "definition_field_boost": 0.3
+      "nprobe": 32,
+      "limit_multiplier": 3,
+      "hierarchy_conditions": {
+        "max_level": 3,
+        "preferred_articles": ["제1조", "제2조"],
+        "content_keywords": ["정의", "의미", "개념", "란", "이란"]
+      },
+      "law_type_preference": ["법률"],
+      "boost_rules": {
+        "hierarchy_boost": 0.3,
+        "article_boost": 0.2,
+        "content_boost": 0.3,
+        "law_type_boost": 0.2,
+        "law_name_boost": 0.2,
+        "date_boost": 0.1,
+        "structure_boost": 0.1
+      }
     },
     "penalty_focused": {
       "vector_weight": 0.7,
       "keyword_weight": 0.3,
-      "penalty_field_boost": 0.2
+      "nprobe": 20,
+      "limit_multiplier": 2,
+      "hierarchy_conditions": {
+        "exclude_articles": ["제1조", "제2조"],
+        "content_keywords": ["벌칙", "처벌", "과태료", "벌금"],
+        "min_article_number": 20
+      },
+      "law_type_preference": ["법률", "시행령", "시행규칙"],
+      "boost_rules": {
+        "hierarchy_boost": 0.2,
+        "content_boost": 0.3,
+        "law_type_boost": 0.1,
+        "structure_boost": 0.05
+      }
     },
     "procedure_focused": {
       "vector_weight": 0.6,
       "keyword_weight": 0.4,
-      "procedure_field_boost": 0.2
+      "nprobe": 20,
+      "limit_multiplier": 2,
+      "hierarchy_conditions": {
+        "min_level": 3,
+        "max_level": 5,
+        "content_keywords": ["절차", "방법", "요건", "순서"]
+      },
+      "law_type_preference": ["시행령", "시행규칙", "고시"],
+      "boost_rules": {
+        "hierarchy_boost": 0.2,
+        "content_boost": 0.3,
+        "law_type_boost": 0.2
+      }
     },
     "exception_focused": {
       "vector_weight": 0.7,
       "keyword_weight": 0.3,
-      "exception_field_boost": 0.2
+      "nprobe": 20,
+      "limit_multiplier": 2,
+      "hierarchy_conditions": {
+        "content_keywords": ["다만", "단서", "예외", "제외", "단", "특별한", "경우"]
+      },
+      "boost_rules": {
+        "content_boost": 0.3
+      }
     },
     "scope_focused": {
       "vector_weight": 0.7,
       "keyword_weight": 0.3,
-      "scope_field_boost": 0.15
+      "nprobe": 20,
+      "limit_multiplier": 2,
+      "hierarchy_conditions": {
+        "content_keywords": ["적용", "범위", "대상", "포함", "한계", "영역"]
+      },
+      "boost_rules": {
+        "content_boost": 0.3
+      }
     },
     "rights_focused": {
       "vector_weight": 0.7,
       "keyword_weight": 0.3,
-      "rights_field_boost": 0.15
+      "nprobe": 20,
+      "limit_multiplier": 2,
+      "hierarchy_conditions": {
+        "content_keywords": ["권리", "의무", "보호", "권한", "책임", "자유"]
+      },
+      "boost_rules": {
+        "content_boost": 0.3
+      }
     }
   },
-  
+  "law_type_weights": {
+    "법률": {
+      "definition": 0.2,
+      "purpose": 0.2,
+      "penalty": 0.1,
+      "procedure": 0.0,
+      "exception": 0.0,
+      "scope": 0.0,
+      "rights": 0.0
+    },
+    "시행령": {
+      "definition": 0.1,
+      "purpose": 0.1,
+      "penalty": 0.1,
+      "procedure": 0.2,
+      "exception": 0.0,
+      "scope": 0.0,
+      "rights": 0.0
+    },
+    "시행규칙": {
+      "definition": 0.0,
+      "purpose": 0.0,
+      "penalty": 0.0,
+      "procedure": 0.2,
+      "exception": 0.0,
+      "scope": 0.0,
+      "rights": 0.0
+    },
+    "고시": {
+      "definition": 0.0,
+      "purpose": 0.0,
+      "penalty": 0.0,
+      "procedure": 0.2,
+      "exception": 0.0,
+      "scope": 0.0,
+      "rights": 0.0
+    }
+  },
+  "law_name_keywords": {
+    "개인정보": {
+      "definition": 0.2,
+      "purpose": 0.1,
+      "penalty": 0.0,
+      "procedure": 0.0,
+      "exception": 0.0,
+      "scope": 0.0,
+      "rights": 0.0
+    },
+    "정보통신": {
+      "definition": 0.2,
+      "purpose": 0.1,
+      "penalty": 0.0,
+      "procedure": 0.0,
+      "exception": 0.0,
+      "scope": 0.0,
+      "rights": 0.0
+    },
+    "형법": {
+      "definition": 0.0,
+      "purpose": 0.0,
+      "penalty": 0.1,
+      "procedure": 0.0,
+      "exception": 0.0,
+      "scope": 0.0,
+      "rights": 0.0
+    },
+    "특별법": {
+      "definition": 0.0,
+      "purpose": 0.0,
+      "penalty": 0.1,
+      "procedure": 0.0,
+      "exception": 0.0,
+      "scope": 0.0,
+      "rights": 0.0
+    }
+  },
+  "date_weights": {
+    "recent_years": {
+      "2020": 0.1,
+      "2010": 0.05
+    },
+    "law_number_threshold": 15000
+  },
+  "structure_weights": {
+    "definition": {
+      "first_paragraph": 0.1,
+      "first_item": 0.1
+    },
+    "purpose": {
+      "first_paragraph": 0.1,
+      "first_item": 0.1
+    },
+    "penalty": {
+      "numbered_items": 0.05
+    }
+  },
   "result_merging": {
     "reference_boost": 1.0,
     "semantic_intent_boost": 0.5,
     "general_semantic_boost": 0.3,
     "duplicate_removal_threshold": 0.9,
     "max_combined_results": 20
+  },
+  "search_parameters": {
+    "default_nprobe": 16,
+    "default_limit": 10,
+    "score_boosts": {
+      "article_pattern": 1.2,
+      "legal_concept": 1.1,
+      "legal_keyword": 1.0,
+      "legal_reference": 1.0,
+      "paragraph_reference": 0.9,
+      "item_reference": 0.8,
+      "law_reference": 0.7,
+      "parent_article": 0.6,
+      "child_article": 0.7
+    },
+    "limits": {
+      "child_nodes": 50,
+      "batch_size": 100,
+      "article_pattern": 10,
+      "legal_concept": 20,
+      "legal_keyword": 30,
+      "article_reference": 100,
+      "paragraph_reference": 50,
+      "item_reference": 30,
+      "law_reference": 100,
+      "article_range": 200,
+      "parent_article": 5,
+      "child_article": 20,
+      "article_context": 100
+    },
+    "intent_priority_multiplier": 0.1,
+    "default_weight": 0.5
+  },
+  "legal_hierarchy_weights": {
+    "article": 1.0,
+    "paragraph": 0.9,
+    "item": 0.8,
+    "chapter": 0.7,
+    "section": 0.6,
+    "subitem": 0.5,
+    "part": 0.4,
+    "law": 0.3
   }
 }
