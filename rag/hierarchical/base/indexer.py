@@ -11,7 +11,7 @@ import logging
 import time
 import uuid
 import hashlib
-from pymilvus import Collection, utility
+from pymilvus import Collection, utility, DataType
 
 # Meilisearch 클라이언트 임포트 (선택적)
 try:
@@ -769,4 +769,109 @@ class BaseHierarchicalIndexer(ABC):
             
         except Exception as e:
             self.logger.error(f"컬렉션 정보 조회 중 오류: {e}")
+            return {"error": str(e)}
+
+    def get_collection_data(self, collection_name: str, limit: int = 100, 
+                          offset: int = 0, include_embeddings: bool = False) -> Dict[str, Any]:
+        """컬렉션의 모든 데이터 조회"""
+        try:
+            if not self._collection_exists(collection_name):
+                return {"error": f"컬렉션 {collection_name}이 존재하지 않습니다"}
+            
+            collection = Collection(collection_name)
+            collection.load()
+            
+            # 출력 필드 설정
+            output_fields = ["*"]
+            if not include_embeddings:
+                # 임베딩 필드 제외
+                schema = collection.schema
+                output_fields = [field.name for field in schema.fields if field.dtype != DataType.FLOAT_VECTOR]
+            
+            # 데이터 조회
+            search_params = {
+                "data": [[0.0] * 1024],  # 더미 벡터
+                "anns_field": "text_emb",
+                "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
+                "limit": limit,
+                "offset": offset,
+                "output_fields": output_fields
+            }
+            
+            results = collection.search(**search_params)
+            
+            # 결과 포맷팅
+            entities = []
+            for hits in results:
+                for hit in hits:
+                    entity = {}
+                    for field_name in output_fields:
+                        if hasattr(hit, field_name):
+                            entity[field_name] = getattr(hit, field_name)
+                    entities.append(entity)
+            
+            return {
+                "total_count": collection.num_entities,
+                "entities": entities
+            }
+            
+        except Exception as e:
+            self.logger.error(f"컬렉션 데이터 조회 중 오류: {e}")
+            return {"error": str(e)}
+
+    def get_collection_sample(self, collection_name: str, sample_size: int = 10) -> Dict[str, Any]:
+        """컬렉션의 샘플 데이터 조회"""
+        try:
+            return self.get_collection_data(
+                collection_name=collection_name,
+                limit=sample_size,
+                offset=0,
+                include_embeddings=False
+            )
+        except Exception as e:
+            self.logger.error(f"컬렉션 샘플 조회 중 오류: {e}")
+            return {"error": str(e)}
+
+    def search_in_collection(self, collection_name: str, query: str, 
+                           field: str = "content", limit: int = 20) -> Dict[str, Any]:
+        """컬렉션에서 키워드 검색"""
+        try:
+            if not self._collection_exists(collection_name):
+                return {"error": f"컬렉션 {collection_name}이 존재하지 않습니다"}
+            
+            collection = Collection(collection_name)
+            collection.load()
+            
+            # 검색 표현식 생성
+            expr = f'{field} like "%{query}%"'
+            
+            # 검색 수행
+            search_params = {
+                "data": [[0.0] * 1024],  # 더미 벡터
+                "anns_field": "text_emb",
+                "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
+                "limit": limit,
+                "expr": expr,
+                "output_fields": ["*"]
+            }
+            
+            results = collection.search(**search_params)
+            
+            # 결과 포맷팅
+            entities = []
+            for hits in results:
+                for hit in hits:
+                    entity = {}
+                    for field_name in ["id", "title", "content", "node_type", "hierarchy_level", "article_number"]:
+                        if hasattr(hit, field_name):
+                            entity[field_name] = getattr(hit, field_name)
+                    entities.append(entity)
+            
+            return {
+                "total_count": len(entities),
+                "entities": entities
+            }
+            
+        except Exception as e:
+            self.logger.error(f"컬렉션 검색 중 오류: {e}")
             return {"error": str(e)}

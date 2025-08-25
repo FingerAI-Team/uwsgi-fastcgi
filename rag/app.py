@@ -3492,6 +3492,119 @@ def legal_collection_info(collection_name):
         }), 500
 
 
+@app.route('/rag/legal/collections/<collection_name>/data', methods=['GET'])
+def legal_collection_data(collection_name):
+    """특정 법령 컬렉션의 모든 데이터 조회"""
+    try:
+        indexer = get_or_init_legal_indexer()
+        
+        # 쿼리 파라미터
+        limit = request.args.get('limit', 100, type=int)
+        offset = request.args.get('offset', 0, type=int)
+        include_embeddings = request.args.get('include_embeddings', 'false').lower() == 'true'
+        
+        # 데이터 조회
+        data = indexer.get_collection_data(
+            collection_name=collection_name,
+            limit=limit,
+            offset=offset,
+            include_embeddings=include_embeddings
+        )
+        
+        return jsonify({
+            "status": "success",
+            "data": {
+                "collection_name": collection_name,
+                "total_count": data.get("total_count", 0),
+                "returned_count": len(data.get("entities", [])),
+                "limit": limit,
+                "offset": offset,
+                "entities": data.get("entities", [])
+            },
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"법령 컬렉션 데이터 조회 오류: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"컬렉션 데이터 조회 중 오류가 발생했습니다: {str(e)}"
+        }), 500
+
+
+@app.route('/rag/legal/collections/<collection_name>/sample', methods=['GET'])
+def legal_collection_sample(collection_name):
+    """특정 법령 컬렉션의 샘플 데이터 조회 (처음 10개)"""
+    try:
+        indexer = get_or_init_legal_indexer()
+        
+        # 샘플 데이터 조회
+        sample_data = indexer.get_collection_sample(collection_name, sample_size=10)
+        
+        return jsonify({
+            "status": "success",
+            "data": {
+                "collection_name": collection_name,
+                "sample_size": len(sample_data.get("entities", [])),
+                "entities": sample_data.get("entities", [])
+            },
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"법령 컬렉션 샘플 조회 오류: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"컬렉션 샘플 조회 중 오류가 발생했습니다: {str(e)}"
+        }), 500
+
+
+@app.route('/rag/legal/collections/<collection_name>/search', methods=['GET'])
+def legal_collection_search(collection_name):
+    """특정 법령 컬렉션에서 키워드 검색"""
+    try:
+        indexer = get_or_init_legal_indexer()
+        
+        # 쿼리 파라미터
+        query = request.args.get('query', '')
+        limit = request.args.get('limit', 20, type=int)
+        field = request.args.get('field', 'content')  # 검색할 필드
+        
+        if not query:
+            return jsonify({
+                "status": "error",
+                "message": "검색 쿼리가 필요합니다 (query 파라미터)"
+            }), 400
+        
+        # 키워드 검색
+        search_results = indexer.search_in_collection(
+            collection_name=collection_name,
+            query=query,
+            field=field,
+            limit=limit
+        )
+        
+        return jsonify({
+            "status": "success",
+            "data": {
+                "collection_name": collection_name,
+                "query": query,
+                "field": field,
+                "total_count": search_results.get("total_count", 0),
+                "returned_count": len(search_results.get("entities", [])),
+                "entities": search_results.get("entities", [])
+            },
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"법령 컬렉션 검색 오류: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"컬렉션 검색 중 오류가 발생했습니다: {str(e)}"
+        }), 500
+
+
 if __name__ == "__main__":
     print(f"Start results")
     app.run(host="0.0.0.0", port=5000)
