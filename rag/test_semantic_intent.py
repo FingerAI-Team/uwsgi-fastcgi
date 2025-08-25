@@ -32,7 +32,8 @@ def test_intent_detection():
         "개인정보 처리법의 예외는 뭐가 있나요?",
         "개인정보 처리법의 적용 범위는 어디까지인가요?",
         "개인정보 처리법에서 권리는 어떻게 보호되나요?",
-        "제1조는 뭐라고 되어있나요?"
+        "제1조는 뭐라고 되어있나요?",
+        "개인정보 처리법 제2조의2는 뭐인가요?"
     ]
     
     for query in test_queries:
@@ -44,8 +45,34 @@ def test_intent_detection():
             print(f"  ✅ 의도 감지: {primary_intent['intent']}")
             print(f"  📊 신뢰도: {primary_intent['confidence']:.2f}")
             print(f"  🎯 매칭 키워드: {primary_intent['matched_keywords']}")
+            
+            # 모든 감지된 의도들 출력
+            if len(intent_analysis["detected_intents"]) > 1:
+                print("  📋 모든 감지된 의도들:")
+                for i, intent in enumerate(intent_analysis["detected_intents"]):
+                    print(f"    {i+1}. {intent['intent']} (신뢰도: {intent['confidence']:.2f}, 키워드: {intent['matched_keywords']})")
         else:
             print("  ❌ 의도 감지 안됨")
+            
+            # 디버깅을 위해 각 의도별 점수 계산
+            print("  🔍 디버깅 정보:")
+            intents = config_loader.get_semantic_intents()
+            query_lower = query.lower()
+            for intent_name, intent_config in intents.items():
+                confidence = 0.0
+                matched_keywords = []
+                keywords = intent_config.get("keywords", [])
+                
+                for keyword in keywords:
+                    if keyword in query_lower:
+                        if keyword in ["목적", "정의", "벌칙", "절차", "예외", "적용", "범위", "권리"]:
+                            confidence += 0.6
+                        else:
+                            confidence += 0.3
+                        matched_keywords.append(keyword)
+                
+                if confidence > 0:
+                    print(f"    - {intent_name}: {confidence:.2f} (임계값: {intent_config.get('confidence_threshold', 0.3):.2f}) - 키워드: {matched_keywords}")
 
 def test_query_analysis():
     """쿼리 분석 테스트"""

@@ -442,10 +442,12 @@ class HierarchicalConfigLoader:
                             confidence += 0.3  # 보조 키워드는 낮은 가중치
                         matched_keywords.append(keyword)
                     
-                    # 부분 매칭 (낮은 가중치)
-                    elif any(word in keyword for word in query_lower.split()):
-                        confidence += 0.1
-                        matched_keywords.append(f"부분매칭:{keyword}")
+                    # 부분 매칭 (더 엄격한 조건)
+                    elif len(keyword) > 2 and any(word in keyword for word in query_lower.split() if len(word) > 1):
+                        # 핵심 의도 키워드가 아닌 경우에만 부분 매칭 허용
+                        if keyword not in ["뭐가", "뭐인가요", "뭐라고", "무엇", "어떻게", "되나요"]:
+                            confidence += 0.1
+                            matched_keywords.append(f"부분매칭:{keyword}")
                 
                 # 신뢰도 임계값 확인
                 threshold = intent_config.get("confidence_threshold", 0.3)
