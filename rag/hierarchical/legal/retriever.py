@@ -11,7 +11,7 @@ from pymilvus import Collection
 
 from ..base.retriever import BaseHierarchicalRetriever
 from ..base.advanced_retriever import AdvancedHierarchicalRetriever
-from ..config.config_loader import HierarchicalConfigLoader
+from ..config.config_loader import HierarchicalConfigLoader, get_config_loader
 
 
 class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
@@ -607,22 +607,29 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             # 쿼리 분석 및 전처리
             analyzed_query = self._analyze_legal_query(query)
             
-            # 검색 모드에 따른 처리
+            # 검색 모드에 따른 처리 (개선된 버전)
+            reference_results = []
+            semantic_results = []
+            
+            # 1. 법조문 참조 검색
             if analyzed_query["has_legal_references"] and params["search_mode"] in ["legal_reference", "hybrid"]:
-                # 법조문 참조 검색
+                self.logger.info("🔍 법조문 참조 검색 실행")
                 reference_results = self._search_by_legal_references(
                     collection_name, analyzed_query, params
                 )
-            else:
-                reference_results = []
             
-            if params["search_mode"] in ["semantic", "hybrid"]:
-                # 의미 기반 검색
+            # 2. 의미적 의도 기반 검색 (새로 추가)
+            if analyzed_query["has_semantic_intent"] and params["search_mode"] in ["semantic", "hybrid"]:
+                self.logger.info(f"🎯 의미적 의도 기반 검색 실행: {analyzed_query['semantic_intent']}")
+                semantic_results = self._search_by_semantic_intent(
+                    collection_name, analyzed_query, params
+                )
+            # 3. 일반 의미 검색 (의도가 없을 때)
+            elif params["search_mode"] in ["semantic", "hybrid"]:
+                self.logger.info("🔍 일반 의미 검색 실행")
                 semantic_results = self._search_by_semantics(
                     collection_name, analyzed_query["processed_query"], params
                 )
-            else:
-                semantic_results = []
             
             # 결과 병합 및 후처리
             combined_results = self._combine_search_results(
@@ -640,12 +647,15 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             return []
     
     def _analyze_legal_query(self, query: str) -> Dict[str, Any]:
-        """법령 쿼리 분석"""
+        """개선된 법령 쿼리 분석 - 의미적 의도 감지 추가"""
         try:
             analysis = {
                 "original_query": query,
                 "processed_query": query,
                 "has_legal_references": False,
+                "has_semantic_intent": False,
+                "semantic_intent": None,
+                "semantic_intent_confidence": 0.0,
                 "article_references": [],
                 "paragraph_references": [],
                 "item_references": [],
@@ -653,7 +663,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 "article_ranges": []
             }
             
-            # 조문 참조 추출
+            # 1. 정확한 조문 참조 추출 (기존)
             article_matches = re.finditer(self.legal_patterns["article_ref"], query)
             for match in article_matches:
                 article_num = match.group(1)
@@ -695,17 +705,36 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 analysis["article_ranges"].append((start_article, end_article))
                 analysis["has_legal_references"] = True
             
-            # 참조 제거한 순수 의미 쿼리 생성
+            # 2. 의미적 의도 감지 (config 기반)
+            config_loader = get_config_loader()
+            intent_analysis = config_loader.detect_semantic_intent(query)
+            
+            analysis["has_semantic_intent"] = intent_analysis["has_semantic_intent"]
+            if intent_analysis["primary_intent"]:
+                analysis["semantic_intent"] = intent_analysis["primary_intent"]["intent"]
+                analysis["semantic_intent_confidence"] = intent_analysis["primary_intent"]["confidence"]
+                self.logger.info(f"🎯 의미적 의도 감지: {analysis['semantic_intent']} (신뢰도: {analysis['semantic_intent_confidence']:.2f})")
+            
+            # 3. 참조 제거한 순수 의미 쿼리 생성
             processed_query = query
             for pattern in self.legal_patterns.values():
                 processed_query = re.sub(pattern, "", processed_query)
             analysis["processed_query"] = processed_query.strip()
             
+            self.logger.info(f"🔍 쿼리 분석 완료: 참조={analysis['has_legal_references']}, 의도={analysis['semantic_intent']}")
+            
             return analysis
             
         except Exception as e:
             self.logger.error(f"쿼리 분석 중 오류: {e}")
-            return {"original_query": query, "processed_query": query, "has_legal_references": False}
+            return {
+                "original_query": query, 
+                "processed_query": query, 
+                "has_legal_references": False,
+                "has_semantic_intent": False,
+                "semantic_intent": None,
+                "semantic_intent_confidence": 0.0
+            }
     
     def _search_by_legal_references(self, collection_name: str, 
                                    analyzed_query: Dict[str, Any],
@@ -1009,31 +1038,45 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
     def _combine_search_results(self, reference_results: List[Dict[str, Any]],
                               semantic_results: List[Dict[str, Any]], 
                               params: Dict) -> List[Dict[str, Any]]:
-        """검색 결과 병합"""
+        """개선된 검색 결과 병합 - config 기반 스코어링"""
         try:
+            config_loader = get_config_loader()
+            merging_config = config_loader.get_result_merging_config()
+            
             # 참조 검색 결과에 높은 우선순위
+            reference_boost = merging_config.get("reference_boost", 1.0)
             for result in reference_results:
                 result["search_type"] = "legal_reference"
-                result["final_score"] = result.get("score", 0.0) + 1.0  # 보너스 점수
+                result["final_score"] = result.get("score", 0.0) + reference_boost
+                result["priority"] = 1  # 최고 우선순위
             
-            # 의미 검색 결과
+            # 의미 검색 결과 (의도 기반 vs 일반)
+            semantic_intent_boost = merging_config.get("semantic_intent_boost", 0.5)
+            general_semantic_boost = merging_config.get("general_semantic_boost", 0.3)
+            
             for result in semantic_results:
-                result["search_type"] = "semantic"
-                result["final_score"] = result.get("legal_score", result.get("score", 0.0))
+                # 의도 기반 검색 결과인지 확인
+                if "intent_info" in result:
+                    result["search_type"] = "semantic_intent"
+                    intent_boost = semantic_intent_boost * result["intent_info"]["confidence"]
+                    result["final_score"] = result.get("score", 0.0) + intent_boost
+                    result["priority"] = 2  # 중간 우선순위
+                    self.logger.info(f"🎯 의도 기반 결과 스코어링: {result['intent_info']['detected_intent']} (보너스: {intent_boost:.3f})")
+                else:
+                    result["search_type"] = "semantic"
+                    result["final_score"] = result.get("score", 0.0) + general_semantic_boost
+                    result["priority"] = 3  # 낮은 우선순위
             
-            # 중복 제거 (ID 기반)
+            # 중복 제거 (ID 기반, config 기반 임계값)
+            duplicate_threshold = merging_config.get("duplicate_removal_threshold", 0.9)
             seen_ids = set()
             combined_results = []
             
-            # 참조 검색 결과 우선 추가
-            for result in reference_results:
-                result_id = result.get("id", "")
-                if result_id and result_id not in seen_ids:
-                    seen_ids.add(result_id)
-                    combined_results.append(result)
+            # 우선순위 순으로 추가 (참조 → 의도 기반 → 일반 의미)
+            all_results = reference_results + semantic_results
+            all_results.sort(key=lambda x: x.get("priority", 999))
             
-            # 의미 검색 결과 추가 (중복 제외)
-            for result in semantic_results:
+            for result in all_results:
                 result_id = result.get("id", "")
                 if result_id and result_id not in seen_ids:
                     seen_ids.add(result_id)
@@ -1041,6 +1084,12 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             
             # 최종 점수로 정렬
             combined_results.sort(key=lambda x: x.get("final_score", 0.0), reverse=True)
+            
+            # 최대 결과 수 제한
+            max_results = merging_config.get("max_combined_results", 20)
+            combined_results = combined_results[:max_results]
+            
+            self.logger.info(f"🔗 결과 병합 완료: 참조={len(reference_results)}개, 의미={len(semantic_results)}개, 최종={len(combined_results)}개")
             
             return combined_results
             
@@ -1238,3 +1287,154 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
         except Exception as e:
             self.logger.error(f"조문 컨텍스트 조회 중 오류: {e}")
             return {"error": str(e)}
+    
+    def _search_by_semantic_intent(self, collection_name: str, 
+                                 analyzed_query: Dict[str, Any],
+                                 params: Dict) -> List[Dict[str, Any]]:
+        """의미적 의도 기반 검색 (config 기반)"""
+        try:
+            config_loader = get_config_loader()
+            intent_config = analyzed_query.get("semantic_intent")
+            intent_confidence = analyzed_query.get("semantic_intent_confidence", 0.0)
+            
+            if not intent_config:
+                self.logger.warning("의미적 의도가 감지되지 않음")
+                return []
+            
+            # 의도별 검색 전략 가져오기
+            search_strategies = config_loader.get_search_strategies_config()
+            strategy_config = search_strategies.get(intent_config, {})
+            
+            if not strategy_config:
+                self.logger.warning(f"의도 '{intent_config}'에 대한 검색 전략이 없음")
+                return []
+            
+            self.logger.info(f"🎯 의도 기반 검색: {intent_config} (전략: {strategy_config})")
+            
+            # 의도별 쿼리 강화
+            enhanced_query = self._enhance_query_by_intent(
+                analyzed_query["processed_query"], 
+                intent_config, 
+                intent_confidence
+            )
+            
+            # 벡터 검색 수행
+            collection = Collection(collection_name)
+            collection.load()
+            
+            # 의도별 가중치 적용
+            vector_weight = strategy_config.get("vector_weight", 0.7)
+            keyword_weight = strategy_config.get("keyword_weight", 0.3)
+            
+            # 검색 파라미터 조정
+            search_params = {
+                "data": [self._encode_query(enhanced_query)],
+                "anns_field": "text_emb",
+                "param": {
+                    "metric_type": "COSINE", 
+                    "params": {"nprobe": 16}
+                },
+                "limit": params.get("top_k", 10) * 2,  # 더 많은 후보 검색
+                "output_fields": ["*"]
+            }
+            
+            results = collection.search(**search_params)
+            
+            # 의도별 점수 보정
+            enhanced_results = []
+            for result in results:
+                enhanced_result = self._apply_intent_scoring(
+                    result, intent_config, intent_confidence, strategy_config
+                )
+                enhanced_results.append(enhanced_result)
+            
+            # 점수 순으로 정렬
+            enhanced_results.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+            
+            # 상위 결과만 반환
+            top_k = params.get("top_k", 10)
+            final_results = enhanced_results[:top_k]
+            
+            self.logger.info(f"🎯 의도 기반 검색 완료: {len(final_results)}개 결과")
+            return final_results
+            
+        except Exception as e:
+            self.logger.error(f"의미적 의도 기반 검색 중 오류: {e}")
+            return []
+    
+    def _enhance_query_by_intent(self, query: str, intent: str, confidence: float) -> str:
+        """의도에 따른 쿼리 강화"""
+        try:
+            config_loader = get_config_loader()
+            intents = config_loader.get_semantic_intents()
+            intent_config = intents.get(intent, {})
+            
+            enhanced_query = query
+            
+            # 의도별 키워드 추가
+            if intent == "purpose":
+                enhanced_query += " 목적 취지 의도"
+            elif intent == "definition":
+                enhanced_query += " 정의 의미 개념 용어"
+            elif intent == "penalty":
+                enhanced_query += " 벌칙 처벌 과태료"
+            elif intent == "procedure":
+                enhanced_query += " 절차 방법 요건"
+            elif intent == "exception":
+                enhanced_query += " 예외 단서 다만"
+            elif intent == "scope":
+                enhanced_query += " 적용 범위 대상"
+            elif intent == "rights":
+                enhanced_query += " 권리 의무 책임"
+            
+            # 신뢰도에 따른 가중치 조정
+            if confidence > 0.8:
+                enhanced_query += f" {intent_config.get('description', '')}"
+            
+            self.logger.info(f"🔍 쿼리 강화: '{query}' → '{enhanced_query}'")
+            return enhanced_query
+            
+        except Exception as e:
+            self.logger.error(f"쿼리 강화 중 오류: {e}")
+            return query
+    
+    def _apply_intent_scoring(self, result: Dict[str, Any], intent: str, 
+                            confidence: float, strategy_config: Dict[str, Any]) -> Dict[str, Any]:
+        """의도별 점수 보정"""
+        try:
+            original_score = result.get("score", 0.0)
+            
+            # 의도별 보너스 점수
+            intent_boost = strategy_config.get("boost_weight", 0.2) * confidence
+            
+            # 필드별 보너스
+            field_boost = 0.0
+            entity = result.get("entity", {})
+            
+            if intent == "definition" and "정의" in entity.get("content", ""):
+                field_boost += strategy_config.get("definition_field_boost", 0.3)
+            elif intent == "penalty" and any(word in entity.get("content", "") for word in ["벌칙", "처벌", "과태료"]):
+                field_boost += strategy_config.get("penalty_field_boost", 0.2)
+            elif intent == "procedure" and any(word in entity.get("content", "") for word in ["절차", "방법", "요건"]):
+                field_boost += strategy_config.get("procedure_field_boost", 0.2)
+            
+            # 최종 점수 계산
+            final_score = original_score + intent_boost + field_boost
+            
+            # 결과에 메타데이터 추가
+            result["intent_info"] = {
+                "detected_intent": intent,
+                "confidence": confidence,
+                "intent_boost": intent_boost,
+                "field_boost": field_boost,
+                "original_score": original_score,
+                "final_score": final_score
+            }
+            
+            result["score"] = final_score
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"의도별 점수 보정 중 오류: {e}")
+            return result

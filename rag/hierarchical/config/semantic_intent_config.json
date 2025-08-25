@@ -1,0 +1,107 @@
+{
+  "semantic_intents": {
+    "purpose": {
+      "keywords": ["목적", "목적은", "목적이", "취지", "취지는", "의도", "의도는"],
+      "confidence_threshold": 0.8,
+      "boost_weight": 0.3,
+      "search_strategy": "semantic_focused",
+      "description": "법령의 목적이나 취지를 묻는 의도"
+    },
+    "definition": {
+      "keywords": ["정의", "정의는", "의미", "뜻", "개념", "란", "용어", "해석"],
+      "confidence_threshold": 0.8,
+      "boost_weight": 0.3,
+      "search_strategy": "definition_focused",
+      "description": "용어나 개념의 정의를 묻는 의도"
+    },
+    "penalty": {
+      "keywords": ["벌칙", "처벌", "벌금", "과태료", "형사처벌", "행정처분", "징역", "금고"],
+      "confidence_threshold": 0.7,
+      "boost_weight": 0.2,
+      "search_strategy": "penalty_focused",
+      "description": "벌칙이나 처벌 관련 의도"
+    },
+    "procedure": {
+      "keywords": ["절차", "방법", "요건", "신고", "허가", "제출", "신청", "승인", "수속"],
+      "confidence_threshold": 0.7,
+      "boost_weight": 0.2,
+      "search_strategy": "procedure_focused",
+      "description": "절차나 방법 관련 의도"
+    },
+    "exception": {
+      "keywords": ["예외", "제외", "단서", "다만", "단", "특별한", "경우"],
+      "confidence_threshold": 0.7,
+      "boost_weight": 0.2,
+      "search_strategy": "exception_focused",
+      "description": "예외나 단서 조항 관련 의도"
+    },
+    "scope": {
+      "keywords": ["적용", "범위", "대상", "포함", "해당", "관련"],
+      "confidence_threshold": 0.6,
+      "boost_weight": 0.15,
+      "search_strategy": "scope_focused",
+      "description": "적용 범위나 대상 관련 의도"
+    },
+    "rights": {
+      "keywords": ["권리", "의무", "책임", "보호", "보장", "요구"],
+      "confidence_threshold": 0.6,
+      "boost_weight": 0.15,
+      "search_strategy": "rights_focused",
+      "description": "권리나 의무 관련 의도"
+    }
+  },
+  
+  "intent_detection": {
+    "min_confidence": 0.5,
+    "max_intents_per_query": 2,
+    "context_window_size": 5,
+    "enable_fuzzy_matching": true,
+    "fuzzy_threshold": 0.8
+  },
+  
+  "search_strategies": {
+    "semantic_focused": {
+      "vector_weight": 0.8,
+      "keyword_weight": 0.2,
+      "context_boost": 0.1
+    },
+    "definition_focused": {
+      "vector_weight": 0.6,
+      "keyword_weight": 0.4,
+      "definition_field_boost": 0.3
+    },
+    "penalty_focused": {
+      "vector_weight": 0.7,
+      "keyword_weight": 0.3,
+      "penalty_field_boost": 0.2
+    },
+    "procedure_focused": {
+      "vector_weight": 0.6,
+      "keyword_weight": 0.4,
+      "procedure_field_boost": 0.2
+    },
+    "exception_focused": {
+      "vector_weight": 0.7,
+      "keyword_weight": 0.3,
+      "exception_field_boost": 0.2
+    },
+    "scope_focused": {
+      "vector_weight": 0.7,
+      "keyword_weight": 0.3,
+      "scope_field_boost": 0.15
+    },
+    "rights_focused": {
+      "vector_weight": 0.7,
+      "keyword_weight": 0.3,
+      "rights_field_boost": 0.15
+    }
+  },
+  
+  "result_merging": {
+    "reference_boost": 1.0,
+    "semantic_intent_boost": 0.5,
+    "general_semantic_boost": 0.3,
+    "duplicate_removal_threshold": 0.9,
+    "max_combined_results": 20
+  }
+}

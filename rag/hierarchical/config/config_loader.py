@@ -36,7 +36,8 @@ class HierarchicalConfigLoader:
             "intent_keywords": "intent_keywords.json",
             "dynamic_scoring": "dynamic_scoring.json",
             "weight_presets": "weight_presets.json",
-            "date_extraction": "date_extraction_patterns.json"
+            "date_extraction": "date_extraction_patterns.json",
+            "semantic_intent": "semantic_intent_config.json"
         }
         
         # 로드된 설정 캐시
@@ -398,6 +399,73 @@ class HierarchicalConfigLoader:
         except Exception as e:
             self.logger.error(f"설정 검증 중 오류: {e}")
             return {"valid": False, "errors": [str(e)], "warnings": []}
+    
+    # ==================== 의미적 의도 관련 메서드 ====================
+    
+    def get_semantic_intents(self) -> Dict[str, Any]:
+        """의미적 의도 설정 조회"""
+        return self._config_cache.get("semantic_intent", {}).get("semantic_intents", {})
+    
+    def get_intent_detection_config(self) -> Dict[str, Any]:
+        """의도 감지 설정 조회"""
+        return self._config_cache.get("semantic_intent", {}).get("intent_detection", {})
+    
+    def get_search_strategies_config(self) -> Dict[str, Any]:
+        """검색 전략별 설정 조회"""
+        return self._config_cache.get("semantic_intent", {}).get("search_strategies", {})
+    
+    def get_result_merging_config(self) -> Dict[str, Any]:
+        """결과 병합 설정 조회"""
+        return self._config_cache.get("semantic_intent", {}).get("result_merging", {})
+    
+    def detect_semantic_intent(self, query: str) -> Dict[str, Any]:
+        """쿼리에서 의미적 의도 감지"""
+        try:
+            intents = self.get_semantic_intents()
+            detection_config = self.get_intent_detection_config()
+            
+            detected_intents = []
+            query_lower = query.lower()
+            
+            for intent_name, intent_config in intents.items():
+                confidence = 0.0
+                matched_keywords = []
+                
+                # 키워드 매칭
+                for keyword in intent_config.get("keywords", []):
+                    if keyword in query_lower:
+                        confidence += 0.3
+                        matched_keywords.append(keyword)
+                
+                # 신뢰도 임계값 확인
+                if confidence >= intent_config.get("confidence_threshold", 0.5):
+                    detected_intents.append({
+                        "intent": intent_name,
+                        "confidence": min(confidence, 1.0),
+                        "matched_keywords": matched_keywords,
+                        "config": intent_config
+                    })
+            
+            # 신뢰도 순으로 정렬
+            detected_intents.sort(key=lambda x: x["confidence"], reverse=True)
+            
+            # 최대 의도 개수 제한
+            max_intents = detection_config.get("max_intents_per_query", 2)
+            detected_intents = detected_intents[:max_intents]
+            
+            return {
+                "has_semantic_intent": len(detected_intents) > 0,
+                "detected_intents": detected_intents,
+                "primary_intent": detected_intents[0] if detected_intents else None
+            }
+            
+        except Exception as e:
+            self.logger.error(f"의미적 의도 감지 중 오류: {e}")
+            return {
+                "has_semantic_intent": False,
+                "detected_intents": [],
+                "primary_intent": None
+            }
 
 
 # 전역 설정 로더 인스턴스
