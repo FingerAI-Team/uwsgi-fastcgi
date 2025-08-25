@@ -2862,10 +2862,24 @@ def legal_search():
                 domain_duration = time.time() - domain_start_time
                 logger.info(f"✅ 도메인 '{domain}' 검색 완료: {len(domain_results)}개 결과, {domain_duration:.3f}초")
                 
-                # 결과에 도메인 정보 추가
+                        # 결과에 도메인 정보 추가 및 content 필드 보장
                 for result in domain_results:
                     result['domain'] = domain
                     result['search_score'] = result.get('final_score', result.get('score', 0.0))
+                    
+                    # content 필드가 없으면 entity에서 가져오기
+                    if 'content' not in result and 'entity' in result:
+                        if isinstance(result['entity'], dict) and 'content' in result['entity']:
+                            result['content'] = result['entity']['content']
+                        elif hasattr(result['entity'], 'content'):
+                            result['content'] = getattr(result['entity'], 'content', '')
+                    
+                    # title 필드도 보장
+                    if 'title' not in result and 'entity' in result:
+                        if isinstance(result['entity'], dict) and 'title' in result['entity']:
+                            result['title'] = result['entity']['title']
+                        elif hasattr(result['entity'], 'title'):
+                            result['title'] = getattr(result['entity'], 'title', '')
                 
                 all_results.extend(domain_results)
                 total_results += len(domain_results)
