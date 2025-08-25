@@ -227,7 +227,7 @@ class LegalSchema(BaseHierarchicalSchema):
             "hierarchy_path": "/개인정보보호법/제1장/제1조",
             "title": "목적",  # 조문 제목
             "content": "이 법은 개인정보의 처리 및 보호에 관한 사항을 정함으로써 개인의 자유와 권리를 보호하고, 나아가 개인의 존엄과 가치를 구현하기 위함을 목적으로 한다.",
-            "content_embedding": None,  # 임베딩은 별도 생성
+            "text_emb": None,  # 임베딩은 별도 생성
             "domain": "legal",
             "created_at": "2024-01-15T10:30:00",
             

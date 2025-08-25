@@ -130,7 +130,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             
             search_params = {
                 "data": [[0.0] * 1024],  # 더미 벡터
-                "anns_field": "content_embedding",
+                "anns_field": "text_emb",
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 50,  # 자식 노드 수 제한
                 "expr": expr,
@@ -199,7 +199,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 
                 search_params = {
                     "data": [[0.0] * 1024],  # 더미 벡터
-                    "anns_field": "content_embedding",
+                    "anns_field": "text_emb",
                     "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                     "limit": len(batch_ids),
                     "expr": expr,
@@ -266,7 +266,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 
                 search_params = {
                     "data": [[0.0] * 1024],
-                    "anns_field": "content_embedding",
+                    "anns_field": "text_emb",
                     "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                     "limit": 10,
                     "expr": expr,
@@ -345,7 +345,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 
                 search_params = {
                     "data": [[0.0] * 1024],
-                    "anns_field": "content_embedding",
+                    "anns_field": "text_emb",
                     "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                     "limit": 20,
                     "expr": expr,
@@ -428,7 +428,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             
             search_params = {
                 "data": [[0.0] * 1024],
-                "anns_field": "content_embedding",
+                "anns_field": "text_emb",
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 30,
                 "expr": expr,
@@ -509,7 +509,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                 
                 search_params_milvus = {
                     "data": [dummy_embedding],
-                    "anns_field": "content_embedding",
+                    "anns_field": "text_emb",
                     "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                     "limit": search_params.get('top_k', 10),
                     "output_fields": ["*"]
@@ -763,7 +763,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             
             search_params = {
                 "data": [[0.0] * 1024],  # 더미 벡터 (expr 기반 검색)
-                "anns_field": "content_embedding",  # content_embedding 필드 사용
+                "anns_field": "text_emb",  # text_emb 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 100,
                 "expr": expr,
@@ -785,7 +785,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             
             search_params = {
                 "data": [[0.0] * 1024],
-                "anns_field": "content_embedding",  # content_embedding 필드 사용
+                "anns_field": "text_emb",  # text_emb 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 50,
                 "expr": expr,
@@ -807,7 +807,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             
             search_params = {
                 "data": [[0.0] * 1024],
-                "anns_field": "content_embedding",  # content_embedding 필드 사용
+                "anns_field": "text_emb",  # text_emb 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 30,
                 "expr": expr,
@@ -829,7 +829,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             
             search_params = {
                 "data": [[0.0] * 1024],
-                "anns_field": "content_embedding",  # content_embedding 필드 사용
+                "anns_field": "text_emb",  # text_emb 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 100,
                 "expr": expr,
@@ -860,7 +860,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             
             search_params = {
                 "data": [[0.0] * 1024],
-                "anns_field": "content_embedding",  # content_embedding 필드 사용
+                "anns_field": "text_emb",  # text_emb 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 200,
                 "expr": expr,
@@ -1070,7 +1070,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             expr = f'node_id == "{parent_node_id}"'
             search_params = {
                 "data": [[0.0] * 1024],
-                "anns_field": "content_embedding",  # content_embedding 필드 사용
+                "anns_field": "text_emb",  # text_emb 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 5,
                 "expr": expr,
@@ -1108,7 +1108,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             expr = f'parent_node_id == "{current_node_id}"'
             search_params = {
                 "data": [[0.0] * 1024],
-                "anns_field": "content_embedding",  # content_embedding 필드 사용
+                "anns_field": "text_emb",  # text_emb 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 20,
                 "expr": expr,
@@ -1180,7 +1180,7 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
             expr = f'article_number == "{article_number}"'
             search_params = {
                 "data": [[0.0] * 1024],
-                "anns_field": "content_embedding",  # content_embedding 필드 사용
+                "anns_field": "text_emb",  # text_emb 필드 사용
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 100,
                 "expr": expr,

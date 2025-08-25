@@ -2776,7 +2776,7 @@ def legal_search():
     """
     법령 검색 API
     
-    LegalRetriever를 직접 사용하여 content_embedding 필드로 올바른 검색 수행
+            LegalRetriever를 직접 사용하여 text_emb 필드로 올바른 검색 수행
     """
     api_start_time = time.time()
     logger.info("=== LEGAL SEARCH API START ===")
@@ -2844,7 +2844,7 @@ def legal_search():
             domain_start_time = time.time()
             
             try:
-                # LegalRetriever를 사용하여 content_embedding 필드로 검색
+                # LegalRetriever를 사용하여 text_emb 필드로 검색
                 domain_results = legal_retriever.search_legal_documents(
                     collection_name=domain,
                     query=query,
@@ -3126,7 +3126,7 @@ def legal_insert():
     ```
     
     참고: 
-    - 16개 필드 중 10개는 완전 자동 생성 (node_id, document_id, hierarchy_level, parent_node_id, hierarchy_path, content_embedding, created_at, article_number, paragraph_number, item_number)
+            - 16개 필드 중 10개는 완전 자동 생성 (node_id, document_id, hierarchy_level, parent_node_id, hierarchy_path, text_emb, created_at, article_number, paragraph_number, item_number)
     - 문서 하나가 여러 노드로 자동 분할되어 인덱싱됨 (조문/항/호 단위)
     - 법령 제정일, 시행일 등은 content에서 자동 추출되어 메타데이터로 저장됨
     

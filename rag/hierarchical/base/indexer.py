@@ -382,7 +382,7 @@ class BaseHierarchicalIndexer(ABC):
             
             # 2. 임베딩 결과를 위계형 청크에 추가
             for chunk, embedding in zip(text_to_chunk_map, embeddings):
-                chunk["content_embedding"] = embedding
+                chunk["text_emb"] = embedding
             
             # 3. 성공률 및 통계 로깅
             cache_hit_rate = getattr(self.interact_manager.emb_model, 'cache_hit_rate', 0)
@@ -515,7 +515,7 @@ class BaseHierarchicalIndexer(ABC):
         """위계형 청크 필드 검증"""
         required_fields = [
             "node_id", "document_id", "hierarchy_level", 
-            "title", "content", "content_embedding"
+            "title", "content", "text_emb"
         ]
         
         for field in required_fields:

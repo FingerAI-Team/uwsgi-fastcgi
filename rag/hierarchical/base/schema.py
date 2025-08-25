@@ -79,7 +79,7 @@ class BaseHierarchicalSchema(ABC):
                 
                 # === 임베딩 필드 (단일) ===
                 FieldSchema(
-                    name="content_embedding", 
+                    name="text_emb", 
                     dtype=DataType.FLOAT_VECTOR, 
                     dim=self.vector_dim,
                     description="내용 임베딩 벡터"
@@ -173,7 +173,7 @@ class BaseHierarchicalSchema(ABC):
             base_indexes = [
                 # 벡터 인덱스들
                 {
-                    "field_name": "content_embedding",
+                    "field_name": "text_emb",
                     "index_type": "IVF_FLAT", 
                     "metric_type": "COSINE",
                     "params": {"nlist": 1024}
@@ -243,7 +243,7 @@ class BaseHierarchicalSchema(ABC):
             # 필수 필드 확인
             required_base_fields = [
                 "node_id", "document_id", "hierarchy_level", 
-                "title", "content", "content_embedding"
+                "title", "content", "text_emb"
             ]
             
             all_fields = self.get_complete_fields()
@@ -260,7 +260,7 @@ class BaseHierarchicalSchema(ABC):
                 self.logger.error(f"프라이머리 키는 정확히 1개여야 함: {len(primary_fields)}개 발견")
                 return False
             
-            # 벡터 필드 확인 (1개: content_embedding)
+            # 벡터 필드 확인 (1개: text_emb)
             vector_fields = [field for field in all_fields if field.dtype == DataType.FLOAT_VECTOR]
             if len(vector_fields) != 1:
                 self.logger.error(f"벡터 필드는 정확히 1개여야 함: {len(vector_fields)}개 발견")

@@ -88,7 +88,7 @@ class LegalIndexer(BaseHierarchicalIndexer):
                     "hierarchy_path": chunk.get("hierarchy_path", "/"),
                     "title": chunk.get("article_title", "") or chunk.get("section_number", "") or chunk.get("text", "")[:50] or "제목 없음",
                     "content": chunk.get("text", ""),
-                    "content_embedding": None,  # 나중에 생성
+                    "text_emb": None,  # 나중에 생성
                     "domain": "legal",
                     "created_at": current_time,
                     
@@ -315,7 +315,7 @@ class LegalIndexer(BaseHierarchicalIndexer):
                 self.logger.error("임베딩 모델이 설정되지 않았습니다")
                 return False
             
-            # 내용 텍스트만 추출 (스키마에 content_embedding만 있음)
+            # 내용 텍스트만 추출 (스키마에 text_emb만 있음)
             contents = []
             valid_nodes = []
             
@@ -335,7 +335,7 @@ class LegalIndexer(BaseHierarchicalIndexer):
             content_embeddings = self.interact_manager.emb_model.bge_batch_embed_data(contents)
             if content_embeddings and len(content_embeddings) == len(contents):
                 for node, embedding in zip(valid_nodes, content_embeddings):
-                    node["content_embedding"] = embedding
+                    node["text_emb"] = embedding
                 
                 self.logger.info("✅ 법령 전용 임베딩 생성 완료")
                 return True
@@ -399,7 +399,7 @@ class LegalIndexer(BaseHierarchicalIndexer):
         # Base 필드 검증
         base_required_fields = [
             "node_id", "document_id", "hierarchy_level", 
-            "title", "content", "content_embedding"
+            "title", "content", "text_emb"
         ]
         
         for field in base_required_fields:

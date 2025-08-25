@@ -219,7 +219,7 @@ class BaseHierarchicalRetriever(ABC):
             # 간단한 구현 예시 (실제로는 더 복잡한 쿼리 필요)
             search_params = {
                 "data": [[0.0] * 1024],  # 더미 벡터 (실제로는 적절한 쿼리 필요)
-                "anns_field": "content_embedding",
+                "anns_field": "text_emb",
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 100,
                 "expr": f"hierarchy_level == {parent_level}",
@@ -245,7 +245,7 @@ class BaseHierarchicalRetriever(ABC):
             # 간단한 구현 예시 (실제로는 더 복잡한 쿼리 필요)
             search_params = {
                 "data": [[0.0] * 1024],  # 더미 벡터
-                "anns_field": "content_embedding",
+                "anns_field": "text_emb",
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 100,
                 "expr": f"hierarchy_level == {child_level}",
@@ -418,7 +418,7 @@ class BaseHierarchicalRetriever(ABC):
             # 간단한 구현 (실제로는 더 정확한 쿼리 필요)
             search_params = {
                 "data": [[0.0] * 1024],  # 더미 벡터
-                "anns_field": "content_embedding",
+                "anns_field": "text_emb",
                 "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
                 "limit": 1,
                 "expr": f'passage_uid == "{document_id}"',
