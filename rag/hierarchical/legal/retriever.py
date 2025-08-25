@@ -980,6 +980,10 @@ class LegalRetriever(BaseHierarchicalRetriever, AdvancedHierarchicalRetriever):
                             elif 'text' in hit.entity:
                                 result['content'] = hit.entity['text']
                         
+                        # InteractManager에서 반환된 text 필드를 content로 매핑
+                        if 'content' not in result and 'text' in result:
+                            result['content'] = result['text']
+                        
                         formatted_results.append(result)
                         
                     except Exception as e:
