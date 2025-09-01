@@ -3328,7 +3328,7 @@ def legal_delete():
         collection_name = data.get('collection_name', 'legal_documents')
         delete_type = data.get('delete_type', 'document')  # 'document' or 'node'
         target_ids = data.get('target_ids', [])
-        delete_from_meilisearch = data.get('delete_from_meilisearch', True)
+
         
         if not target_ids:
             return jsonify({
@@ -3352,9 +3352,7 @@ def legal_delete():
             for doc_id in target_ids:
                 try:
                     result = processor.delete_data(collection_name, doc_id)
-                    if delete_from_meilisearch and processor.meilisearch_client:
-                        meil_result = processor.delete_from_meilisearch(doc_id, "legal_documents")
-                        result["meilisearch_result"] = meil_result
+
                     delete_results.append({
                         "document_id": doc_id,
                         "status": "success",
@@ -3372,9 +3370,7 @@ def legal_delete():
             for node_id in target_ids:
                 try:
                     result = processor.delete_node(node_id, collection_name)
-                    if delete_from_meilisearch and processor.meilisearch_client:
-                        meil_result = processor.delete_from_meilisearch(node_id, "legal_documents")
-                        result["meilisearch_result"] = meil_result
+
                     delete_results.append({
                         "node_id": node_id,
                         "status": "success", 
@@ -3399,7 +3395,7 @@ def legal_delete():
                 "successful_deletes": successful_deletes,
                 "failed_deletes": len(target_ids) - successful_deletes,
                 "collection_name": collection_name,
-                "meilisearch_enabled": delete_from_meilisearch
+
             },
             "results": delete_results,
             "performance": {

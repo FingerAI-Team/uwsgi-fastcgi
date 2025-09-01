@@ -7,6 +7,7 @@
 
 import re
 import logging
+import os
 from typing import List, Dict, Any, Tuple, Optional
 from src.pipe import InteractManager
 
@@ -27,6 +28,12 @@ class HierarchicalProcessor(InteractManager):
             "item": r"(\d+)\)",       # 1), 2), 3) 등
             "omission": r"(?:제\d+조부터\s+제\d+조까지는\s+생략한다?|이하\s+생략|생략한다?|\.\.\.)",  # 생략 패턴
         }
+        
+        # 위계형 스키마 초기화
+        from .hierarchical_schema import HierarchicalSchema
+        self.hierarchical_schema = HierarchicalSchema()
+        
+
         
         self.logger.info("✅ 위계형 프로세서 초기화 완료")
     
@@ -160,6 +167,226 @@ class HierarchicalProcessor(InteractManager):
                 "item_number": "",
                 "is_omission": False
             })]
+    
+    def _load_new_collection(self, collection_name):
+        """위계형 스키마로 새 컬렉션을 로드하고 캐시에 추가합니다."""
+        try:
+            print(f"[DEBUG] Loading new collection: {collection_name}")
+            
+            # 캐시 크기 제한 확인 및 관리
+            if len(self.loaded_collections) >= self.max_cached_collections:
+                # 가장 적게 접근된 컬렉션 찾기
+                least_used = min(
+                    self.collection_access_count.items(), 
+                    key=lambda x: x[1] if x[0] in self.loaded_collections else float('inf')
+                )[0]
+                
+                if least_used in self.loaded_collections:
+                    print(f"[DEBUG] Removing least used collection from cache: {least_used}")
+                    del self.loaded_collections[least_used]
+            
+            # 컬렉션 존재 여부 확인
+            from pymilvus import utility
+            if not utility.has_collection(collection_name):
+                print(f"[DEBUG] Collection {collection_name} does not exist, creating with hierarchical schema")
+                self._create_hierarchical_collection(collection_name)
+            
+            # 새 컬렉션 로드
+            from pymilvus import Collection
+            collection = Collection(collection_name)
+            collection.load()
+            
+            # 캐시에 추가
+            self.loaded_collections[collection_name] = collection
+            print(f"[DEBUG] Collection {collection_name} successfully loaded and cached")
+            return collection
+            
+        except Exception as e:
+            print(f"[ERROR] Error loading collection {collection_name}: {str(e)}")
+            raise
+    
+    def _create_hierarchical_collection(self, collection_name):
+        """위계형 스키마로 컬렉션을 생성합니다."""
+        try:
+            self.logger.info(f"🔧 위계형 컬렉션 생성: {collection_name}")
+            
+            # 위계형 스키마 필드 가져오기
+            schema_fields = self.hierarchical_schema.get_compatible_fields()
+            
+            # 스키마 생성
+            from pymilvus import CollectionSchema
+            schema = CollectionSchema(
+                fields=schema_fields,
+                description=f"위계형 RAG 스키마 - {collection_name}",
+                enable_dynamic_field=True
+            )
+            
+            # 컬렉션 생성
+            from pymilvus import Collection
+            collection = Collection(
+                name=collection_name,
+                schema=schema,
+                using='default',
+                shards_num=2
+            )
+            
+            # 벡터 인덱스 생성
+            index_params = {
+                "metric_type": "COSINE",
+                "index_type": "IVF_FLAT",
+                "params": {"nlist": 1024}
+            }
+            collection.create_index(
+                field_name="text_emb",
+                index_params=index_params
+            )
+            
+            self.logger.info(f"✅ 위계형 컬렉션 생성 완료: {collection_name}")
+            return collection
+            
+        except Exception as e:
+            self.logger.error(f"위계형 컬렉션 생성 중 오류: {e}")
+            raise
+    
+    def list_collections(self):
+        """사용 가능한 컬렉션 목록을 반환합니다."""
+        try:
+            from pymilvus import utility
+            collections = utility.list_collections()
+            return collections
+        except Exception as e:
+            self.logger.error(f"컬렉션 목록 조회 중 오류: {e}")
+            return []
+    
+    def get_collection_info(self, collection_name):
+        """특정 컬렉션의 정보를 반환합니다."""
+        try:
+            from pymilvus import Collection
+            collection = Collection(collection_name)
+            collection.load()
+            
+            info = {
+                "name": collection.name,
+                "num_entities": collection.num_entities,
+                "schema": {
+                    "fields": [
+                        {
+                            "name": field.name,
+                            "type": str(field.dtype),
+                            "description": field.description
+                        }
+                        for field in collection.schema.fields
+                    ]
+                },
+                "indexes": collection.indexes,
+                "partitions": [p.name for p in collection.partitions]
+            }
+            
+            return info
+        except Exception as e:
+            self.logger.error(f"컬렉션 정보 조회 중 오류: {e}")
+            return {"error": str(e)}
+    
+    def get_collection_sample(self, collection_name, sample_size=10):
+        """컬렉션의 샘플 데이터를 반환합니다."""
+        try:
+            from pymilvus import Collection
+            collection = Collection(collection_name)
+            collection.load()
+            
+            # 샘플 데이터 조회
+            sample_data = collection.query(
+                expr="",
+                output_fields=["*"],
+                limit=sample_size
+            )
+            
+            return {
+                "collection_name": collection_name,
+                "sample_size": len(sample_data),
+                "entities": sample_data
+            }
+        except Exception as e:
+            self.logger.error(f"컬렉션 샘플 조회 중 오류: {e}")
+            return {"error": str(e)}
+    
+    def search_in_collection(self, collection_name, query, field="text", limit=20):
+        """컬렉션에서 키워드 검색을 수행합니다."""
+        try:
+            from pymilvus import Collection
+            collection = Collection(collection_name)
+            collection.load()
+            
+            # 간단한 키워드 검색 (실제로는 더 정교한 검색 로직 필요)
+            search_results = collection.query(
+                expr=f'{field} like "%{query}%"',
+                output_fields=["*"],
+                limit=limit
+            )
+            
+            return {
+                "collection_name": collection_name,
+                "query": query,
+                "field": field,
+                "total_count": len(search_results),
+                "entities": search_results
+            }
+        except Exception as e:
+            self.logger.error(f"컬렉션 검색 중 오류: {e}")
+            return {"error": str(e)}
+    
+    def get_collection_data(self, collection_name, limit=100, offset=0, include_embeddings=False):
+        """컬렉션의 데이터를 조회합니다."""
+        try:
+            from pymilvus import Collection
+            collection = Collection(collection_name)
+            collection.load()
+            
+            # 출력 필드 설정 (임베딩 제외)
+            output_fields = ["passage_uid", "doc_id", "raw_doc_id", "passage_id", "domain", 
+                           "title", "author", "text", "info", "tags", "chapter_number", 
+                           "article_number", "paragraph_number", "item_number", "is_omission"]
+            
+            if include_embeddings:
+                output_fields.append("text_emb")
+            
+            # 데이터 조회
+            data = collection.query(
+                expr="",
+                output_fields=output_fields,
+                limit=limit,
+                offset=offset
+            )
+            
+            return {
+                "collection_name": collection_name,
+                "total_count": collection.num_entities,
+                "limit": limit,
+                "offset": offset,
+                "entities": data
+            }
+        except Exception as e:
+            self.logger.error(f"컬렉션 데이터 조회 중 오류: {e}")
+            return {"error": str(e)}
+    
+    def delete_node(self, node_id, collection_name):
+        """특정 노드(passage)를 삭제합니다."""
+        try:
+            from pymilvus import Collection
+            collection = Collection(collection_name)
+            collection.load()
+            
+            # 노드 삭제
+            collection.delete(f'passage_uid == "{node_id}"')
+            collection.flush()
+            
+            self.logger.info(f"✅ 노드 삭제 완료: {node_id}")
+            return True
+        except Exception as e:
+            self.logger.error(f"노드 삭제 중 오류: {e}")
+            return False
+    
+
     
     def insert_hierarchical_data(self, domain, doc_id, title, author, text, info, tags, ignore=True):
         """
