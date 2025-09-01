@@ -474,43 +474,74 @@ class HierarchicalProcessor(InteractManager):
         start_time = time.time()
         
         try:
-            # InteractManager의 검증된 get_collection 사용
-            self.logger.info(f"📚 InteractManager get_collection 사용: {collection_name}")
-            collection = self.get_collection(collection_name)
+            # 이미 연결된 Milvus 인스턴스 사용 (vectorenv)
+            self.logger.info(f"📚 기존 Milvus 연결 사용: {collection_name}")
             
-            self.logger.info(f"✅ 컬렉션 로드 완료: {collection_name}")
-            
-            # 출력 필드 설정
-            output_fields = ["passage_uid", "doc_id", "raw_doc_id", "passage_id", "domain", 
-                           "title", "author", "text", "info", "tags", "chapter_number", 
-                           "article_number", "paragraph_number", "item_number", "is_omission"]
-            
-            if include_embeddings:
-                output_fields.append("text_emb")
-                self.logger.info(f"📊 임베딩 필드 포함: text_emb")
-            
-            self.logger.info(f"📋 출력 필드 설정 완료: {len(output_fields)}개 필드")
-            self.logger.info(f"🔍 데이터 조회 시작: {collection_name}")
-            
-            # 데이터 조회
-            data = collection.query(
-                expr="",
-                output_fields=output_fields,
-                limit=limit,
-                offset=offset
-            )
-            self.logger.info(f"✅ 데이터 조회 완료: {collection_name}")
+            # vectorenv가 있으면 해당 메서드 사용
+            if hasattr(self, 'vectorenv') and self.vectorenv:
+                self.logger.info(f"📚 vectorenv.get_collection 사용: {collection_name}")
+                collection = self.vectorenv.get_collection(collection_name)
+                
+                # 출력 필드 설정
+                output_fields = ["passage_uid", "doc_id", "raw_doc_id", "passage_id", "domain", 
+                               "title", "author", "text", "info", "tags", "chapter_number", 
+                               "article_number", "paragraph_number", "item_number", "is_omission"]
+                
+                if include_embeddings:
+                    output_fields.append("text_emb")
+                    self.logger.info(f"📊 임베딩 필드 포함: text_emb")
+                
+                self.logger.info(f"📋 출력 필드 설정 완료: {len(output_fields)}개 필드")
+                self.logger.info(f"🔍 데이터 조회 시작: {collection_name}")
+                
+                # 데이터 조회
+                data = collection.query(
+                    expr="",
+                    output_fields=output_fields,
+                    limit=limit,
+                    offset=offset
+                )
+                self.logger.info(f"✅ 데이터 조회 완료: {collection_name}")
+                
+                total_count = collection.num_entities
+            else:
+                # 폴백: InteractManager의 get_collection 사용
+                self.logger.info(f"📚 InteractManager get_collection 사용 (폴백): {collection_name}")
+                collection = self.get_collection(collection_name)
+                
+                # 출력 필드 설정
+                output_fields = ["passage_uid", "doc_id", "raw_doc_id", "passage_id", "domain", 
+                               "title", "author", "text", "info", "tags", "chapter_number", 
+                               "article_number", "paragraph_number", "item_number", "is_omission"]
+                
+                if include_embeddings:
+                    output_fields.append("text_emb")
+                    self.logger.info(f"📊 임베딩 필드 포함: text_emb")
+                
+                self.logger.info(f"📋 출력 필드 설정 완료: {len(output_fields)}개 필드")
+                self.logger.info(f"🔍 데이터 조회 시작: {collection_name}")
+                
+                # 데이터 조회
+                data = collection.query(
+                    expr="",
+                    output_fields=output_fields,
+                    limit=limit,
+                    offset=offset
+                )
+                self.logger.info(f"✅ 데이터 조회 완료: {collection_name}")
+                
+                total_count = collection.num_entities
             
             end_time = time.time()
             processing_time = end_time - start_time
             
             self.logger.info(f"✅ 컬렉션 데이터 조회 성공: {collection_name}")
-            self.logger.info(f"📊 데이터 정보 - 전체: {collection.num_entities}, 반환: {len(data)}")
+            self.logger.info(f"📊 데이터 정보 - 전체: {total_count}, 반환: {len(data)}")
             self.logger.info(f"⏱️ 처리 시간: {processing_time:.3f}초")
             
             return {
                 "collection_name": collection_name,
-                "total_count": collection.num_entities,
+                "total_count": total_count,
                 "limit": limit,
                 "offset": offset,
                 "entities": data
