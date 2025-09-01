@@ -561,8 +561,14 @@ class HierarchicalProcessor(InteractManager):
     def delete_node(self, node_id, collection_name):
         """특정 노드(passage)를 삭제합니다."""
         try:
-            # InteractManager의 검증된 get_collection 사용
-            collection = self.get_collection(collection_name)
+            # 이미 연결된 Milvus 인스턴스 사용 (vectorenv)
+            if hasattr(self, 'vectorenv') and self.vectorenv:
+                self.logger.info(f"📚 vectorenv.get_collection 사용: {collection_name}")
+                collection = self.vectorenv.get_collection(collection_name)
+            else:
+                # 폴백: InteractManager의 get_collection 사용
+                self.logger.info(f"📚 InteractManager get_collection 사용 (폴백): {collection_name}")
+                collection = self.get_collection(collection_name)
             
             # 노드 삭제
             collection.delete(f'passage_uid == "{node_id}"')
