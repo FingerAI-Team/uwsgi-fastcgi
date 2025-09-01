@@ -3005,7 +3005,7 @@ def legal_search_simple():
         
         # 기본 도메인에서 검색
         domain = search_params.get('domains', ['legal'])[0] if search_params.get('domains') else 'legal'
-        result_list = legal_retriever.search_legal_documents(
+        result_list = legal_retriever.search(
             collection_name=domain,
             query=query,
             search_params=simple_search_params
@@ -3134,12 +3134,168 @@ def get_or_init_legal_indexer():
 @app.route('/rag/legal/insert', methods=['POST'])
 def legal_insert():
     """
-    위계형 법령 삽입 API (기존 RAG insert 사용)
+    위계형 법령 삽입 API (기존 RAG insert와 동일한 파라미터)
+    
+    Request Body:
+    ```json
+    {
+        "documents": [
+            {
+                "domain": "legal",
+                "title": "국회사무처법",
+                "author": "국회",
+                "text": "제1장 총칙\n제1조(목적) 이 법은...",
+                "info": {
+                    "law_type": "법률",
+                    "enforcement_date": "2024-01-01"
+                },
+                "tags": {
+                    "date": "2024-01-01",
+                    "category": "국회법"
+                }
+            }
+        ],
+        "ignore": true
+    }
+    ```
     """
-    return jsonify({
-        "status": "info",
-        "message": "기존 RAG insert API를 사용하세요. 위계형 필드는 자동으로 추가됩니다."
-    }), 200
+    try:
+        request_data = request.json
+        if not request_data:
+            return jsonify({
+                "result_code": "F000001",
+                "message": "요청 본문이 비어있습니다."
+            }), 400
+
+        if "documents" not in request_data:
+            return jsonify({
+                "result_code": "F000002",
+                "message": "documents 필드는 필수입니다."
+            }), 400
+
+        if not isinstance(request_data["documents"], list) or len(request_data["documents"]) == 0:
+            return jsonify({
+                "result_code": "F000003",
+                "message": "documents는 최소 1개 이상의 문서를 포함해야 합니다."
+            }), 400
+
+        # ignore 옵션 처리 (기본값: True)
+        ignore = request_data.get('ignore', True)
+        
+        # 위계형 프로세서 가져오기
+        processor = get_or_init_hierarchical_processor()
+        if not processor:
+            return jsonify({
+                "result_code": "F000004",
+                "message": "위계형 프로세서가 초기화되지 않았습니다."
+            }), 500
+
+        # 필수 필드 검증
+        required_fields = ['domain', 'title', 'author', 'text', 'tags']
+        
+        # 처리 결과 저장 배열
+        results = []
+        status_counts = {
+            "success": 0,
+            "skipped": 0,
+            "error": 0
+        }
+        
+        # 각 문서 처리
+        for doc_index, doc in enumerate(request_data["documents"]):
+            try:
+                # 필수 필드 검증
+                missing_fields = [field for field in required_fields if field not in doc]
+                if missing_fields:
+                    results.append({
+                        "status": "error",
+                        "result_code": "F000005",
+                        "message": f"필수 필드가 누락되었습니다: {', '.join(missing_fields)}",
+                        "title": doc.get('title', 'unknown'),
+                        "index": doc_index
+                    })
+                    status_counts["error"] += 1
+                    continue
+
+                if 'date' not in doc['tags']:
+                    results.append({
+                        "status": "error",
+                        "result_code": "F000006",
+                        "message": "tags.date는 필수 입력값입니다.",
+                        "title": doc['title'],
+                        "index": doc_index
+                    })
+                    status_counts["error"] += 1
+                    continue
+                
+                # 위계형 삽입 실행
+                insert_result = processor.insert_hierarchical_data(
+                    domain=doc['domain'],
+                    doc_id=f"{doc['title']}_{doc['tags']['date']}",  # 자동 생성
+                    title=doc['title'],
+                    author=doc['author'],
+                    text=doc['text'],
+                    info=doc.get('info', {}),
+                    tags=doc['tags'],
+                    ignore=ignore
+                )
+                
+                if insert_result == "success":
+                    results.append({
+                        "status": "success",
+                        "result_code": "S000000",
+                        "message": "위계형 삽입이 성공적으로 완료되었습니다.",
+                        "title": doc['title'],
+                        "index": doc_index
+                    })
+                    status_counts["success"] += 1
+                elif insert_result == "skipped":
+                    results.append({
+                        "status": "skipped",
+                        "result_code": "S000001",
+                        "message": "중복 문서로 인해 건너뛰었습니다.",
+                        "title": doc['title'],
+                        "index": doc_index
+                    })
+                    status_counts["skipped"] += 1
+                else:
+                    results.append({
+                        "status": "error",
+                        "result_code": "F000007",
+                        "message": f"삽입 중 오류가 발생했습니다: {insert_result}",
+                        "title": doc['title'],
+                        "index": doc_index
+                    })
+                    status_counts["error"] += 1
+                    
+            except Exception as e:
+                results.append({
+                    "status": "error",
+                    "result_code": "F000008",
+                    "message": f"문서 처리 중 오류가 발생했습니다: {str(e)}",
+                    "title": doc.get('title', 'unknown'),
+                    "index": doc_index
+                })
+                status_counts["error"] += 1
+        
+        # 최종 응답
+        return jsonify({
+            "result_code": "S000000" if status_counts["error"] == 0 else "S000001",
+            "message": "위계형 법령 삽입이 완료되었습니다.",
+            "data": {
+                "total_documents": len(request_data["documents"]),
+                "status_counts": status_counts,
+                "results": results
+            },
+            "timestamp": datetime.now().isoformat()
+        }), 200 if status_counts["error"] == 0 else 207
+        
+    except Exception as e:
+        logger.error(f"위계형 법령 삽입 중 오류: {e}")
+        return jsonify({
+            "result_code": "F000999",
+            "message": f"위계형 법령 삽입 중 오류가 발생했습니다: {str(e)}"
+        }), 500
 
 
 @app.route('/rag/legal/delete', methods=['DELETE'])
@@ -3180,8 +3336,14 @@ def legal_delete():
                 "message": "삭제할 대상 ID 목록이 필요합니다"
             }), 400
         
-        # 법령 인덱서 가져오기
-        indexer = get_or_init_legal_indexer()
+        # 위계형 프로세서 가져오기
+        processor = get_or_init_hierarchical_processor()
+        if not processor:
+            return jsonify({
+                "result_code": "F000001",
+                "message": "위계형 프로세서가 초기화되지 않았습니다.",
+                "data": None
+            }), 500
         
         # 삭제 수행
         if delete_type == "document":
@@ -3189,9 +3351,9 @@ def legal_delete():
             delete_results = []
             for doc_id in target_ids:
                 try:
-                    result = indexer.delete_document(doc_id, collection_name)
-                    if delete_from_meilisearch and indexer.meilisearch_client:
-                        meil_result = indexer.delete_from_meilisearch(doc_id, "legal_documents")
+                    result = processor.delete_data(collection_name, doc_id)
+                    if delete_from_meilisearch and processor.meilisearch_client:
+                        meil_result = processor.delete_from_meilisearch(doc_id, "legal_documents")
                         result["meilisearch_result"] = meil_result
                     delete_results.append({
                         "document_id": doc_id,
@@ -3209,9 +3371,9 @@ def legal_delete():
             delete_results = []
             for node_id in target_ids:
                 try:
-                    result = indexer.delete_node(node_id, collection_name)
-                    if delete_from_meilisearch and indexer.meilisearch_client:
-                        meil_result = indexer.delete_from_meilisearch(node_id, "legal_documents")
+                    result = processor.delete_node(node_id, collection_name)
+                    if delete_from_meilisearch and processor.meilisearch_client:
+                        meil_result = processor.delete_from_meilisearch(node_id, "legal_documents")
                         result["meilisearch_result"] = meil_result
                     delete_results.append({
                         "node_id": node_id,
@@ -3260,13 +3422,23 @@ def legal_delete():
 
 @app.route('/rag/legal/collections', methods=['GET'])
 def legal_collections():
-    """법령 컬렉션 목록 조회"""
+    """위계형 법령 컬렉션 목록 조회"""
     try:
-        indexer = get_or_init_legal_indexer()
-        collections = indexer.list_collections()
+        # 위계형 프로세서 사용
+        processor = get_or_init_hierarchical_processor()
+        if not processor:
+            return jsonify({
+                "result_code": "F000001",
+                "message": "위계형 프로세서가 초기화되지 않았습니다.",
+                "data": None
+            }), 500
+        
+        # 기존 InteractManager의 컬렉션 목록 조회 기능 사용
+        collections = processor.list_collections()
         
         return jsonify({
-            "status": "success",
+            "result_code": "S000000",
+            "message": "컬렉션 목록 조회가 성공적으로 완료되었습니다.",
             "data": {
                 "collections": collections,
                 "total_count": len(collections)
@@ -3275,47 +3447,66 @@ def legal_collections():
         })
         
     except Exception as e:
-        logger.error(f"법령 컬렉션 조회 오류: {e}")
+        logger.error(f"위계형 컬렉션 조회 오류: {e}")
         return jsonify({
-            "status": "error",
-            "message": f"컬렉션 조회 중 오류가 발생했습니다: {str(e)}"
+            "result_code": "F000999",
+            "message": f"컬렉션 조회 중 오류가 발생했습니다: {str(e)}",
+            "data": None
         }), 500
 
 
 @app.route('/rag/legal/collections/<collection_name>/info', methods=['GET'])
 def legal_collection_info(collection_name):
-    """특정 법령 컬렉션 정보 조회"""
+    """특정 위계형 법령 컬렉션 정보 조회"""
     try:
-        indexer = get_or_init_legal_indexer()
-        info = indexer.get_collection_info(collection_name)
+        # 위계형 프로세서 사용
+        processor = get_or_init_hierarchical_processor()
+        if not processor:
+            return jsonify({
+                "result_code": "F000001",
+                "message": "위계형 프로세서가 초기화되지 않았습니다.",
+                "data": None
+            }), 500
+        
+        # 기존 InteractManager의 컬렉션 정보 조회 기능 사용
+        info = processor.get_collection_info(collection_name)
         
         return jsonify({
-            "status": "success",
+            "result_code": "S000000",
+            "message": "컬렉션 정보 조회가 성공적으로 완료되었습니다.",
             "data": info,
             "timestamp": datetime.now().isoformat()
         })
         
     except Exception as e:
-        logger.error(f"법령 컬렉션 정보 조회 오류: {e}")
+        logger.error(f"위계형 컬렉션 정보 조회 오류: {e}")
         return jsonify({
-            "status": "error",
-            "message": f"컬렉션 정보 조회 중 오류가 발생했습니다: {str(e)}"
+            "result_code": "F000999",
+            "message": f"컬렉션 정보 조회 중 오류가 발생했습니다: {str(e)}",
+            "data": None
         }), 500
 
 
 @app.route('/rag/legal/collections/<collection_name>/data', methods=['GET'])
 def legal_collection_data(collection_name):
-    """특정 법령 컬렉션의 모든 데이터 조회"""
+    """특정 위계형 법령 컬렉션의 모든 데이터 조회"""
     try:
-        indexer = get_or_init_legal_indexer()
+        # 위계형 프로세서 사용
+        processor = get_or_init_hierarchical_processor()
+        if not processor:
+            return jsonify({
+                "result_code": "F000001",
+                "message": "위계형 프로세서가 초기화되지 않았습니다.",
+                "data": None
+            }), 500
         
         # 쿼리 파라미터
         limit = request.args.get('limit', 100, type=int)
         offset = request.args.get('offset', 0, type=int)
         include_embeddings = request.args.get('include_embeddings', 'false').lower() == 'true'
         
-        # 데이터 조회
-        data = indexer.get_collection_data(
+        # 데이터 조회 (기존 InteractManager 기능 사용)
+        data = processor.get_collection_data(
             collection_name=collection_name,
             limit=limit,
             offset=offset,
@@ -3323,7 +3514,8 @@ def legal_collection_data(collection_name):
         )
         
         return jsonify({
-            "status": "success",
+            "result_code": "S000000",
+            "message": "컬렉션 데이터 조회가 성공적으로 완료되었습니다.",
             "data": {
                 "collection_name": collection_name,
                 "total_count": data.get("total_count", 0),
@@ -3336,24 +3528,33 @@ def legal_collection_data(collection_name):
         })
         
     except Exception as e:
-        logger.error(f"법령 컬렉션 데이터 조회 오류: {e}")
+        logger.error(f"위계형 컬렉션 데이터 조회 오류: {e}")
         return jsonify({
-            "status": "error",
-            "message": f"컬렉션 데이터 조회 중 오류가 발생했습니다: {str(e)}"
+            "result_code": "F000999",
+            "message": f"컬렉션 데이터 조회 중 오류가 발생했습니다: {str(e)}",
+            "data": None
         }), 500
 
 
 @app.route('/rag/legal/collections/<collection_name>/sample', methods=['GET'])
 def legal_collection_sample(collection_name):
-    """특정 법령 컬렉션의 샘플 데이터 조회 (처음 10개)"""
+    """특정 위계형 법령 컬렉션의 샘플 데이터 조회 (처음 10개)"""
     try:
-        indexer = get_or_init_legal_indexer()
+        # 위계형 프로세서 사용
+        processor = get_or_init_hierarchical_processor()
+        if not processor:
+            return jsonify({
+                "result_code": "F000001",
+                "message": "위계형 프로세서가 초기화되지 않았습니다.",
+                "data": None
+            }), 500
         
-        # 샘플 데이터 조회
-        sample_data = indexer.get_collection_sample(collection_name, sample_size=10)
+        # 샘플 데이터 조회 (기존 InteractManager 기능 사용)
+        sample_data = processor.get_collection_sample(collection_name, sample_size=10)
         
         return jsonify({
-            "status": "success",
+            "result_code": "S000000",
+            "message": "컬렉션 샘플 조회가 성공적으로 완료되었습니다.",
             "data": {
                 "collection_name": collection_name,
                 "sample_size": len(sample_data.get("entities", [])),
@@ -3363,18 +3564,26 @@ def legal_collection_sample(collection_name):
         })
         
     except Exception as e:
-        logger.error(f"법령 컬렉션 샘플 조회 오류: {e}")
+        logger.error(f"위계형 컬렉션 샘플 조회 오류: {e}")
         return jsonify({
-            "status": "error",
-            "message": f"컬렉션 샘플 조회 중 오류가 발생했습니다: {str(e)}"
+            "result_code": "F000999",
+            "message": f"컬렉션 샘플 조회 중 오류가 발생했습니다: {str(e)}",
+            "data": None
         }), 500
 
 
 @app.route('/rag/legal/collections/<collection_name>/search', methods=['GET'])
 def legal_collection_search(collection_name):
-    """특정 법령 컬렉션에서 키워드 검색"""
+    """특정 위계형 법령 컬렉션에서 키워드 검색"""
     try:
-        indexer = get_or_init_legal_indexer()
+        # 위계형 프로세서 사용
+        processor = get_or_init_hierarchical_processor()
+        if not processor:
+            return jsonify({
+                "result_code": "F000001",
+                "message": "위계형 프로세서가 초기화되지 않았습니다.",
+                "data": None
+            }), 500
         
         # 쿼리 파라미터
         query = request.args.get('query', '')
@@ -3383,12 +3592,13 @@ def legal_collection_search(collection_name):
         
         if not query:
             return jsonify({
-                "status": "error",
-                "message": "검색 쿼리가 필요합니다 (query 파라미터)"
+                "result_code": "F000002",
+                "message": "검색 쿼리가 필요합니다 (query 파라미터)",
+                "data": None
             }), 400
         
-        # 키워드 검색
-        search_results = indexer.search_in_collection(
+        # 키워드 검색 (기존 InteractManager 기능 사용)
+        search_results = processor.search_in_collection(
             collection_name=collection_name,
             query=query,
             field=field,
@@ -3396,7 +3606,8 @@ def legal_collection_search(collection_name):
         )
         
         return jsonify({
-            "status": "success",
+            "result_code": "S000000",
+            "message": "컬렉션 검색이 성공적으로 완료되었습니다.",
             "data": {
                 "collection_name": collection_name,
                 "query": query,
@@ -3409,10 +3620,11 @@ def legal_collection_search(collection_name):
         })
         
     except Exception as e:
-        logger.error(f"법령 컬렉션 검색 오류: {e}")
+        logger.error(f"위계형 컬렉션 검색 오류: {e}")
         return jsonify({
-            "status": "error",
-            "message": f"컬렉션 검색 중 오류가 발생했습니다: {str(e)}"
+            "result_code": "F000999",
+            "message": f"컬렉션 검색 중 오류가 발생했습니다: {str(e)}",
+            "data": None
         }), 500
 
 
