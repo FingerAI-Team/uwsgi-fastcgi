@@ -265,49 +265,66 @@ class HierarchicalProcessor(InteractManager):
         start_time = time.time()
         
         try:
-            # InteractManager의 검증된 get_collection 사용
-            self.logger.info(f"📚 InteractManager get_collection 사용: {collection_name}")
-            collection = self.get_collection(collection_name)
+            # 이미 연결된 Milvus 인스턴스 사용 (vectorenv)
+            self.logger.info(f"📚 기존 Milvus 연결 사용: {collection_name}")
             
-            self.logger.info(f"✅ 컬렉션 로드 완료: {collection_name}")
-            
-            # 스키마 정보 수집
-            self.logger.info(f"📋 컬렉션 스키마 정보 수집: {collection_name}")
-            schema_fields = []
-            for field in collection.schema.fields:
-                schema_fields.append({
-                    "name": field.name,
-                    "type": str(field.dtype),
-                    "description": field.description
-                })
-            
-            # 인덱스 정보 수집
-            self.logger.info(f"🔍 컬렉션 인덱스 정보 수집: {collection_name}")
-            indexes = collection.indexes
-            
-            # 파티션 정보 수집
-            self.logger.info(f"📦 컬렉션 파티션 정보 수집: {collection_name}")
-            partitions = [p.name for p in collection.partitions]
-            
-            # 엔티티 수 조회
-            self.logger.info(f"📊 컬렉션 엔티티 수 조회: {collection_name}")
-            num_entities = collection.num_entities
-            
-            info = {
-                "name": collection.name,
-                "num_entities": num_entities,
-                "schema": {
-                    "fields": schema_fields
-                },
-                "indexes": indexes,
-                "partitions": partitions
-            }
+            # vectorenv가 있으면 해당 메서드 사용
+            if hasattr(self, 'vectorenv') and self.vectorenv:
+                self.logger.info(f"📚 vectorenv.get_collection_info 사용: {collection_name}")
+                # vectorenv의 get_collection_info 메서드 사용
+                collection = self.vectorenv.get_collection(collection_name)
+                self.vectorenv.get_collection_info(collection_name)
+                
+                # vectorenv에서 정보 가져오기
+                info = {
+                    "name": collection_name,
+                    "num_entities": self.vectorenv.num_entities if hasattr(self.vectorenv, 'num_entities') else 0,
+                    "schema": self.vectorenv.collection_schema.to_dict() if hasattr(self.vectorenv, 'collection_schema') else {},
+                    "indexes": [],  # 기본값
+                    "partitions": self.vectorenv.partition_names if hasattr(self.vectorenv, 'partition_names') else []
+                }
+            else:
+                # 폴백: InteractManager의 get_collection 사용
+                self.logger.info(f"📚 InteractManager get_collection 사용 (폴백): {collection_name}")
+                collection = self.get_collection(collection_name)
+                
+                # 스키마 정보 수집
+                self.logger.info(f"📋 컬렉션 스키마 정보 수집: {collection_name}")
+                schema_fields = []
+                for field in collection.schema.fields:
+                    schema_fields.append({
+                        "name": field.name,
+                        "type": str(field.dtype),
+                        "description": field.description
+                    })
+                
+                # 인덱스 정보 수집
+                self.logger.info(f"🔍 컬렉션 인덱스 정보 수집: {collection_name}")
+                indexes = collection.indexes
+                
+                # 파티션 정보 수집
+                self.logger.info(f"📦 컬렉션 파티션 정보 수집: {collection_name}")
+                partitions = [p.name for p in collection.partitions]
+                
+                # 엔티티 수 조회
+                self.logger.info(f"📊 컬렉션 엔티티 수 조회: {collection_name}")
+                num_entities = collection.num_entities
+                
+                info = {
+                    "name": collection.name,
+                    "num_entities": num_entities,
+                    "schema": {
+                        "fields": schema_fields
+                    },
+                    "indexes": indexes,
+                    "partitions": partitions
+                }
             
             end_time = time.time()
             processing_time = end_time - start_time
             
             self.logger.info(f"✅ 컬렉션 정보 조회 성공: {collection_name}")
-            self.logger.info(f"📊 컬렉션 정보 - 엔티티 수: {num_entities}, 필드 수: {len(schema_fields)}, 파티션 수: {len(partitions)}")
+            self.logger.info(f"📊 컬렉션 정보 - 엔티티 수: {info.get('num_entities', 'N/A')}, 필드 수: {len(info.get('schema', {}).get('fields', []))}, 파티션 수: {len(info.get('partitions', []))}")
             self.logger.info(f"⏱️ 처리 시간: {processing_time:.3f}초")
             
             return info
@@ -329,20 +346,35 @@ class HierarchicalProcessor(InteractManager):
         start_time = time.time()
         
         try:
-            # InteractManager의 검증된 get_collection 사용
-            self.logger.info(f"📚 InteractManager get_collection 사용: {collection_name}")
-            collection = self.get_collection(collection_name)
+            # 이미 연결된 Milvus 인스턴스 사용 (vectorenv)
+            self.logger.info(f"📚 기존 Milvus 연결 사용: {collection_name}")
             
-            self.logger.info(f"✅ 컬렉션 로드 완료: {collection_name}")
-            
-            # 샘플 데이터 조회
-            self.logger.info(f"🔍 샘플 데이터 조회 시작: {collection_name}")
-            sample_data = collection.query(
-                expr="",
-                output_fields=["*"],
-                limit=sample_size
-            )
-            self.logger.info(f"✅ 샘플 데이터 조회 완료: {collection_name}")
+            # vectorenv가 있으면 해당 메서드 사용
+            if hasattr(self, 'vectorenv') and self.vectorenv:
+                self.logger.info(f"📚 vectorenv.get_collection 사용: {collection_name}")
+                collection = self.vectorenv.get_collection(collection_name)
+                
+                # 샘플 데이터 조회
+                self.logger.info(f"🔍 샘플 데이터 조회 시작: {collection_name}")
+                sample_data = collection.query(
+                    expr="",
+                    output_fields=["*"],
+                    limit=sample_size
+                )
+                self.logger.info(f"✅ 샘플 데이터 조회 완료: {collection_name}")
+            else:
+                # 폴백: InteractManager의 get_collection 사용
+                self.logger.info(f"📚 InteractManager get_collection 사용 (폴백): {collection_name}")
+                collection = self.get_collection(collection_name)
+                
+                # 샘플 데이터 조회
+                self.logger.info(f"🔍 샘플 데이터 조회 시작: {collection_name}")
+                sample_data = collection.query(
+                    expr="",
+                    output_fields=["*"],
+                    limit=sample_size
+                )
+                self.logger.info(f"✅ 샘플 데이터 조회 완료: {collection_name}")
             
             end_time = time.time()
             processing_time = end_time - start_time
@@ -374,23 +406,41 @@ class HierarchicalProcessor(InteractManager):
         start_time = time.time()
         
         try:
-            # InteractManager의 검증된 get_collection 사용
-            self.logger.info(f"📚 InteractManager get_collection 사용: {collection_name}")
-            collection = self.get_collection(collection_name)
+            # 이미 연결된 Milvus 인스턴스 사용 (vectorenv)
+            self.logger.info(f"📚 기존 Milvus 연결 사용: {collection_name}")
             
-            self.logger.info(f"✅ 컬렉션 로드 완료: {collection_name}")
-            
-            # 키워드 검색 수행
-            search_expr = f'{field} like "%{query}%"'
-            self.logger.info(f"🔍 검색 표현식: {search_expr}")
-            
-            self.logger.info(f"🔍 검색 실행 시작: {collection_name}")
-            search_results = collection.query(
-                expr=search_expr,
-                output_fields=["*"],
-                limit=limit
-            )
-            self.logger.info(f"✅ 검색 실행 완료: {collection_name}")
+            # vectorenv가 있으면 해당 메서드 사용
+            if hasattr(self, 'vectorenv') and self.vectorenv:
+                self.logger.info(f"📚 vectorenv.get_collection 사용: {collection_name}")
+                collection = self.vectorenv.get_collection(collection_name)
+                
+                # 키워드 검색 수행
+                search_expr = f'{field} like "%{query}%"'
+                self.logger.info(f"🔍 검색 표현식: {search_expr}")
+                
+                self.logger.info(f"🔍 검색 실행 시작: {collection_name}")
+                search_results = collection.query(
+                    expr=search_expr,
+                    output_fields=["*"],
+                    limit=limit
+                )
+                self.logger.info(f"✅ 검색 실행 완료: {collection_name}")
+            else:
+                # 폴백: InteractManager의 get_collection 사용
+                self.logger.info(f"📚 InteractManager get_collection 사용 (폴백): {collection_name}")
+                collection = self.get_collection(collection_name)
+                
+                # 키워드 검색 수행
+                search_expr = f'{field} like "%{query}%"'
+                self.logger.info(f"🔍 검색 표현식: {search_expr}")
+                
+                self.logger.info(f"🔍 검색 실행 시작: {collection_name}")
+                search_results = collection.query(
+                    expr=search_expr,
+                    output_fields=["*"],
+                    limit=limit
+                )
+                self.logger.info(f"✅ 검색 실행 완료: {collection_name}")
             
             end_time = time.time()
             processing_time = end_time - start_time
@@ -414,7 +464,7 @@ class HierarchicalProcessor(InteractManager):
             self.logger.error(f"❌ 컬렉션 검색 실패: {collection_name}")
             self.logger.error(f"🚨 오류 내용: {str(e)}")
             self.logger.error(f"🚨 오류 타입: {type(e).__name__}")
-            self.logger.error(f"⏱️ 처리 시간: {processing_time:.3f}초")
+            self.logger.error(f"🚨 처리 시간: {processing_time:.3f}초")
             
             return {"error": str(e)}
     
