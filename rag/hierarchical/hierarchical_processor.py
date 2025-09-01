@@ -1,0 +1,523 @@
+"""
+위계형 데이터 프로세서
+
+기존 pipe.py의 InteractManager를 확장하여 조항 단위 청킹과 위계 필드를 지원합니다.
+기존의 모든 배치 처리, GPU 관리, 데이터 파이프라인을 그대로 활용합니다.
+"""
+
+import re
+import logging
+from typing import List, Dict, Any, Tuple, Optional
+from src.pipe import InteractManager
+
+
+class HierarchicalProcessor(InteractManager):
+    """위계형 데이터 프로세서 - 기존 InteractManager 확장"""
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.logger = logging.getLogger(__name__)
+        
+        # 조항 패턴 정의
+        self.article_patterns = {
+            "main_article": r"제(\d+)조",
+            "sub_article": r"제(\d+)조의(\d+)",
+            "paragraph": r"(\d+)\.",  # 1., 2., 3. 등
+            "item": r"(\d+)\)",       # 1), 2), 3) 등
+        }
+        
+        self.logger.info("✅ 위계형 프로세서 초기화 완료")
+    
+    def chunk_by_articles(self, text: str) -> List[Tuple[str, Dict[str, Any]]]:
+        """
+        조항 단위로 텍스트를 청킹합니다.
+        
+        Args:
+            text (str): 청킹할 텍스트
+            
+        Returns:
+            List[Tuple[str, Dict]]: (청크 텍스트, 위계 정보) 튜플의 리스트
+        """
+        try:
+            self.logger.info(f"🔧 조항 단위 청킹 시작: {len(text)}자")
+            
+            chunks = []
+            current_chunk = ""
+            current_hierarchy = {
+                "article_number": "",
+                "paragraph_number": "",
+                "item_number": ""
+            }
+            
+            lines = text.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # 조문 패턴 확인
+                article_match = re.search(self.article_patterns["main_article"], line)
+                sub_article_match = re.search(self.article_patterns["sub_article"], line)
+                
+                if article_match or sub_article_match:
+                    # 이전 청크가 있으면 저장
+                    if current_chunk.strip():
+                        chunks.append((current_chunk.strip(), current_hierarchy.copy()))
+                    
+                    # 새 조문 시작
+                    if sub_article_match:
+                        current_hierarchy["article_number"] = f"제{sub_article_match.group(1)}조의{sub_article_match.group(2)}"
+                    else:
+                        current_hierarchy["article_number"] = f"제{article_match.group(1)}조"
+                    
+                    current_hierarchy["paragraph_number"] = ""
+                    current_hierarchy["item_number"] = ""
+                    current_chunk = line
+                    
+                else:
+                    # 항 패턴 확인
+                    paragraph_match = re.search(self.article_patterns["paragraph"], line)
+                    if paragraph_match:
+                        current_hierarchy["paragraph_number"] = f"{paragraph_match.group(1)}."
+                        current_hierarchy["item_number"] = ""
+                    
+                    # 호 패턴 확인
+                    item_match = re.search(self.article_patterns["item"], line)
+                    if item_match:
+                        current_hierarchy["item_number"] = f"{item_match.group(1)})"
+                    
+                    # 현재 줄을 청크에 추가
+                    if current_chunk:
+                        current_chunk += "\n" + line
+                    else:
+                        current_chunk = line
+            
+            # 마지막 청크 추가
+            if current_chunk.strip():
+                chunks.append((current_chunk.strip(), current_hierarchy.copy()))
+            
+            self.logger.info(f"✅ 조항 단위 청킹 완료: {len(chunks)}개 청크")
+            return chunks
+            
+        except Exception as e:
+            self.logger.error(f"조항 단위 청킹 중 오류: {e}")
+            # 오류 시 기존 청킹 방식으로 폴백
+            return self._fallback_chunking(text)
+    
+    def _fallback_chunking(self, text: str) -> List[Tuple[str, Dict[str, Any]]]:
+        """기존 청킹 방식으로 폴백"""
+        try:
+            # 기존 data_p의 chunk_text 사용
+            chunked_texts = self.data_p.chunk_text(text)
+            
+            # 위계 정보 없이 반환
+            chunks = []
+            for chunk in chunked_texts:
+                chunks.append((chunk, {
+                    "article_number": "",
+                    "paragraph_number": "",
+                    "item_number": ""
+                }))
+            
+            self.logger.info(f"폴백 청킹 완료: {len(chunks)}개 청크")
+            return chunks
+            
+        except Exception as e:
+            self.logger.error(f"폴백 청킹 중 오류: {e}")
+            return [(text, {
+                "article_number": "",
+                "paragraph_number": "",
+                "item_number": ""
+            })]
+    
+    def insert_hierarchical_data(self, domain, doc_id, title, author, text, info, tags, ignore=True):
+        """
+        위계형 데이터 삽입 - 기존 insert_data를 완전히 복제하여 조항 단위 청킹 적용
+        
+        기존의 모든 배치 처리, GPU 관리, 데이터 파이프라인을 그대로 활용합니다.
+        """
+        try:
+            # 시간 로깅을 위한 로거 설정
+            import logging
+            import threading
+            import time
+            import json
+            import concurrent.futures
+            import os
+            from pymilvus import Collection
+            
+            timing_logger = logging.getLogger('timing')
+            
+            # DB 세마포어 및 배치 처리 락 초기화 (한 번만)
+            if self.__class__.db_semaphore is None:
+                max_db_connections = int(os.getenv('MAX_DB_CONNECTIONS', '20'))
+                batch_size = int(os.getenv('BATCH_SIZE', '10'))
+                self.__class__.db_semaphore = threading.BoundedSemaphore(max_db_connections)
+                self.__class__.batch_lock = threading.Lock()
+                self.__class__.batch_size = batch_size
+                print(f"[DEBUG] Initialized DB connection semaphore with max {max_db_connections} connections and batch size {batch_size}")
+            
+            print(f"[DEBUG] Original text length: {len(text)}")
+            
+            # doc_id 해시 처리 (기존과 동일)
+            hashed_doc_id = self.data_p.hash_text(doc_id, hash_type='blake')
+            try:
+                date = tags.get('date', '00000000').replace('-','')
+                raw_doc_id = f"{date}-{title}-{author}"
+                if len(raw_doc_id.encode('utf-8')) > 1024:
+                    raw_doc_id = raw_doc_id[:200] + "..."
+            except Exception as e:
+                print(f"[WARNING] Error creating raw_doc_id: {str(e)}")
+                raw_doc_id = f"unknown_doc_{hashed_doc_id[:8]}"
+            print(f"[DEBUG] Hashed doc_id: {hashed_doc_id}, Raw doc_id: {raw_doc_id}")
+            
+            # 중복 문서 체크 (기존과 동일)
+            duplicate_results = self.check_duplicates([hashed_doc_id], domain)
+            print(f"[DEBUG] 중복 체크 결과: {duplicate_results}")
+            
+            # 중복된 문서가 존재하는 경우 (기존과 동일)
+            if duplicate_results and hashed_doc_id in duplicate_results:
+                existing_chunks = len(duplicate_results.get(hashed_doc_id, []))
+                print(f"[DEBUG] Document with doc_id {hashed_doc_id} already exists in domain {domain} with at least {existing_chunks} chunks")
+                timing_logger.info(f"DUPLICATE_FOUND - doc_id: {hashed_doc_id}, chunks: {existing_chunks}, ignore: {ignore}")
+                
+                if ignore:
+                    print(f"[DEBUG] Skipping document due to ignore=True")
+                    timing_logger.info(f"DUPLICATE_SKIPPED - doc_id: {hashed_doc_id}")
+                    return "skipped"
+                else:
+                    print(f"[DEBUG] Deleting existing document due to ignore=False")
+                    
+                    delete_start_time = time.time()
+                    timing_logger.info(f"DELETE_START - doc_id: {hashed_doc_id}, existing_chunks: {existing_chunks}")
+                    
+                    try:
+                        delete_success = self.delete_data(domain, hashed_doc_id)
+                        if not delete_success:
+                            print(f"[ERROR] Failed to delete existing document")
+                            return "error"
+                        
+                        delete_end_time = time.time()
+                        delete_duration = delete_end_time - delete_start_time
+                        timing_logger.info(f"DELETE_END - doc_id: {hashed_doc_id}, duration: {delete_duration:.4f}s")
+                        print(f"[DEBUG] Successfully deleted existing document in {delete_duration:.4f}s")
+                        
+                    except Exception as delete_error:
+                        delete_error_time = time.time()
+                        delete_duration = delete_error_time - delete_start_time
+                        timing_logger.error(f"DELETE_ERROR - doc_id: {hashed_doc_id}, duration: {delete_duration:.4f}s, error: {str(delete_error)}")
+                        print(f"[ERROR] Failed to delete existing document: {str(delete_error)}")
+                        return "error"
+            
+            # === 위계형 청킹 시작 (여기서만 변경) ===
+            chunk_split_start = time.time()
+            timing_logger.info(f"HIERARCHICAL_CHUNK_SPLIT_START - doc_id: {hashed_doc_id}")
+            
+            # 조항 단위 청킹
+            chunked_data = self.chunk_by_articles(text)
+            
+            chunk_split_end = time.time()
+            chunk_split_duration = chunk_split_end - chunk_split_start
+            timing_logger.info(f"HIERARCHICAL_CHUNK_SPLIT_END - doc_id: {hashed_doc_id}, chunks: {len(chunked_data)}, duration: {chunk_split_duration:.4f}s")
+            print(f"[DEBUG] Number of hierarchical chunks: {len(chunked_data)}")
+            
+            # info와 tags가 문자열인 경우 파싱 (기존과 동일)
+            if isinstance(info, str):
+                info = json.loads(info)
+            if isinstance(tags, str):
+                tags = json.loads(tags)
+            
+            # 청크 처리를 위한 병렬 처리 함수 (위계형 버전)
+            def process_hierarchical_chunk(chunk_data):
+                try:
+                    i, (chunk_text, hierarchy) = chunk_data
+                    total_chunks = len(chunked_data)
+                    print(f"[DEBUG] Processing hierarchical chunk {i+1}/{total_chunks} in thread")
+                    
+                    # 텍스트 길이 체크 (위계형은 더 큰 청크 허용)
+                    chunk_bytes = len(chunk_text.encode('utf-8'))
+                    if chunk_bytes > 10000:  # 위계형은 10KB까지 허용
+                        error_msg = f"Text chunk too large: {chunk_bytes} bytes exceeds maximum 10000 bytes"
+                        print(f"[ERROR] {error_msg}")
+                        raise ValueError(error_msg)
+                    
+                    # passage의 고유 식별자 생성 (기존과 동일)
+                    passage_id = i + 1
+                    passage_uid = f"{hashed_doc_id}_{passage_id}"
+                    
+                    # 개별 청크 임베딩 시작 (기존과 동일)
+                    chunk_emb_start = time.time()
+                    
+                    # 임베딩 생성 (GPU 제한 적용됨)
+                    chunk_emb = self.emb_model.bge_embed_data(chunk_text)
+                    
+                    chunk_emb_end = time.time()
+                    chunk_emb_duration = chunk_emb_end - chunk_emb_start
+                    
+                    # 임베딩 결과 검증
+                    if not chunk_emb or len(chunk_emb) == 0:
+                        raise ValueError(f"Empty embedding generated for chunk {i+1}")
+                    
+                    # === 위계형 데이터 구조 (위계 필드 추가) ===
+                    data = [
+                        {
+                            "passage_uid": passage_uid,
+                            "doc_id": hashed_doc_id, 
+                            "raw_doc_id": raw_doc_id,
+                            "passage_id": passage_id, 
+                            "domain": domain, 
+                            "title": title, 
+                            "author": author,
+                            "text": chunk_text, 
+                            "text_emb": chunk_emb, 
+                            "info": info, 
+                            "tags": tags,
+                            
+                            # === 위계형 필드 추가 ===
+                            "article_number": hierarchy.get("article_number", ""),
+                            "paragraph_number": hierarchy.get("paragraph_number", ""),
+                            "item_number": hierarchy.get("item_number", "")
+                        }
+                    ]        
+                    
+                    # DB 삽입 시작 (배치 처리 사용 - 기존과 동일)
+                    db_insert_start = time.time()
+                    print(f"[DEBUG] Preparing hierarchical chunk {i+1} with passage_uid: {passage_uid} for batch insert")
+                    print(f"[DEBUG] Hierarchical info: article={hierarchy.get('article_number', 'N/A')}, paragraph={hierarchy.get('paragraph_number', 'N/A')}, item={hierarchy.get('item_number', 'N/A')}")
+                    
+                    try:
+                        # 배치에 추가하고 필요시 삽입
+                        data_item = data[0]
+                        batch_inserted = self._add_to_batch_and_insert(data_item, domain)
+                        
+                        db_insert_end = time.time()
+                        db_insert_duration = db_insert_end - db_insert_start
+                        
+                        if batch_inserted:
+                            print(f"[DEBUG] Hierarchical chunk {i+1} triggered a batch insert")
+                        else:
+                            print(f"[DEBUG] Hierarchical chunk {i+1} added to batch (will be inserted later)")
+                            
+                        print(f"[TIMING] Hierarchical chunk {i+1} - embedding: {chunk_emb_duration:.4f}s, batch_process: {db_insert_duration:.4f}s")
+                        return f"hierarchical_chunk_{i+1}_success"
+                        
+                    except Exception as db_error:
+                        db_insert_error_time = time.time()
+                        db_insert_error_duration = db_insert_error_time - db_insert_start
+                        error_msg = f"DB insert failed for hierarchical chunk {i+1}: {str(db_error)} (duration: {db_insert_error_duration:.4f}s)"
+                        print(f"[ERROR] {error_msg}")
+                        raise Exception(error_msg)
+                    
+                except Exception as e:
+                    error_msg = f"Error processing hierarchical chunk {i+1}: {str(e)}"
+                    print(f"[ERROR] {error_msg}")
+                    raise Exception(error_msg)
+            
+            # 임베딩 및 DB 삽입 시작 (기존과 동일)
+            embedding_start_time = time.time()
+            timing_logger.info(f"HIERARCHICAL_EMBEDDING_START - doc_id: {hashed_doc_id}, chunks: {len(chunked_data)}")
+            
+            # 청크별 임베딩 생성을 병렬 처리 (기존과 동일)
+            max_workers = min(
+                int(os.getenv('INSERT_CHUNK_THREADS', '10')),
+                len(chunked_data),
+            )
+            print(f"[DEBUG] Using {max_workers} threads for hierarchical chunk embedding processing (total chunks: {len(chunked_data)})")
+            
+            chunk_start_time = time.time()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # 청크 데이터와 인덱스를 함께 전달
+                chunk_data_list = [(i, chunk_data) for i, chunk_data in enumerate(chunked_data)]
+                
+                # 모든 청크를 병렬로 처리
+                future_to_chunk = {executor.submit(process_hierarchical_chunk, chunk_data): chunk_data for chunk_data in chunk_data_list}
+                
+                # 결과 수집 및 오류 처리 (기존과 동일)
+                successful_chunks = 0
+                failed_chunks = 0
+                
+                for future in concurrent.futures.as_completed(future_to_chunk):
+                    chunk_data = future_to_chunk[future]
+                    chunk_index = chunk_data[0]
+                    try:
+                        result = future.result()
+                        print(f"[DEBUG] {result}")
+                        successful_chunks += 1
+                    except Exception as exc:
+                        failed_chunks += 1
+                        error_msg = f"Hierarchical chunk {chunk_index + 1} processing failed: {exc}"
+                        print(f"[ERROR] {error_msg}")
+                        timing_logger.error(f"HIERARCHICAL_CHUNK_ERROR - chunk: {chunk_index + 1}, error: {str(exc)}")
+            
+            chunk_end_time = time.time()
+            chunk_duration = chunk_end_time - chunk_start_time
+            timing_logger.info(f"HIERARCHICAL_CHUNK_PROCESSING_END - doc_id: {hashed_doc_id}, successful: {successful_chunks}, failed: {failed_chunks}, duration: {chunk_duration:.4f}s")
+            
+            embedding_end_time = time.time()
+            embedding_duration = embedding_end_time - embedding_start_time
+            timing_logger.info(f"HIERARCHICAL_EMBEDDING_END - doc_id: {hashed_doc_id}, duration: {embedding_duration:.4f}s")
+            
+            # 최종 결과 반환 (기존과 동일)
+            if failed_chunks > 0:
+                error_msg = f"Failed to process {failed_chunks} out of {len(chunked_data)} hierarchical chunks"
+                print(f"[ERROR] {error_msg}")
+                timing_logger.error(f"HIERARCHICAL_INSERT_PARTIAL_FAILURE - doc_id: {hashed_doc_id}, failed: {failed_chunks}/{len(chunked_data)}")
+                return "partial_failure"
+            
+            print(f"[DEBUG] Successfully processed all {successful_chunks} hierarchical chunks")
+            timing_logger.info(f"HIERARCHICAL_INSERT_SUCCESS - doc_id: {hashed_doc_id}, chunks: {successful_chunks}")
+            return "success"
+            
+        except Exception as e:
+            self.logger.error(f"위계형 데이터 삽입 중 오류: {e}")
+            timing_logger.error(f"HIERARCHICAL_INSERT_ERROR - doc_id: {hashed_doc_id if 'hashed_doc_id' in locals() else 'unknown'}, error: {str(e)}")
+            raise
+    
+    def search_hierarchical_data(self, query: str, top_k: int, 
+                               filter_conditions: Dict = None) -> List[Dict[str, Any]]:
+        """
+        위계형 데이터 검색 - 기존 retrieve_data를 확장
+        
+        조문 참조가 있으면 정확한 검색, 없으면 기존 벡터 검색 사용
+        """
+        try:
+            self.logger.info(f"🔍 위계형 데이터 검색 시작: {query}")
+            
+            # 조문 참조 분석
+            legal_refs = self._extract_legal_references(query)
+            
+            if legal_refs["has_references"]:
+                # 조문 참조가 있으면 정확한 검색
+                results = self._search_by_legal_references(query, top_k, legal_refs, filter_conditions)
+            else:
+                # 조문 참조가 없으면 기존 벡터 검색
+                results = super().retrieve_data(query, top_k, filter_conditions)
+            
+            self.logger.info(f"✅ 위계형 데이터 검색 완료: {len(results)}개 결과")
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"위계형 데이터 검색 중 오류: {e}")
+            return []
+    
+    def _extract_legal_references(self, query: str) -> Dict[str, Any]:
+        """쿼리에서 조문 참조 추출"""
+        try:
+            refs = {
+                "has_references": False,
+                "articles": [],
+                "paragraphs": [],
+                "items": []
+            }
+            
+            # 조문 패턴 매칭
+            article_matches = re.finditer(self.article_patterns["main_article"], query)
+            for match in article_matches:
+                refs["articles"].append(f"제{match.group(1)}조")
+                refs["has_references"] = True
+            
+            # 조문의 조 패턴 매칭
+            sub_article_matches = re.finditer(self.article_patterns["sub_article"], query)
+            for match in sub_article_matches:
+                refs["articles"].append(f"제{match.group(1)}조의{match.group(2)}")
+                refs["has_references"] = True
+            
+            # 항 패턴 매칭
+            paragraph_matches = re.finditer(self.article_patterns["paragraph"], query)
+            for match in paragraph_matches:
+                refs["paragraphs"].append(f"{match.group(1)}.")
+                refs["has_references"] = True
+            
+            # 호 패턴 매칭
+            item_matches = re.finditer(self.article_patterns["item"], query)
+            for match in item_matches:
+                refs["items"].append(f"{match.group(1)})")
+                refs["has_references"] = True
+            
+            return refs
+            
+        except Exception as e:
+            self.logger.error(f"조문 참조 추출 중 오류: {e}")
+            return {"has_references": False, "articles": [], "paragraphs": [], "items": []}
+    
+    def _search_by_legal_references(self, query: str, top_k: int, 
+                                  legal_refs: Dict[str, Any], 
+                                  filter_conditions: Dict = None) -> List[Dict[str, Any]]:
+        """조문 참조 기반 정확한 검색"""
+        try:
+            # 기본 도메인 설정
+            domain = "legal"
+            if filter_conditions and "domain" in filter_conditions:
+                domain = filter_conditions["domain"]
+            
+            # 조문 참조로 필터링 조건 구성
+            expr_parts = []
+            
+            # 조문 필터
+            if legal_refs["articles"]:
+                article_expr = " || ".join([f'article_number == "{article}"' for article in legal_refs["articles"]])
+                expr_parts.append(f"({article_expr})")
+            
+            # 항 필터
+            if legal_refs["paragraphs"]:
+                paragraph_expr = " || ".join([f'paragraph_number == "{paragraph}"' for paragraph in legal_refs["paragraphs"]])
+                expr_parts.append(f"({paragraph_expr})")
+            
+            # 호 필터
+            if legal_refs["items"]:
+                item_expr = " || ".join([f'item_number == "{item}"' for item in legal_refs["items"]])
+                expr_parts.append(f"({item_expr})")
+            
+            # 기존 필터 조건 추가
+            if filter_conditions:
+                if "domain" in filter_conditions:
+                    expr_parts.append(f'domain == "{filter_conditions["domain"]}"')
+            
+            # 최종 검색 표현식
+            expr = " && ".join(expr_parts) if expr_parts else None
+            
+            # 기존 retrieve_data의 검색 로직 활용
+            results = super().retrieve_data(query, top_k, filter_conditions)
+            
+            # 조문 참조가 있는 결과만 필터링
+            if expr:
+                filtered_results = []
+                for result in results:
+                    # 조문 참조와 일치하는지 확인
+                    if self._matches_legal_references(result, legal_refs):
+                        filtered_results.append(result)
+                return filtered_results
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"조문 참조 검색 중 오류: {e}")
+            return []
+    
+    def _matches_legal_references(self, result: Dict[str, Any], legal_refs: Dict[str, Any]) -> bool:
+        """결과가 조문 참조와 일치하는지 확인"""
+        try:
+            # 조문 매칭
+            if legal_refs["articles"]:
+                result_article = result.get("article_number", "")
+                if not any(article in result_article for article in legal_refs["articles"]):
+                    return False
+            
+            # 항 매칭
+            if legal_refs["paragraphs"]:
+                result_paragraph = result.get("paragraph_number", "")
+                if not any(paragraph in result_paragraph for paragraph in legal_refs["paragraphs"]):
+                    return False
+            
+            # 호 매칭
+            if legal_refs["items"]:
+                result_item = result.get("item_number", "")
+                if not any(item in result_item for item in legal_refs["items"]):
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"조문 참조 매칭 중 오류: {e}")
+            return True  # 오류 시 매칭된 것으로 처리

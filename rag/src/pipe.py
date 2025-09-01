@@ -719,7 +719,7 @@ class InteractManager:
             print(f"[ERROR] Failed to insert data: {str(e)}")
             raise
     
-    def retrieve_data(self, query, top_k, filter_conditions=None, use_content=False):
+    def retrieve_data(self, query, top_k, filter_conditions=None):
         """
         텍스트 검색과 다양한 필터링 조건을 조합하여 검색을 수행합니다.
         
@@ -752,35 +752,23 @@ class InteractManager:
         # 기본 출력 필드 설정
         output_fields = ["doc_id", "raw_doc_id", "passage_id", "domain", "title", "author", "text", "info", "tags"]
         
-        # Legal search인 경우 content 필드 추가
-        if use_content:
-            output_fields.append("content")
-        
         # 검색 표현식 구성
         expr_parts = []
         
         # 도메인 필터
         domain = None
         if filter_conditions:
-            if 'domains' in filter_conditions:
-                # domains 배열에서 첫 번째 도메인 사용
-                domains = filter_conditions['domains']
-                if isinstance(domains, list) and len(domains) > 0:
-                    domain = domains[0]
-                    print(f"[DEBUG] 🌐 domains 배열에서 도메인 사용: {domain}")
-                else:
-                    print(f"[DEBUG] ❌ 잘못된 domains 배열: {domains}")
-                    return []
-            elif 'domain' in filter_conditions:
+            if 'domain' in filter_conditions:
                 domain = filter_conditions['domain']
-                print(f"[DEBUG] 🎯 단일 domain 사용: {domain}")
-
+            elif 'domains' in filter_conditions:
+                # domains가 있으면 단일 도메인 검색에서는 무시 (app.py에서 처리)
+                return []
+        
         if not domain:
             # 도메인이 지정되지 않은 경우 기본 도메인 사용
-            domain = "legal"  # 기본 도메인을 legal로 변경
-            print(f"[DEBUG] 🏛️ 기본 도메인 사용: {domain}")
-
-        print(f"[DEBUG] 🎯 최종 사용 도메인: {domain}")
+            domain = "news"  # 기본 도메인 설정
+        
+        print(f"[DEBUG] Using domain: {domain}")
         
         # 컬렉션이 있는지 확인 (신속히 처리)
         collection_check_start = time.time()

@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 from src import EnvManager, InteractManager
 from src.pipe import InteractManager as PipeInteractManager  # 명시적으로 pipe.py의 InteractManager 임포트
 
-# 통합 법령 검색 시스템 임포트
-from hierarchical.engines.integrated_legal_search import get_integrated_search_system
+# 위계형 시스템 임포트
+from hierarchical import HierarchicalSchema, HierarchicalRetriever, HierarchicalProcessor
 import logging
 import json 
 import os 
@@ -84,11 +84,40 @@ milvus_data, milvus_meta = env_manager.set_vectordb()
 milvus_db = env_manager.milvus_db
 interact_manager = InteractManager(data_p=env_manager.data_p, vectorenv=milvus_db, vectordb=milvus_data, emb_model=emb_model)
 
-# 통합 법령 검색 시스템 초기화
-integrated_search_system = None
+# 위계형 검색기 초기화
+hierarchical_retriever = None
 
-# 법령 검색기 초기화
-legal_retriever = None
+# 위계형 프로세서 초기화
+hierarchical_processor = None
+
+def get_or_init_hierarchical_retriever():
+    """위계형 검색기 인스턴스 조회 또는 초기화"""
+    global hierarchical_retriever
+    if hierarchical_retriever is None:
+        try:
+            hierarchical_retriever = HierarchicalRetriever(interact_manager)
+            logger.info("위계형 검색기 초기화 완료")
+        except Exception as e:
+            logger.error(f"위계형 검색기 초기화 실패: {e}")
+            raise
+    return hierarchical_retriever
+
+def get_or_init_hierarchical_processor():
+    """위계형 프로세서 인스턴스 조회 또는 초기화"""
+    global hierarchical_processor
+    if hierarchical_processor is None:
+        try:
+            hierarchical_processor = HierarchicalProcessor(
+                data_p=env_manager.data_p,
+                vectorenv=milvus_db,
+                vectordb=milvus_data,
+                emb_model=emb_model
+            )
+            logger.info("위계형 프로세서 초기화 완료")
+        except Exception as e:
+            logger.error(f"위계형 프로세서 초기화 실패: {e}")
+            raise
+    return hierarchical_processor
 
 # 자주 사용하는 컬렉션을 미리 로드하는 함수
 def load_common_collections():
@@ -2753,223 +2782,177 @@ def test_or_operator():
         }), 500
 
 
+
+
+
+
+
+
+
+
 # ==============================
 # 🚀 법령 검색 시스템 API
 # ==============================
-
-def get_or_init_legal_retriever():
-    """법령 검색기 인스턴스 조회 또는 초기화"""
-    global legal_retriever
-    if legal_retriever is None:
-        try:
-            from hierarchical.legal.retriever import LegalRetriever
-            legal_retriever = LegalRetriever(interact_manager)
-            logger.info("법령 검색기 초기화 완료")
-        except Exception as e:
-            logger.error(f"법령 검색기 초기화 실패: {e}")
-            raise
-    return legal_retriever
 
 
 @app.route('/rag/legal/search', methods=['POST'])
 def legal_search():
     """
-    법령 검색 API
+    위계형 법령 검색 API (기존 RAG search와 동일한 파라미터 구조)
     
-            LegalRetriever를 직접 사용하여 text_emb 필드로 올바른 검색 수행
+    텍스트 쿼리와 다양한 필터링 조건을 기반으로 유사 문서를 검색합니다.
+    조문 참조가 포함된 쿼리의 경우 정확한 조문 검색을 수행하고,
+    그렇지 않은 경우 일반 벡터 검색을 수행합니다.
+    
+    Returns:
+        JSON: 검색 결과와 성능 메트릭을 포함한 응답
     """
-    api_start_time = time.time()
-    
-    logger.info("")
-    logger.info("")
-    logger.info("")
-    logger.info("")
-    logger.info("")
-    logger.info("")
-    logger.info("")
-    logger.info("=== LEGAL SEARCH API START ===")
-    
     try:
-        # 요청 데이터 파싱
-        try:
-            data = request.get_json()
-            logger.info(f"📥 검색 요청 수신")
-        except Exception as json_error:
-            logger.error(f"❌ JSON 파싱 오류: {json_error}")
+        # 전체 API 실행 시간 측정 시작
+        start_time = time.time()
+        
+        # JSON 데이터 받기
+        request_data = request.get_json()
+        if not request_data:
             return jsonify({
-                "status": "error",
-                "message": f"JSON 파싱 오류: {str(json_error)}"
+                "result_code": "F000000",
+                "message": "JSON 데이터가 필요합니다.",
+                "search_result": None
             }), 400
-        
-        if not data:
-            logger.error("❌ JSON 데이터가 없습니다")
-            return jsonify({
-                "status": "error",
-                "message": "JSON 데이터가 필요합니다"
-            }), 400
-        
-        # 필수 파라미터 검증
-        query = data.get('query')
-        if not query or not query.strip():
-            logger.error("❌ 검색 쿼리가 없습니다")
-            return jsonify({
-                "status": "error", 
-                "message": "검색 쿼리가 필요합니다"
-            }), 400
-        
-        logger.info(f"🔍 검색 쿼리: '{query}'")
-        logger.info(f"📏 쿼리 길이: {len(query)}자")
-        
-        # 검색 파라미터 설정
-        search_params = {
-            "top_k": data.get('top_k', 20),
-            "domains": data.get('domains', ['legal']),  # 기본값을 legal로 설정
-            "enable_intent_detection": data.get('enable_intent_detection', True),
-            "enable_pattern_boost": data.get('enable_pattern_boost', True),
-            "filter_conditions": data.get('filter_conditions', {}),
-            "search_mode": data.get('search_mode', 'hybrid'),
-            "include_context": data.get('include_context', True),
-            "expand_hierarchy": data.get('expand_hierarchy', True),
-            # 누락된 파라미터들 추가
-            "enable_explanation": data.get('enable_explanation', False),
-            "enable_context": data.get('enable_context', False),
-            "explanation_mode": data.get('explanation_mode', False)
-        }
-        
-        logger.info(f"⚙️ 검색 파라미터:")
-        logger.info(f"   top_k: {search_params['top_k']}")
-        logger.info(f"   query: {query}")
-        logger.info(f"   domains: {search_params['domains']}")
-        logger.info(f"   search_mode: {search_params['search_mode']}")
-        logger.info(f"   enable_explanation: {search_params['enable_explanation']}")
-        logger.info(f"   enable_context: {search_params['enable_context']}")
-        logger.info(f"   explanation_mode: {search_params['explanation_mode']}")
-        logger.info(f"   filter_conditions: {search_params['filter_conditions']}")
-        
-        # 법령 검색기 초기화
-        logger.info("🔧 법령 검색기 초기화 시작...")
-        legal_retriever = get_or_init_legal_retriever()
-        logger.info("✅ 법령 검색기 초기화 완료")
-        
-        # 다중 도메인 검색 처리
-        all_results = []
-        total_results = 0
-        
-        for domain in search_params['domains']:
-            logger.info(f"🔍 도메인 '{domain}' 검색 시작...")
-            domain_start_time = time.time()
-            
-            try:
-                # LegalRetriever를 사용하여 text_emb 필드로 검색
-                domain_results = legal_retriever.search_legal_documents(
-                    collection_name=domain,
-                    query=query,
-                    search_params=search_params
-                )
-                
-                domain_duration = time.time() - domain_start_time
-                logger.info(f"✅ 도메인 '{domain}' 검색 완료: {len(domain_results)}개 결과, {domain_duration:.3f}초")
-                
-                        # 결과에 도메인 정보 추가 및 content 필드 보장
-                for result in domain_results:
-                    result['domain'] = domain
-                    result['search_score'] = result.get('final_score', result.get('score', 0.0))
-                    
-                    # 디버깅: 결과 구조 로깅
-                    logger.info(f"🔍 결과 구조 확인: {list(result.keys())}")
-                    if 'entity' in result:
-                        logger.info(f"🔍 entity 타입: {type(result['entity'])}, 키: {list(result['entity'].keys()) if isinstance(result['entity'], dict) else 'N/A'}")
-                    
-                    # content 필드가 없으면 entity에서 가져오기
-                    if 'content' not in result and 'entity' in result:
-                        if isinstance(result['entity'], dict) and 'content' in result['entity']:
-                            result['content'] = result['entity']['content']
-                            logger.info(f"✅ content를 entity에서 가져옴: {result['content'][:50]}...")
-                        elif hasattr(result['entity'], 'content'):
-                            result['content'] = getattr(result['entity'], 'content', '')
-                            logger.info(f"✅ content를 entity 객체에서 가져옴: {result['content'][:50]}...")
-                        else:
-                            logger.warning(f"⚠️ content 필드를 찾을 수 없음")
-                    elif 'content' in result:
-                        logger.info(f"✅ content 필드 존재: {result['content'][:50]}...")
-                    else:
-                        logger.warning(f"⚠️ content 필드 없음, entity도 없음")
-                    
-                    # title 필드도 보장
-                    if 'title' not in result and 'entity' in result:
-                        if isinstance(result['entity'], dict) and 'title' in result['entity']:
-                            result['title'] = result['entity']['title']
-                        elif hasattr(result['entity'], 'title'):
-                            result['title'] = getattr(result['entity'], 'title', '')
-                
-                all_results.extend(domain_results)
-                total_results += len(domain_results)
-                
-            except Exception as domain_error:
-                logger.error(f"❌ 도메인 '{domain}' 검색 오류: {domain_error}")
-                continue
-        
-        # 검색 수행 시간 계산
-        search_duration = time.time() - api_start_time
-        
-        # 결과 정렬 (점수순)
-        all_results.sort(key=lambda x: x.get('search_score', 0.0), reverse=True)
-        
-        # top_k 제한 적용
-        final_results = all_results[:search_params['top_k']]
-        
-        # 응답 구성
-        result = {
-            "query": query,
-            "total_results": len(final_results),
-            "results": final_results,
-            "search_params": search_params,
-            "performance": {
-                "search_time_seconds": round(search_duration, 3),
-                "domains_searched": search_params['domains']
-            }
-        }
 
-        # 결과 로깅
-        logger.info(f"📊 검색 결과: {len(final_results)}개")
-        logger.info(f"⏱️ 검색 소요시간: {search_duration:.3f}초")
+        # 기본 검색 파라미터 (기존 RAG search와 동일)
+        query_text = request_data.get('query_text')
+        top_k = request_data.get('top_k', 5)
+        domains = request_data.get('domains', [])  # 도메인 리스트
+
+        # 추가 필터링 파라미터 (기존 RAG search와 동일)
+        author = request_data.get('author')  # 작성자 필터
+        start_date = request_data.get('start_date')  # YYYYMMDD 형식
+        end_date = request_data.get('end_date')      # YYYYMMDD 형식
+        title_query = request_data.get('title')      # 제목 검색
+        info_filter = request_data.get('info_filter') # info 필터 조건
+        tags_filter = request_data.get('tags_filter') # tags 필터 조건
+
+        logger.info(f"[TIMING] 위계형 검색 요청 시작: query='{query_text}', top_k={top_k}, domains={domains}")
+
+        if not query_text:
+            return jsonify({
+                "result_code": "F000001",
+                "message": "검색어(query_text)는 필수 입력값입니다.",
+                "search_result": None
+            }), 400
+
+        try:
+            top_k = int(top_k)
+        except ValueError:
+            return jsonify({
+                "result_code": "F000002",
+                "message": "top_k 값은 숫자여야 합니다.",
+                "search_result": None
+            }), 400
+
+        # 날짜 형식 검증 (기존 RAG search와 동일)
+        if start_date or end_date:
+            date_error = None
+            if start_date:
+                if not (len(start_date) == 8 and start_date.isdigit() and 
+                       1900 <= int(start_date[:4]) <= 2100 and 
+                       1 <= int(start_date[4:6]) <= 12 and 
+                       1 <= int(start_date[6:]) <= 31):
+                    date_error = "시작 날짜가 올바른 형식(YYYYMMDD)이 아닙니다."
+            if end_date:
+                if not (len(end_date) == 8 and end_date.isdigit() and 
+                       1900 <= int(end_date[:4]) <= 2100 and 
+                       1 <= int(end_date[4:6]) <= 12 and 
+                       1 <= int(end_date[6:]) <= 31):
+                    date_error = "종료 날짜가 올바른 형식(YYYYMMDD)이 아닙니다."
+            if start_date and end_date and start_date > end_date:
+                date_error = "시작 날짜가 종료 날짜보다 늦을 수 없습니다."
+            
+            if date_error:
+                return jsonify({
+                    "result_code": "F000006",
+                    "message": date_error,
+                    "search_result": None
+                }), 400
         
-        api_duration = time.time() - api_start_time
-        logger.info(f"✅ 법령 검색 완료: {len(final_results)}개 결과, 총 {api_duration:.3f}초")
-        logger.info("=== LEGAL SEARCH API END ===")
-        logger.info("")
-        logger.info("")
-        logger.info("")
-        logger.info("")
-        logger.info("")
-        logger.info("")
-        logger.info("")
+        validation_time = time.time()
+        logger.info(f"[TIMING] 파라미터 검증 완료: {(validation_time - start_time):.4f}초")
         
-        return jsonify({
-            "status": "success",
-            "data": result,
-            "performance": {
-                "search_time_seconds": round(search_duration, 3),
-                "total_time_seconds": round(api_duration, 3)
+        # 도메인 유효성 검증 (기존 RAG search와 동일)
+        available_collections = milvus_db.get_list_collection()
+        if domains:
+            invalid_domains = [d for d in domains if d not in available_collections]
+            if invalid_domains:
+                return jsonify({
+                    "result_code": "F000007",
+                    "message": f"유효하지 않은 도메인이 포함되어 있습니다: {', '.join(invalid_domains)}",
+                    "available_domains": available_collections,
+                    "search_result": None
+                }), 400
+        
+        # 필터 조건 파싱 (기존 RAG search와 동일)
+        filter_conditions = {}
+        if domains:
+            filter_conditions['domains'] = domains
+        if author:
+            filter_conditions['author'] = author
+        if start_date or end_date:
+            filter_conditions['date_range'] = {'start': start_date, 'end': end_date}
+        if title_query:
+            filter_conditions['title'] = title_query
+        if info_filter:
+            filter_conditions['info_filter'] = info_filter
+        if tags_filter:
+            filter_conditions['tags_filter'] = tags_filter
+        
+        # 위계형 검색기 초기화
+        logger.info("🔧 위계형 검색기 초기화 시작...")
+        retriever = get_or_init_hierarchical_retriever()
+        logger.info("✅ 위계형 검색기 초기화 완료")
+        
+        # 검색 실행 (기본 컬렉션명 사용)
+        collection_name = domains[0] if domains else "congress"
+        
+        # 위계형 검색 파라미터 구성
+        search_params = {
+            "top_k": top_k,
+            "filter_conditions": filter_conditions
+        }
+        
+        # 위계형 검색 실행
+        results = retriever.search(collection_name, query_text, search_params)
+        
+        # 응답 생성 (기존 RAG search와 동일한 형식)
+        response = {
+            "result_code": "S000000",
+            "message": "검색이 성공적으로 완료되었습니다.",
+            "search_result": {
+                "query": query_text,
+                "results": results,
+                "total_results": len(results),
+                "search_params": {
+                    "top_k": top_k,
+                    "domains": domains,
+                    "filter_conditions": filter_conditions
+                }
+            },
+            "performance_metrics": {
+                "total_processing_time": time.time() - start_time,
+                "validation_time": validation_time - start_time,
+                "search_time": time.time() - validation_time
             }
-        })
+        }
+        
+        logger.info(f"✅ 위계형 검색 완료: {len(results)}개 결과, 총 처리시간: {time.time() - start_time:.4f}초")
+        return jsonify(response)
         
     except Exception as e:
-        api_duration = time.time() - api_start_time
-        logger.error(f"❌ 검색 API 오류: {e}")
-        logger.error(f"⏱️ 오류 시점: {api_duration:.3f}초")
-        logger.info("=== LEGAL SEARCH API END (ERROR) ===")
-        logger.info("")
-        logger.info("")
-        logger.info("")
-        logger.info("")
-        logger.info("")
-        logger.info("")
-        logger.info("")
+        logger.error(f"위계형 검색 중 오류: {e}")
         return jsonify({
-            "status": "error",
-            "message": f"법령 검색 중 오류가 발생했습니다: {str(e)}",
-            "api_processing_time_seconds": round(api_duration, 3)
+            "result_code": "F000999",
+            "message": f"검색 중 오류가 발생했습니다: {str(e)}",
+            "search_result": None
         }), 500
 
 
@@ -3009,8 +2992,8 @@ def legal_search_simple():
         
         logger.info(f"🏛️ 간소 법령 검색: '{query}' (top_k={search_params['top_k']})")
         
-        # LegalRetriever를 사용하여 간소 검색 수행
-        legal_retriever = get_or_init_legal_retriever()
+        # 위계형 검색기를 사용하여 간소 검색 수행
+        legal_retriever = get_or_init_hierarchical_retriever()
         
         # 간소화된 검색 파라미터
         simple_search_params = {
@@ -3079,7 +3062,7 @@ def legal_search_simple():
 def legal_search_status():
     """법령 검색 시스템 상태 조회"""
     try:
-        legal_retriever = get_or_init_legal_retriever()
+        legal_retriever = get_or_init_hierarchical_retriever()
         
         # 간단한 상태 정보 반환
         status = {
@@ -3107,7 +3090,7 @@ def legal_search_status():
 def legal_search_stats():
     """법령 검색 시스템 통계 조회"""
     try:
-        legal_retriever = get_or_init_legal_retriever()
+        legal_retriever = get_or_init_hierarchical_retriever()
         
         # 기본 통계 정보 반환
         stats = {
@@ -3144,240 +3127,19 @@ def legal_search_stats():
 legal_indexer = None
 
 def get_or_init_legal_indexer():
-    """법령 인덱서 인스턴스 조회 또는 초기화"""
-    global legal_indexer
-    if legal_indexer is None:
-        try:
-            from hierarchical.legal.indexer import LegalIndexer
-            legal_indexer = LegalIndexer(existing_interact_manager=interact_manager)
-            logger.info("법령 인덱서 초기화 완료")
-        except Exception as e:
-            logger.error(f"법령 인덱서 초기화 실패: {e}")
-            raise
-    return legal_indexer
+    """법령 인덱서 인스턴스 조회 또는 초기화 (기존 RAG 사용)"""
+    return None  # 기존 RAG insert API 사용
 
 
 @app.route('/rag/legal/insert', methods=['POST'])
 def legal_insert():
     """
-    법령 문서를 위계형 구조로 인덱싱합니다.
-    
-    Request Body:
-    ```json
-    {
-        "documents": [
-            {
-                "title": "개인정보보호법",                    // 필수: 문서 제목
-                "text": "제1장 총칙\n제1조(목적) 이 법은 개인정보의 처리 및 보호에 관한 사항을 정함으로써...\n\n제2조(정의) ① 이 법에서 사용하는 용어의 뜻은 다음과 같다.\n1. 개인정보란...",  // 필수: 문서 내용
-                
-                // === 선택 필드 (자동 추출됨) ===
-                "law_type": "법률",                          // 선택: 법령 유형 (자동 추출 또는 기본값 "법률")
-                "law_number": "법률 제11690호",               // 선택: 법률 번호 (자동 추출)
-                "domain": "nanet_related_law_cstt"           // 필수: 도메인 (컬렉션명 역할)
-            }
-        ],
-
-        "ignore_duplicates": true,                           // 선택: 중복 무시 (기본: true)
-        "enable_meilisearch": true                           // 선택: Meilisearch 인덱싱 (기본: true)
-    }
-    ```
-    
-    참고: 
-            - 16개 필드 중 10개는 완전 자동 생성 (node_id, document_id, hierarchy_level, parent_node_id, hierarchy_path, text_emb, created_at, article_number, paragraph_number, item_number)
-    - 문서 하나가 여러 노드로 자동 분할되어 인덱싱됨 (조문/항/호 단위)
-    - 법령 제정일, 시행일 등은 content에서 자동 추출되어 메타데이터로 저장됨
-    
-    Returns:
-        JSON: 인덱싱 결과 요약 및 각 문서별 처리 결과
+    위계형 법령 삽입 API (기존 RAG insert 사용)
     """
-    api_start_time = time.time()
-    logger.info("=== LEGAL INSERT API START ===")
-    
-    try:
-        # 요청 데이터 파싱
-        try:
-            data = request.get_json()
-            logger.info(f"📥 요청 데이터 수신: {len(data.get('documents', []))}개 문서")
-        except Exception as json_error:
-            logger.error(f"❌ JSON 파싱 오류: {json_error}")
-            logger.error(f"📄 요청 데이터: {request.get_data(as_text=True)[:500]}...")
-            return jsonify({
-                "status": "error",
-                "message": f"JSON 파싱 오류: {str(json_error)}",
-                "hint": "JSON 형식을 확인해주세요."
-            }), 400
-        
-        if not data:
-            logger.error("❌ JSON 요청 데이터가 없습니다")
-            return jsonify({
-                "status": "error",
-                "message": "JSON 요청 데이터가 필요합니다"
-            }), 400
-        
-        documents = data.get('documents', [])
-        if not documents:
-            logger.error("❌ 문서 목록이 없습니다")
-            return jsonify({
-                "status": "error",
-                "message": "문서 목록이 필요합니다"
-            }), 400
-        
-        ignore_duplicates = data.get('ignore_duplicates', True)
-        enable_meilisearch = data.get('enable_meilisearch', True)
-        
-        logger.info(f"⚙️ 설정: ignore_duplicates={ignore_duplicates}, enable_meilisearch={enable_meilisearch}")
-        
-        # 법령 인덱서 가져오기
-        logger.info("🔧 법령 인덱서 초기화 시작...")
-        indexer = get_or_init_legal_indexer()
-        logger.info("✅ 법령 인덱서 초기화 완료")
-        
-        # 문서 인덱싱 수행
-        indexing_results = []
-        total_indexed = 0
-        total_errors = 0
-        
-        for doc_idx, document in enumerate(documents):
-            doc_start_time = time.time()
-            
-            try:
-                logger.info(f"📄 문서 {doc_idx+1}/{len(documents)} 처리 시작")
-                logger.info(f"   제목: {document.get('title', 'Unknown')}")
-                logger.info(f"   도메인: {document.get('domain', 'Not specified')}")
-                logger.info(f"   텍스트 길이: {len(document.get('text', ''))}자")
-                
-                # 도메인 확인 (컬렉션명으로 사용)
-                domain = document.get('domain')
-                if not domain:
-                    logger.error(f"❌ 문서 {doc_idx+1}: domain 필드가 없습니다")
-                    raise ValueError("문서에 domain 필드가 필요합니다")
-                
-                logger.info(f"🏗️ 컬렉션 존재 확인: {domain}")
-                # 1. 문서 파싱 및 노드 생성
-                logger.info(f"🔧 문서 파싱 시작: {domain}")
-                parsed_nodes = indexer.parse_document(document)
-                if not parsed_nodes:
-                    logger.error(f"❌ 문서 {doc_idx+1}: 파싱된 노드가 없습니다")
-                    raise ValueError("파싱된 노드가 없습니다")
-                
-                logger.info(f"✅ 문서 파싱 완료: {len(parsed_nodes)}개 노드")
-                
-                # 2. Milvus에 벡터 인덱싱 (도메인을 컬렉션명으로 사용)
-                # 컬렉션이 없으면 생성
-                if not indexer._collection_exists(domain):
-                    logger.info(f"🏗️ 컬렉션 생성: {domain}")
-                    indexer.create_collection(domain)
-                else:
-                    logger.info(f"✅ 기존 컬렉션 사용: {domain}")
-                
-               # Milvus 인덱싱 수행
-                logger.info(f"🚀 Milvus 인덱싱 시작: {len(parsed_nodes)}개 노드")
-                milvus_result = indexer._index_parsed_nodes(
-                    collection_name=domain,
-                    parsed_nodes=parsed_nodes,
-                    document=document,
-                    ignore_duplicates=ignore_duplicates
-                )
-
-                # milvus_result가 bool이므로 수정
-                if milvus_result:
-                    logger.info(f"✅ Milvus 인덱싱 완료: {len(parsed_nodes)}개 노드")
-                    milvus_result_dict = {
-                        "status": "success",
-                        "indexed_count": len(parsed_nodes)
-                    }
-                else:
-                    logger.error(f"❌ Milvus 인덱싱 실패")
-                    milvus_result_dict = {
-                        "status": "failed",
-                        "indexed_count": 0
-                    }
-                
-                # 3. Meilisearch에 키워드 인덱싱 (활성화된 경우)
-                meilisearch_result = None
-                if enable_meilisearch and indexer.meilisearch_client:
-                    logger.info(f"🔍 Meilisearch 인덱싱 시작: {domain}")
-                    try:
-                        # Meilisearch 인덱싱 수행 (도메인을 인덱스명으로 사용)
-                        meilisearch_result = indexer.index_to_meilisearch(
-                            parsed_nodes=parsed_nodes,
-                            index_name=domain,
-                            document_metadata=document
-                        )
-                        logger.info(f"✅ Meilisearch 인덱싱 완료")
-                    except Exception as meil_e:
-                        logger.warning(f"⚠️ Meilisearch 인덱싱 실패 (Milvus는 성공): {meil_e}")
-                        meilisearch_result = {"status": "failed", "error": str(meil_e)}
-                else:
-                    logger.info("⏭️ Meilisearch 인덱싱 건너뜀")
-                
-                doc_duration = time.time() - doc_start_time
-                
-                result = {
-                    "document_index": doc_idx,
-                    "title": document.get('title', 'Unknown'),
-                    "status": "success",
-                    "total_nodes": len(parsed_nodes),
-                    "milvus_result": milvus_result,
-                    "meilisearch_result": meilisearch_result,
-                    "processing_time_seconds": round(doc_duration, 3)
-                }
-                
-                indexing_results.append(result)
-                total_indexed += len(parsed_nodes)
-                
-                logger.info(f"✅ 문서 {doc_idx+1} 완료: {len(parsed_nodes)}개 노드, {doc_duration:.2f}초")
-                
-            except Exception as doc_e:
-                doc_duration = time.time() - doc_start_time
-                error_result = {
-                    "document_index": doc_idx,
-                    "title": document.get('title', 'Unknown'),
-                    "status": "error",
-                    "error": str(doc_e),
-                    "processing_time_seconds": round(doc_duration, 3)
-                }
-                indexing_results.append(error_result)
-                total_errors += 1
-                logger.error(f"❌ 문서 {doc_idx+1} 실패: {doc_e}")
-                logger.error(f"   처리 시간: {doc_duration:.2f}초")
-        
-        api_duration = time.time() - api_start_time
-        
-        logger.info(f"📊 최종 결과: {total_indexed}개 노드 인덱싱, {total_errors}개 오류")
-        logger.info(f"⏱️ 총 처리 시간: {api_duration:.2f}초")
-        logger.info("=== LEGAL INSERT API END ===")
-        
-        return jsonify({
-            "status": "success" if total_errors == 0 else "partial_success",
-            "summary": {
-                "total_documents": len(documents),
-                "successful_documents": len(documents) - total_errors,
-                "failed_documents": total_errors,
-                "total_nodes_indexed": total_indexed,
-                "collections_used": list(set(doc.get('domain') for doc in documents if doc.get('domain'))),
-                "meilisearch_enabled": enable_meilisearch,
-                "api_processing_time_seconds": round(api_duration, 3)
-            },
-            "results": indexing_results,
-            "performance": {
-                "total_api_time_seconds": round(api_duration, 3),
-                "average_time_per_document": round(api_duration / len(documents), 3) if documents else 0
-            },
-            "timestamp": datetime.now().isoformat()
-        }), 200 if total_errors == 0 else 207
-        
-    except Exception as e:
-        api_duration = time.time() - api_start_time
-        logger.error(f"❌ API 전체 실패: {e}")
-        logger.error(f"⏱️ 실패 시점: {api_duration:.2f}초")
-        logger.info("=== LEGAL INSERT API END (ERROR) ===")
-        return jsonify({
-            "status": "error",
-            "message": f"법령 인덱싱 중 오류가 발생했습니다: {str(e)}",
-            "api_processing_time_seconds": round(api_duration, 3),
-            "timestamp": datetime.now().isoformat()
-        }), 500
+    return jsonify({
+        "status": "info",
+        "message": "기존 RAG insert API를 사용하세요. 위계형 필드는 자동으로 추가됩니다."
+    }), 200
 
 
 @app.route('/rag/legal/delete', methods=['DELETE'])

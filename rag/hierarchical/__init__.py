@@ -1,26 +1,17 @@
 """
-위계형 RAG 시스템 메인 모듈
+위계형 RAG 시스템
 
-이 모듈은 기존 RAG 시스템을 확장하여 위계형 문서 구조를 지원합니다.
-법령, 정책문서, 매뉴얼 등 계층적 구조를 가진 문서들을 효율적으로 처리합니다.
-
-주요 구성요소:
-- base/: 위계형 시스템의 베이스 클래스들
-- legal/: 법령 전용 구현체들  
-- utils/: 공통 유틸리티 함수들
+기존 RAG 시스템과 완전히 호환되면서 위계형 구조만 지원하는 시스템입니다.
+기존 스키마에 최소한의 필드만 추가하여 법령의 조문 구조를 지원합니다.
 """
 
-from .base import BaseHierarchicalSchema, BaseHierarchicalIndexer, BaseHierarchicalRetriever
-from .legal import LegalSchema, LegalParser, LegalIndexer, LegalRetriever, LegalRAGSystem
+from .hierarchical_schema import HierarchicalSchema
+from .hierarchical_retriever import HierarchicalRetriever
+from .hierarchical_processor import HierarchicalProcessor
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 __all__ = [
-    'BaseHierarchicalSchema',
-    'BaseHierarchicalIndexer', 
-    'BaseHierarchicalRetriever',
-    'LegalSchema',
-    'LegalParser',
-    'LegalIndexer',
-    'LegalRetriever',
-    'LegalRAGSystem'
+    'HierarchicalSchema',
+    'HierarchicalRetriever',
+    'HierarchicalProcessor'
 ]
