@@ -8,6 +8,7 @@
 import re
 import logging
 import os
+import time
 from typing import List, Dict, Any, Tuple, Optional
 from src.pipe import InteractManager
 
@@ -260,69 +261,149 @@ class HierarchicalProcessor(InteractManager):
     
     def get_collection_info(self, collection_name):
         """특정 컬렉션의 정보를 반환합니다."""
+        self.logger.info(f"🔍 컬렉션 정보 조회 시작: {collection_name}")
+        start_time = time.time()
+        
         try:
             from pymilvus import Collection
+            self.logger.info(f"📚 Milvus Collection 객체 생성: {collection_name}")
             collection = Collection(collection_name)
+            
+            self.logger.info(f"📥 컬렉션 로드 시작: {collection_name}")
             collection.load()
+            self.logger.info(f"✅ 컬렉션 로드 완료: {collection_name}")
+            
+            # 스키마 정보 수집
+            self.logger.info(f"📋 컬렉션 스키마 정보 수집: {collection_name}")
+            schema_fields = []
+            for field in collection.schema.fields:
+                schema_fields.append({
+                    "name": field.name,
+                    "type": str(field.dtype),
+                    "description": field.description
+                })
+            
+            # 인덱스 정보 수집
+            self.logger.info(f"🔍 컬렉션 인덱스 정보 수집: {collection_name}")
+            indexes = collection.indexes
+            
+            # 파티션 정보 수집
+            self.logger.info(f"📦 컬렉션 파티션 정보 수집: {collection_name}")
+            partitions = [p.name for p in collection.partitions]
+            
+            # 엔티티 수 조회
+            self.logger.info(f"📊 컬렉션 엔티티 수 조회: {collection_name}")
+            num_entities = collection.num_entities
             
             info = {
                 "name": collection.name,
-                "num_entities": collection.num_entities,
+                "num_entities": num_entities,
                 "schema": {
-                    "fields": [
-                        {
-                            "name": field.name,
-                            "type": str(field.dtype),
-                            "description": field.description
-                        }
-                        for field in collection.schema.fields
-                    ]
+                    "fields": schema_fields
                 },
-                "indexes": collection.indexes,
-                "partitions": [p.name for p in collection.partitions]
+                "indexes": indexes,
+                "partitions": partitions
             }
             
+            end_time = time.time()
+            processing_time = end_time - start_time
+            
+            self.logger.info(f"✅ 컬렉션 정보 조회 성공: {collection_name}")
+            self.logger.info(f"📊 컬렉션 정보 - 엔티티 수: {num_entities}, 필드 수: {len(schema_fields)}, 파티션 수: {len(partitions)}")
+            self.logger.info(f"⏱️ 처리 시간: {processing_time:.3f}초")
+            
             return info
+            
         except Exception as e:
-            self.logger.error(f"컬렉션 정보 조회 중 오류: {e}")
+            end_time = time.time()
+            processing_time = end_time - start_time
+            
+            self.logger.error(f"❌ 컬렉션 정보 조회 실패: {collection_name}")
+            self.logger.error(f"🚨 오류 내용: {str(e)}")
+            self.logger.error(f"🚨 오류 타입: {type(e).__name__}")
+            self.logger.error(f"⏱️ 처리 시간: {processing_time:.3f}초")
+            
             return {"error": str(e)}
     
     def get_collection_sample(self, collection_name, sample_size=10):
         """컬렉션의 샘플 데이터를 반환합니다."""
+        self.logger.info(f"🔍 컬렉션 샘플 조회 시작: {collection_name}, 샘플 크기: {sample_size}")
+        start_time = time.time()
+        
         try:
             from pymilvus import Collection
+            self.logger.info(f"📚 Milvus Collection 객체 생성: {collection_name}")
             collection = Collection(collection_name)
+            
+            self.logger.info(f"📥 컬렉션 로드 시작: {collection_name}")
             collection.load()
+            self.logger.info(f"✅ 컬렉션 로드 완료: {collection_name}")
             
             # 샘플 데이터 조회
+            self.logger.info(f"🔍 샘플 데이터 조회 시작: {collection_name}")
             sample_data = collection.query(
                 expr="",
                 output_fields=["*"],
                 limit=sample_size
             )
+            self.logger.info(f"✅ 샘플 데이터 조회 완료: {collection_name}")
+            
+            end_time = time.time()
+            processing_time = end_time - start_time
+            
+            self.logger.info(f"✅ 컬렉션 샘플 조회 성공: {collection_name}")
+            self.logger.info(f"📊 샘플 데이터 - 요청: {sample_size}, 실제: {len(sample_data)}")
+            self.logger.info(f"⏱️ 처리 시간: {processing_time:.3f}초")
             
             return {
                 "collection_name": collection_name,
                 "sample_size": len(sample_data),
                 "entities": sample_data
             }
+            
         except Exception as e:
-            self.logger.error(f"컬렉션 샘플 조회 중 오류: {e}")
+            end_time = time.time()
+            processing_time = end_time - start_time
+            
+            self.logger.error(f"❌ 컬렉션 샘플 조회 실패: {collection_name}")
+            self.logger.error(f"🚨 오류 내용: {str(e)}")
+            self.logger.error(f"🚨 오류 타입: {type(e).__name__}")
+            self.logger.error(f"⏱️ 처리 시간: {processing_time:.3f}초")
+            
             return {"error": str(e)}
     
     def search_in_collection(self, collection_name, query, field="text", limit=20):
         """컬렉션에서 키워드 검색을 수행합니다."""
+        self.logger.info(f"🔍 컬렉션 검색 시작: {collection_name}, 쿼리: '{query}', 필드: {field}, 제한: {limit}")
+        start_time = time.time()
+        
         try:
             from pymilvus import Collection
+            self.logger.info(f"📚 Milvus Collection 객체 생성: {collection_name}")
             collection = Collection(collection_name)
-            collection.load()
             
-            # 간단한 키워드 검색 (실제로는 더 정교한 검색 로직 필요)
+            self.logger.info(f"📥 컬렉션 로드 시작: {collection_name}")
+            collection.load()
+            self.logger.info(f"✅ 컬렉션 로드 완료: {collection_name}")
+            
+            # 키워드 검색 수행
+            search_expr = f'{field} like "%{query}%"'
+            self.logger.info(f"🔍 검색 표현식: {search_expr}")
+            
+            self.logger.info(f"🔍 검색 실행 시작: {collection_name}")
             search_results = collection.query(
-                expr=f'{field} like "%{query}%"',
+                expr=search_expr,
                 output_fields=["*"],
                 limit=limit
             )
+            self.logger.info(f"✅ 검색 실행 완료: {collection_name}")
+            
+            end_time = time.time()
+            processing_time = end_time - start_time
+            
+            self.logger.info(f"✅ 컬렉션 검색 성공: {collection_name}")
+            self.logger.info(f"📊 검색 결과 - 쿼리: '{query}', 결과 수: {len(search_results)}")
+            self.logger.info(f"⏱️ 처리 시간: {processing_time:.3f}초")
             
             return {
                 "collection_name": collection_name,
@@ -331,24 +412,43 @@ class HierarchicalProcessor(InteractManager):
                 "total_count": len(search_results),
                 "entities": search_results
             }
+            
         except Exception as e:
-            self.logger.error(f"컬렉션 검색 중 오류: {e}")
+            end_time = time.time()
+            processing_time = end_time - start_time
+            
+            self.logger.error(f"❌ 컬렉션 검색 실패: {collection_name}")
+            self.logger.error(f"🚨 오류 내용: {str(e)}")
+            self.logger.error(f"🚨 오류 타입: {type(e).__name__}")
+            self.logger.error(f"⏱️ 처리 시간: {processing_time:.3f}초")
+            
             return {"error": str(e)}
     
     def get_collection_data(self, collection_name, limit=100, offset=0, include_embeddings=False):
         """컬렉션의 데이터를 조회합니다."""
+        self.logger.info(f"🔍 컬렉션 데이터 조회 시작: {collection_name}, 제한: {limit}, 오프셋: {offset}, 임베딩 포함: {include_embeddings}")
+        start_time = time.time()
+        
         try:
             from pymilvus import Collection
+            self.logger.info(f"📚 Milvus Collection 객체 생성: {collection_name}")
             collection = Collection(collection_name)
-            collection.load()
             
-            # 출력 필드 설정 (임베딩 제외)
+            self.logger.info(f"📥 컬렉션 로드 시작: {collection_name}")
+            collection.load()
+            self.logger.info(f"✅ 컬렉션 로드 완료: {collection_name}")
+            
+            # 출력 필드 설정
             output_fields = ["passage_uid", "doc_id", "raw_doc_id", "passage_id", "domain", 
                            "title", "author", "text", "info", "tags", "chapter_number", 
                            "article_number", "paragraph_number", "item_number", "is_omission"]
             
             if include_embeddings:
                 output_fields.append("text_emb")
+                self.logger.info(f"📊 임베딩 필드 포함: text_emb")
+            
+            self.logger.info(f"📋 출력 필드 설정 완료: {len(output_fields)}개 필드")
+            self.logger.info(f"🔍 데이터 조회 시작: {collection_name}")
             
             # 데이터 조회
             data = collection.query(
@@ -357,6 +457,14 @@ class HierarchicalProcessor(InteractManager):
                 limit=limit,
                 offset=offset
             )
+            self.logger.info(f"✅ 데이터 조회 완료: {collection_name}")
+            
+            end_time = time.time()
+            processing_time = end_time - start_time
+            
+            self.logger.info(f"✅ 컬렉션 데이터 조회 성공: {collection_name}")
+            self.logger.info(f"📊 데이터 정보 - 전체: {collection.num_entities}, 반환: {len(data)}")
+            self.logger.info(f"⏱️ 처리 시간: {processing_time:.3f}초")
             
             return {
                 "collection_name": collection_name,
@@ -365,8 +473,16 @@ class HierarchicalProcessor(InteractManager):
                 "offset": offset,
                 "entities": data
             }
+            
         except Exception as e:
-            self.logger.error(f"컬렉션 데이터 조회 중 오류: {e}")
+            end_time = time.time()
+            processing_time = end_time - start_time
+            
+            self.logger.error(f"❌ 컬렉션 데이터 조회 실패: {collection_name}")
+            self.logger.error(f"🚨 오류 내용: {str(e)}")
+            self.logger.error(f"🚨 오류 타입: {type(e).__name__}")
+            self.logger.error(f"⏱️ 처리 시간: {processing_time:.3f}초")
+            
             return {"error": str(e)}
     
     def delete_node(self, node_id, collection_name):

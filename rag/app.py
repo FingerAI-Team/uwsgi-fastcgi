@@ -62,6 +62,26 @@ timing_handler.setFormatter(timing_formatter)
 timing_logger.addHandler(timing_handler)
 timing_logger.propagate = False  # 다른 로거로 전파 방지
 
+# API 요청/응답 로깅 전용 로거 설정
+api_logger = logging.getLogger('api-requests')
+api_logger.setLevel(logging.INFO)
+api_logger.handlers = []  # 기존 핸들러 제거
+api_handler = logging.FileHandler(os.path.join(log_dir, 'api-requests.log'))
+api_formatter = logging.Formatter('%(asctime)s - %(message)s')
+api_handler.setFormatter(api_formatter)
+api_logger.addHandler(api_handler)
+api_logger.propagate = False  # 다른 로거로 전파 방지
+
+# 위계형 시스템 로깅 전용 로거 설정
+hierarchical_logger = logging.getLogger('hierarchical')
+hierarchical_logger.setLevel(logging.INFO)
+hierarchical_logger.handlers = []  # 기존 핸들러 제거
+hierarchical_handler = logging.FileHandler(os.path.join(log_dir, 'hierarchical.log'))
+hierarchical_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+hierarchical_handler.setFormatter(hierarchical_formatter)
+hierarchical_logger.addHandler(hierarchical_handler)
+hierarchical_logger.propagate = False  # 다른 로거로 전파 방지
+
 app = Flask(__name__)
 app.config['JSON_AS_ASCII'] = False
 
@@ -107,16 +127,21 @@ def get_or_init_hierarchical_processor():
     global hierarchical_processor
     if hierarchical_processor is None:
         try:
+            logger.info("🔧 위계형 프로세서 초기화 시작...")
             hierarchical_processor = HierarchicalProcessor(
                 data_p=env_manager.data_p,
                 vectorenv=milvus_db,
                 vectordb=milvus_data,
                 emb_model=emb_model
             )
-            logger.info("위계형 프로세서 초기화 완료")
+            logger.info("✅ 위계형 프로세서 초기화 완료")
         except Exception as e:
-            logger.error(f"위계형 프로세서 초기화 실패: {e}")
+            logger.error(f"❌ 위계형 프로세서 초기화 실패: {e}")
+            logger.error(f"🚨 오류 타입: {type(e).__name__}")
+            logger.error(f"🚨 스택 트레이스: {traceback.format_exc()}")
             raise
+    else:
+        logger.debug("📋 기존 위계형 프로세서 인스턴스 사용")
     return hierarchical_processor
 
 # 자주 사용하는 컬렉션을 미리 로드하는 함수
@@ -3454,60 +3479,126 @@ def legal_collections():
 @app.route('/rag/legal/collections/<collection_name>/info', methods=['GET'])
 def legal_collection_info(collection_name):
     """특정 위계형 법령 컬렉션 정보 조회"""
+    request_id = f"legal_info_{int(time.time() * 1000)}"
+    start_time = time.time()
+    
+    logger.info(f"[{request_id}] === LEGAL COLLECTION INFO API START ===")
+    logger.info(f"[{request_id}] 요청 컬렉션: {collection_name}")
+    logger.info(f"[{request_id}] 요청 시간: {datetime.now().isoformat()}")
+    
     try:
         # 위계형 프로세서 사용
+        logger.info(f"[{request_id}] 위계형 프로세서 초기화 시도...")
         processor = get_or_init_hierarchical_processor()
         if not processor:
+            logger.error(f"[{request_id}] 위계형 프로세서 초기화 실패")
             return jsonify({
                 "result_code": "F000001",
                 "message": "위계형 프로세서가 초기화되지 않았습니다.",
                 "data": None
             }), 500
         
+        logger.info(f"[{request_id}] 위계형 프로세서 초기화 성공")
+        
         # 기존 InteractManager의 컬렉션 정보 조회 기능 사용
+        logger.info(f"[{request_id}] 컬렉션 정보 조회 시작: {collection_name}")
         info = processor.get_collection_info(collection_name)
+        logger.info(f"[{request_id}] 컬렉션 정보 조회 완료: {collection_name}")
+        
+        # 응답 데이터 로깅
+        if "error" in info:
+            logger.error(f"[{request_id}] 컬렉션 정보 조회 중 오류 발생: {info['error']}")
+        else:
+            logger.info(f"[{request_id}] 컬렉션 정보 조회 성공 - 엔티티 수: {info.get('num_entities', 'N/A')}")
+        
+        end_time = time.time()
+        processing_time = end_time - start_time
+        
+        logger.info(f"[{request_id}] === LEGAL COLLECTION INFO API SUCCESS ===")
+        logger.info(f"[{request_id}] 처리 시간: {processing_time:.3f}초")
         
         return jsonify({
             "result_code": "S000000",
             "message": "컬렉션 정보 조회가 성공적으로 완료되었습니다.",
             "data": info,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "request_id": request_id,
+            "processing_time": f"{processing_time:.3f}초"
         })
         
     except Exception as e:
-        logger.error(f"위계형 컬렉션 정보 조회 오류: {e}")
+        end_time = time.time()
+        processing_time = end_time - start_time
+        
+        logger.error(f"[{request_id}] === LEGAL COLLECTION INFO API ERROR ===")
+        logger.error(f"[{request_id}] 오류 발생: {str(e)}")
+        logger.error(f"[{request_id}] 오류 타입: {type(e).__name__}")
+        logger.error(f"[{request_id}] 처리 시간: {processing_time:.3f}초")
+        logger.error(f"[{request_id}] 스택 트레이스: {traceback.format_exc()}")
+        
         return jsonify({
             "result_code": "F000999",
             "message": f"컬렉션 정보 조회 중 오류가 발생했습니다: {str(e)}",
-            "data": None
+            "data": None,
+            "request_id": request_id,
+            "processing_time": f"{processing_time:.3f}초"
         }), 500
 
 
 @app.route('/rag/legal/collections/<collection_name>/data', methods=['GET'])
 def legal_collection_data(collection_name):
     """특정 위계형 법령 컬렉션의 모든 데이터 조회"""
+    request_id = f"legal_data_{int(time.time() * 1000)}"
+    start_time = time.time()
+    
+    logger.info(f"[{request_id}] === LEGAL COLLECTION DATA API START ===")
+    logger.info(f"[{request_id}] 요청 컬렉션: {collection_name}")
+    logger.info(f"[{request_id}] 요청 시간: {datetime.now().isoformat()}")
+    
     try:
         # 위계형 프로세서 사용
+        logger.info(f"[{request_id}] 위계형 프로세서 초기화 시도...")
         processor = get_or_init_hierarchical_processor()
         if not processor:
+            logger.error(f"[{request_id}] 위계형 프로세서 초기화 실패")
             return jsonify({
                 "result_code": "F000001",
                 "message": "위계형 프로세서가 초기화되지 않았습니다.",
                 "data": None
             }), 500
         
+        logger.info(f"[{request_id}] 위계형 프로세서 초기화 성공")
+        
         # 쿼리 파라미터
         limit = request.args.get('limit', 100, type=int)
         offset = request.args.get('offset', 0, type=int)
         include_embeddings = request.args.get('include_embeddings', 'false').lower() == 'true'
         
+        logger.info(f"[{request_id}] 쿼리 파라미터 - limit: {limit}, offset: {offset}, include_embeddings: {include_embeddings}")
+        
         # 데이터 조회 (기존 InteractManager 기능 사용)
+        logger.info(f"[{request_id}] 컬렉션 데이터 조회 시작: {collection_name}")
         data = processor.get_collection_data(
             collection_name=collection_name,
             limit=limit,
             offset=offset,
             include_embeddings=include_embeddings
         )
+        logger.info(f"[{request_id}] 컬렉션 데이터 조회 완료: {collection_name}")
+        
+        # 응답 데이터 로깅
+        if "error" in data:
+            logger.error(f"[{request_id}] 컬렉션 데이터 조회 중 오류 발생: {data['error']}")
+        else:
+            total_count = data.get("total_count", 0)
+            returned_count = len(data.get("entities", []))
+            logger.info(f"[{request_id}] 컬렉션 데이터 조회 성공 - 전체: {total_count}, 반환: {returned_count}")
+        
+        end_time = time.time()
+        processing_time = end_time - start_time
+        
+        logger.info(f"[{request_id}] === LEGAL COLLECTION DATA API SUCCESS ===")
+        logger.info(f"[{request_id}] 처리 시간: {processing_time:.3f}초")
         
         return jsonify({
             "result_code": "S000000",
@@ -3520,15 +3611,27 @@ def legal_collection_data(collection_name):
                 "offset": offset,
                 "entities": data.get("entities", [])
             },
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "request_id": request_id,
+            "processing_time": f"{processing_time:.3f}초"
         })
         
     except Exception as e:
-        logger.error(f"위계형 컬렉션 데이터 조회 오류: {e}")
+        end_time = time.time()
+        processing_time = end_time - start_time
+        
+        logger.error(f"[{request_id}] === LEGAL COLLECTION DATA API ERROR ===")
+        logger.error(f"[{request_id}] 오류 발생: {str(e)}")
+        logger.error(f"[{request_id}] 오류 타입: {type(e).__name__}")
+        logger.error(f"[{request_id}] 처리 시간: {processing_time:.3f}초")
+        logger.error(f"[{request_id}] 스택 트레이스: {traceback.format_exc()}")
+        
         return jsonify({
             "result_code": "F000999",
             "message": f"컬렉션 데이터 조회 중 오류가 발생했습니다: {str(e)}",
-            "data": None
+            "data": None,
+            "request_id": request_id,
+            "processing_time": f"{processing_time:.3f}초"
         }), 500
 
 
