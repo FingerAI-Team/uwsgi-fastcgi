@@ -52,6 +52,14 @@ file_handler.setFormatter(file_formatter)
 logger.addHandler(file_handler)
 logger.propagate = False  # 루트 로거로 전파 방지
 
+# 루트 로거에 핸들러 추가 (uwsgi.log에도 출력되도록)
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+root_handler = logging.FileHandler(os.path.join(log_dir, 'uwsgi.log'))
+root_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+root_handler.setFormatter(root_formatter)
+root_logger.addHandler(root_handler)
+
 # 시간 로깅 전용 로거 설정
 timing_logger = logging.getLogger('timing')
 timing_logger.setLevel(logging.INFO)
@@ -80,7 +88,7 @@ hierarchical_handler = logging.FileHandler(os.path.join(log_dir, 'hierarchical.l
 hierarchical_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 hierarchical_handler.setFormatter(hierarchical_formatter)
 hierarchical_logger.addHandler(hierarchical_handler)
-hierarchical_logger.propagate = False  # 다른 로거로 전파 방지
+hierarchical_logger.propagate = True  # 다른 로거로 전파 허용
 
 app = Flask(__name__)
 app.config['JSON_AS_ASCII'] = False

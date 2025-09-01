@@ -18,7 +18,7 @@ class HierarchicalProcessor(InteractManager):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger('hierarchical')
         
         # 조항 패턴 정의 (장 포함 + 생략 패턴)
         self.article_patterns = {
