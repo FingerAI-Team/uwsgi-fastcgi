@@ -265,12 +265,10 @@ class HierarchicalProcessor(InteractManager):
         start_time = time.time()
         
         try:
-            from pymilvus import Collection
-            self.logger.info(f"📚 Milvus Collection 객체 생성: {collection_name}")
-            collection = Collection(collection_name)
+            # InteractManager의 검증된 get_collection 사용
+            self.logger.info(f"📚 InteractManager get_collection 사용: {collection_name}")
+            collection = self.get_collection(collection_name)
             
-            self.logger.info(f"📥 컬렉션 로드 시작: {collection_name}")
-            collection.load()
             self.logger.info(f"✅ 컬렉션 로드 완료: {collection_name}")
             
             # 스키마 정보 수집
@@ -331,12 +329,10 @@ class HierarchicalProcessor(InteractManager):
         start_time = time.time()
         
         try:
-            from pymilvus import Collection
-            self.logger.info(f"📚 Milvus Collection 객체 생성: {collection_name}")
-            collection = Collection(collection_name)
+            # InteractManager의 검증된 get_collection 사용
+            self.logger.info(f"📚 InteractManager get_collection 사용: {collection_name}")
+            collection = self.get_collection(collection_name)
             
-            self.logger.info(f"📥 컬렉션 로드 시작: {collection_name}")
-            collection.load()
             self.logger.info(f"✅ 컬렉션 로드 완료: {collection_name}")
             
             # 샘플 데이터 조회
@@ -378,12 +374,10 @@ class HierarchicalProcessor(InteractManager):
         start_time = time.time()
         
         try:
-            from pymilvus import Collection
-            self.logger.info(f"📚 Milvus Collection 객체 생성: {collection_name}")
-            collection = Collection(collection_name)
+            # InteractManager의 검증된 get_collection 사용
+            self.logger.info(f"📚 InteractManager get_collection 사용: {collection_name}")
+            collection = self.get_collection(collection_name)
             
-            self.logger.info(f"📥 컬렉션 로드 시작: {collection_name}")
-            collection.load()
             self.logger.info(f"✅ 컬렉션 로드 완료: {collection_name}")
             
             # 키워드 검색 수행
@@ -430,12 +424,10 @@ class HierarchicalProcessor(InteractManager):
         start_time = time.time()
         
         try:
-            from pymilvus import Collection
-            self.logger.info(f"📚 Milvus Collection 객체 생성: {collection_name}")
-            collection = Collection(collection_name)
+            # InteractManager의 검증된 get_collection 사용
+            self.logger.info(f"📚 InteractManager get_collection 사용: {collection_name}")
+            collection = self.get_collection(collection_name)
             
-            self.logger.info(f"📥 컬렉션 로드 시작: {collection_name}")
-            collection.load()
             self.logger.info(f"✅ 컬렉션 로드 완료: {collection_name}")
             
             # 출력 필드 설정
@@ -488,9 +480,8 @@ class HierarchicalProcessor(InteractManager):
     def delete_node(self, node_id, collection_name):
         """특정 노드(passage)를 삭제합니다."""
         try:
-            from pymilvus import Collection
-            collection = Collection(collection_name)
-            collection.load()
+            # InteractManager의 검증된 get_collection 사용
+            collection = self.get_collection(collection_name)
             
             # 노드 삭제
             collection.delete(f'passage_uid == "{node_id}"')
