@@ -96,7 +96,13 @@ class HierarchicalSchema:
                     description="태그 정보"
                 ),
                 
-                # === 위계형 필드 3개만 추가 ===
+                # === 위계형 필드 4개 추가 (장 포함) ===
+                FieldSchema(
+                    name="chapter_number", 
+                    dtype=DataType.VARCHAR, 
+                    max_length=32,
+                    description="장 번호 (제1장, 제2장 등)"
+                ),
                 FieldSchema(
                     name="article_number", 
                     dtype=DataType.VARCHAR, 
@@ -114,6 +120,11 @@ class HierarchicalSchema:
                     dtype=DataType.VARCHAR, 
                     max_length=32,
                     description="호 번호 (1., 2., 3. 등)"
+                ),
+                FieldSchema(
+                    name="is_omission", 
+                    dtype=DataType.BOOL,
+                    description="생략 여부 (true/false)"
                 ),
             ]
             

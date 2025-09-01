@@ -18,19 +18,21 @@ class HierarchicalProcessor(InteractManager):
         super().__init__(*args, **kwargs)
         self.logger = logging.getLogger(__name__)
         
-        # 조항 패턴 정의
+        # 조항 패턴 정의 (장 포함 + 생략 패턴)
         self.article_patterns = {
+            "chapter": r"제(\d+)장",      # 제1장, 제2장 등
             "main_article": r"제(\d+)조",
             "sub_article": r"제(\d+)조의(\d+)",
             "paragraph": r"(\d+)\.",  # 1., 2., 3. 등
             "item": r"(\d+)\)",       # 1), 2), 3) 등
+            "omission": r"(?:제\d+조부터\s+제\d+조까지는\s+생략한다?|이하\s+생략|생략한다?|\.\.\.)",  # 생략 패턴
         }
         
         self.logger.info("✅ 위계형 프로세서 초기화 완료")
     
     def chunk_by_articles(self, text: str) -> List[Tuple[str, Dict[str, Any]]]:
         """
-        조항 단위로 텍스트를 청킹합니다.
+        라인 시작 기반 조항 단위 청킹
         
         Args:
             text (str): 청킹할 텍스트
@@ -39,14 +41,16 @@ class HierarchicalProcessor(InteractManager):
             List[Tuple[str, Dict]]: (청크 텍스트, 위계 정보) 튜플의 리스트
         """
         try:
-            self.logger.info(f"🔧 조항 단위 청킹 시작: {len(text)}자")
+            self.logger.info(f"🔧 라인 시작 기반 조항 청킹 시작: {len(text)}자")
             
             chunks = []
             current_chunk = ""
             current_hierarchy = {
+                "chapter_number": "",
                 "article_number": "",
                 "paragraph_number": "",
-                "item_number": ""
+                "item_number": "",
+                "is_omission": False
             }
             
             lines = text.split('\n')
@@ -56,38 +60,60 @@ class HierarchicalProcessor(InteractManager):
                 if not line:
                     continue
                 
-                # 조문 패턴 확인
-                article_match = re.search(self.article_patterns["main_article"], line)
-                sub_article_match = re.search(self.article_patterns["sub_article"], line)
-                
-                if article_match or sub_article_match:
+                # 생략 패턴 확인 (가장 먼저 체크)
+                omission_match = re.search(self.article_patterns["omission"], line)
+                if omission_match:
                     # 이전 청크가 있으면 저장
                     if current_chunk.strip():
                         chunks.append((current_chunk.strip(), current_hierarchy.copy()))
                     
-                    # 새 조문 시작
-                    if sub_article_match:
-                        current_hierarchy["article_number"] = f"제{sub_article_match.group(1)}조의{sub_article_match.group(2)}"
-                    else:
+                    # 생략 청크 생성
+                    omission_hierarchy = current_hierarchy.copy()
+                    omission_hierarchy["is_omission"] = True
+                    chunks.append((line.strip(), omission_hierarchy))
+                    
+                    # 현재 위계 정보 초기화
+                    current_hierarchy["article_number"] = ""
+                    current_hierarchy["paragraph_number"] = ""
+                    current_hierarchy["item_number"] = ""
+                    current_hierarchy["is_omission"] = False
+                    current_chunk = ""
+                    continue
+                
+                # 장 패턴 확인 (라인 시작)
+                if re.match(r"^제\d+장", line):
+                    # 새 장 시작 - 이전 청크 저장
+                    if current_chunk.strip():
+                        chunks.append((current_chunk.strip(), current_hierarchy.copy()))
+                    
+                    chapter_match = re.search(r"제(\d+)장", line)
+                    current_hierarchy["chapter_number"] = f"제{chapter_match.group(1)}장"
+                    current_hierarchy["article_number"] = ""
+                    current_hierarchy["paragraph_number"] = ""
+                    current_hierarchy["item_number"] = ""
+                    current_hierarchy["is_omission"] = False
+                    current_chunk = line
+                    continue
+                
+                # 조문 패턴 확인 (라인 시작)
+                if re.match(r"^제\d+조", line):
+                    # 새 조문 시작 - 이전 청크 저장
+                    if current_chunk.strip():
+                        chunks.append((current_chunk.strip(), current_hierarchy.copy()))
+                    
+                    # 현재 조문 번호 추출 (참조 제외)
+                    article_match = re.search(r"제(\d+)조(?:의(\d+))?", line)
+                    if article_match:
                         current_hierarchy["article_number"] = f"제{article_match.group(1)}조"
+                        if article_match.group(2):
+                            current_hierarchy["article_number"] += f"의{article_match.group(2)}"
                     
                     current_hierarchy["paragraph_number"] = ""
                     current_hierarchy["item_number"] = ""
                     current_chunk = line
                     
                 else:
-                    # 항 패턴 확인
-                    paragraph_match = re.search(self.article_patterns["paragraph"], line)
-                    if paragraph_match:
-                        current_hierarchy["paragraph_number"] = f"{paragraph_match.group(1)}."
-                        current_hierarchy["item_number"] = ""
-                    
-                    # 호 패턴 확인
-                    item_match = re.search(self.article_patterns["item"], line)
-                    if item_match:
-                        current_hierarchy["item_number"] = f"{item_match.group(1)})"
-                    
-                    # 현재 줄을 청크에 추가
+                    # 조문 내용 추가
                     if current_chunk:
                         current_chunk += "\n" + line
                     else:
@@ -97,7 +123,7 @@ class HierarchicalProcessor(InteractManager):
             if current_chunk.strip():
                 chunks.append((current_chunk.strip(), current_hierarchy.copy()))
             
-            self.logger.info(f"✅ 조항 단위 청킹 완료: {len(chunks)}개 청크")
+            self.logger.info(f"✅ 라인 시작 기반 조항 청킹 완료: {len(chunks)}개 청크")
             return chunks
             
         except Exception as e:
@@ -111,13 +137,15 @@ class HierarchicalProcessor(InteractManager):
             # 기존 data_p의 chunk_text 사용
             chunked_texts = self.data_p.chunk_text(text)
             
-            # 위계 정보 없이 반환
+            # 위계 정보 없이 반환 (장 필드 포함)
             chunks = []
             for chunk in chunked_texts:
                 chunks.append((chunk, {
+                    "chapter_number": "",
                     "article_number": "",
                     "paragraph_number": "",
-                    "item_number": ""
+                    "item_number": "",
+                    "is_omission": False
                 }))
             
             self.logger.info(f"폴백 청킹 완료: {len(chunks)}개 청크")
@@ -126,9 +154,11 @@ class HierarchicalProcessor(InteractManager):
         except Exception as e:
             self.logger.error(f"폴백 청킹 중 오류: {e}")
             return [(text, {
+                "chapter_number": "",
                 "article_number": "",
                 "paragraph_number": "",
-                "item_number": ""
+                "item_number": "",
+                "is_omission": False
             })]
     
     def insert_hierarchical_data(self, domain, doc_id, title, author, text, info, tags, ignore=True):
@@ -274,10 +304,12 @@ class HierarchicalProcessor(InteractManager):
                             "info": info, 
                             "tags": tags,
                             
-                            # === 위계형 필드 추가 ===
-                            "article_number": hierarchy.get("article_number", ""),
-                            "paragraph_number": hierarchy.get("paragraph_number", ""),
-                            "item_number": hierarchy.get("item_number", "")
+                                                         # === 위계형 필드 추가 ===
+                             "chapter_number": hierarchy.get("chapter_number", ""),
+                             "article_number": hierarchy.get("article_number", ""),
+                             "paragraph_number": hierarchy.get("paragraph_number", ""),
+                             "item_number": hierarchy.get("item_number", ""),
+                             "is_omission": hierarchy.get("is_omission", False)
                         }
                     ]        
                     

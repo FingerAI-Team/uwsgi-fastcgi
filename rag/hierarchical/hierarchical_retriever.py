@@ -21,8 +21,9 @@ class HierarchicalRetriever:
         self.interact_manager = existing_interact_manager
         self.logger = logging.getLogger(__name__)
         
-        # 법령 패턴 (간단한 버전)
+        # 법령 패턴 (장 포함)
         self.legal_patterns = {
+            "chapter_ref": r"제(\d+)장",
             "article_ref": r"제(\d+)조(?:의(\d+))?",
             "paragraph_ref": r"제(\d+)항",
             "item_ref": r"제(\d+)호",
@@ -84,10 +85,19 @@ class HierarchicalRetriever:
             analysis = {
                 "original_query": query,
                 "has_legal_references": False,
+                "chapter_references": [],
                 "article_references": [],
                 "paragraph_references": [],
                 "item_references": [],
             }
+            
+            # 장 참조 추출
+            chapter_matches = re.finditer(self.legal_patterns["chapter_ref"], query)
+            for match in chapter_matches:
+                chapter_num = match.group(1)
+                ref = f"제{chapter_num}장"
+                analysis["chapter_references"].append(ref)
+                analysis["has_legal_references"] = True
             
             # 조문 참조 추출
             article_matches = re.finditer(self.legal_patterns["article_ref"], query)
@@ -130,6 +140,21 @@ class HierarchicalRetriever:
             results = []
             collection = Collection(collection_name)
             collection.load()
+            
+            # 장 참조 검색
+            for chapter_ref in analysis["chapter_references"]:
+                expr = f'chapter_number == "{chapter_ref}"'
+                search_params = {
+                    "data": [[0.0] * 1024],
+                    "anns_field": "text_emb",
+                    "param": {"metric_type": "COSINE", "params": {"nprobe": 16}},
+                    "limit": params.get("top_k", 10),
+                    "expr": expr,
+                    "output_fields": ["*"]
+                }
+                
+                search_results = collection.search(**search_params)
+                results.extend(self._format_results(search_results))
             
             # 조문 참조 검색
             for article_ref in analysis["article_references"]:
@@ -236,9 +261,15 @@ class HierarchicalRetriever:
                                 result[attr] = hit.entity[attr]
                     
                     # === 위계형 조문 정보 추출 ===
+                    chapter_number = None
                     article_number = None
                     paragraph_number = None
                     item_number = None
+                    
+                    if hasattr(hit, 'chapter_number'):
+                        chapter_number = getattr(hit, 'chapter_number')
+                    elif hasattr(hit, 'entity') and isinstance(hit.entity, dict):
+                        chapter_number = hit.entity.get('chapter_number')
                     
                     if hasattr(hit, 'article_number'):
                         article_number = getattr(hit, 'article_number')
@@ -257,13 +288,15 @@ class HierarchicalRetriever:
                     
                     # 위계형 정보 구성
                     result["hierarchical_info"] = {
+                        "chapter_number": chapter_number or "",
                         "article_number": article_number or "",
                         "paragraph_number": paragraph_number or "",
                         "item_number": item_number or "",
-                        "full_reference": self._build_legal_reference(article_number, paragraph_number, item_number)
+                        "full_reference": self._build_legal_reference(chapter_number, article_number, paragraph_number, item_number)
                     }
                     
                     # 기존 필드와의 호환성을 위해 개별 필드도 유지
+                    result["chapter_number"] = chapter_number or ""
                     result["article_number"] = article_number or ""
                     result["paragraph_number"] = paragraph_number or ""
                     result["item_number"] = item_number or ""
@@ -276,10 +309,12 @@ class HierarchicalRetriever:
             self.logger.error(f"결과 포맷팅 중 오류: {e}")
             return []
     
-    def _build_legal_reference(self, article_number: str, paragraph_number: str, item_number: str) -> str:
+    def _build_legal_reference(self, chapter_number: str, article_number: str, paragraph_number: str, item_number: str) -> str:
         """법령 참조 문자열 구성"""
         reference_parts = []
         
+        if chapter_number:
+            reference_parts.append(chapter_number)
         if article_number:
             reference_parts.append(article_number)
         if paragraph_number:
