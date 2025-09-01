@@ -480,10 +480,30 @@ class HierarchicalProcessor(InteractManager):
             print(f"[DEBUG] Number of hierarchical chunks: {len(chunked_data)}")
             
             # info와 tags가 문자열인 경우 파싱 (기존과 동일)
+            print(f"[DEBUG] Original info type: {type(info)}, value: {info}")
+            print(f"[DEBUG] Original tags type: {type(tags)}, value: {tags}")
+            
             if isinstance(info, str):
-                info = json.loads(info)
+                try:
+                    info = json.loads(info)
+                    print(f"[DEBUG] Parsed info: {info}")
+                except json.JSONDecodeError as e:
+                    print(f"[ERROR] Failed to parse info JSON: {e}")
+                    info = {}
+            elif info is None:
+                print(f"[DEBUG] Info is None, setting to empty dict")
+                info = {}
+                
             if isinstance(tags, str):
-                tags = json.loads(tags)
+                try:
+                    tags = json.loads(tags)
+                    print(f"[DEBUG] Parsed tags: {tags}")
+                except json.JSONDecodeError as e:
+                    print(f"[ERROR] Failed to parse tags JSON: {e}")
+                    tags = {}
+            elif tags is None:
+                print(f"[DEBUG] Tags is None, setting to empty dict")
+                tags = {}
             
             # 청크 처리를 위한 병렬 처리 함수 (위계형 버전)
             def process_hierarchical_chunk(chunk_data):
@@ -517,28 +537,31 @@ class HierarchicalProcessor(InteractManager):
                         raise ValueError(f"Empty embedding generated for chunk {i+1}")
                     
                     # === 위계형 데이터 구조 (위계 필드 추가) ===
-                    data = [
-                        {
-                            "passage_uid": passage_uid,
-                            "doc_id": hashed_doc_id, 
-                            "raw_doc_id": raw_doc_id,
-                            "passage_id": passage_id, 
-                            "domain": domain, 
-                            "title": title, 
-                            "author": author,
-                            "text": chunk_text, 
-                            "text_emb": chunk_emb, 
-                            "info": info, 
-                            "tags": tags,
-                            
-                                                         # === 위계형 필드 추가 ===
-                             "chapter_number": hierarchy.get("chapter_number", ""),
-                             "article_number": hierarchy.get("article_number", ""),
-                             "paragraph_number": hierarchy.get("paragraph_number", ""),
-                             "item_number": hierarchy.get("item_number", ""),
-                             "is_omission": hierarchy.get("is_omission", False)
-                        }
-                    ]        
+                    data_item = {
+                        "passage_uid": passage_uid,
+                        "doc_id": hashed_doc_id, 
+                        "raw_doc_id": raw_doc_id,
+                        "passage_id": passage_id, 
+                        "domain": domain, 
+                        "title": title, 
+                        "author": author,
+                        "text": chunk_text, 
+                        "text_emb": chunk_emb, 
+                        "info": info, 
+                        "tags": tags,
+                        
+                        # === 위계형 필드 추가 ===
+                        "chapter_number": hierarchy.get("chapter_number", ""),
+                        "article_number": hierarchy.get("article_number", ""),
+                        "paragraph_number": hierarchy.get("paragraph_number", ""),
+                        "item_number": hierarchy.get("item_number", ""),
+                        "is_omission": hierarchy.get("is_omission", False)
+                    }
+                    
+                    print(f"[DEBUG] Data item info field: {data_item['info']} (type: {type(data_item['info'])})")
+                    print(f"[DEBUG] Data item tags field: {data_item['tags']} (type: {type(data_item['tags'])})")
+                    
+                    data = [data_item]        
                     
                     # DB 삽입 시작 (배치 처리 사용 - 기존과 동일)
                     db_insert_start = time.time()
@@ -548,6 +571,8 @@ class HierarchicalProcessor(InteractManager):
                     try:
                         # 배치에 추가하고 필요시 삽입
                         data_item = data[0]
+                        print(f"[DEBUG] About to call _add_to_batch_and_insert with data_item keys: {list(data_item.keys())}")
+                        print(f"[DEBUG] Data item sample: passage_uid={data_item.get('passage_uid')}, title={data_item.get('title')}")
                         batch_inserted = self._add_to_batch_and_insert(data_item, domain)
                         
                         db_insert_end = time.time()
