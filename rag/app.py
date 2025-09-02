@@ -504,7 +504,7 @@ def search_data():
         # 응답 포맷팅 시작
         format_start = time.time()
         
-        # === 새로운 위계형 필드들 완전 포함 ===
+        # === 위계형 필드 동적 추가 ===
         cleaned_results = []
         for result in final_results:
             cleaned_result = {
@@ -519,26 +519,24 @@ def search_data():
                 "text": result.get('text'),
                 "info": result.get('info'),
                 "tags": result.get('tags'),
-                "score": result.get('score'),
-                
-                # === 새로운 위계형 필드들 완전 포함 ===
-                "chapter_number": result.get('chapter_number', ""),
-                "chapter_title": result.get('chapter_title', ""),
-                "section_number": result.get('section_number', ""),
-                "section_title": result.get('section_title', ""),
-                "division_number": result.get('division_number', ""),
-                "division_title": result.get('division_title', ""),
-                "article_number": result.get('article_number', ""),
-                "article_title": result.get('article_title', ""),
-                "paragraph_number": result.get('paragraph_number', ""),
-                "subparagraph_number": result.get('subparagraph_number', ""),
-                "item_number": result.get('item_number', ""),
-                "is_omission": result.get('is_omission', False),
-                "is_deletion": result.get('is_deletion', False),
-                "is_amendment": result.get('is_amendment', False),
-                "is_appendix": result.get('is_appendix', False),
-                "is_attachment": result.get('is_attachment', False),
+                "score": result.get('score')
             }
+            
+            # === 위계형 필드가 있는 경우 동적으로 추가 ===
+            hierarchical_fields = [
+                "chapter_number", "chapter_title", 
+                "section_number", "section_title",
+                "division_number", "division_title",
+                "article_number", "article_title", 
+                "paragraph_number", "subparagraph_number",
+                "item_number",
+                "is_omission", "is_deletion", "is_amendment", 
+                "is_appendix", "is_attachment"
+            ]
+            
+            for field in hierarchical_fields:
+                if result.get(field) is not None:
+                    cleaned_result[field] = result.get(field)
             
             cleaned_results.append(cleaned_result)
         
