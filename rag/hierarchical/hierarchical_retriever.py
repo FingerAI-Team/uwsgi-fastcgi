@@ -262,46 +262,43 @@ class HierarchicalRetriever:
                             if attr in hit.entity:
                                 result[attr] = hit.entity[attr]
                     
-                    # === 위계형 조문 정보 추출 ===
-                    chapter_number = None
-                    article_number = None
-                    paragraph_number = None
-                    item_number = None
-                    
-                    if hasattr(hit, 'chapter_number'):
-                        chapter_number = getattr(hit, 'chapter_number')
-                    elif hasattr(hit, 'entity') and isinstance(hit.entity, dict):
-                        chapter_number = hit.entity.get('chapter_number')
-                    
-                    if hasattr(hit, 'article_number'):
-                        article_number = getattr(hit, 'article_number')
-                    elif hasattr(hit, 'entity') and isinstance(hit.entity, dict):
-                        article_number = hit.entity.get('article_number')
-                    
-                    if hasattr(hit, 'paragraph_number'):
-                        paragraph_number = getattr(hit, 'paragraph_number')
-                    elif hasattr(hit, 'entity') and isinstance(hit.entity, dict):
-                        paragraph_number = hit.entity.get('paragraph_number')
-                    
-                    if hasattr(hit, 'item_number'):
-                        item_number = getattr(hit, 'item_number')
-                    elif hasattr(hit, 'entity') and isinstance(hit.entity, dict):
-                        item_number = hit.entity.get('item_number')
-                    
-                    # 위계형 정보 구성
-                    result["hierarchical_info"] = {
-                        "chapter_number": chapter_number or "",
-                        "article_number": article_number or "",
-                        "paragraph_number": paragraph_number or "",
-                        "item_number": item_number or "",
-                        "full_reference": self._build_legal_reference(chapter_number, article_number, paragraph_number, item_number)
+                    # === 새로운 위계형 필드들 완전 추출 ===
+                    hierarchical_fields = {
+                        'chapter_number': None, 'chapter_title': None,
+                        'section_number': None, 'section_title': None,
+                        'division_number': None, 'division_title': None,
+                        'article_number': None, 'article_title': None,
+                        'paragraph_number': None, 'subparagraph_number': None,
+                        'item_number': None,
+                        'is_omission': False, 'is_deletion': False,
+                        'is_amendment': False, 'is_appendix': False,
+                        'is_attachment': False
                     }
                     
-                    # 기존 필드와의 호환성을 위해 개별 필드도 유지
-                    result["chapter_number"] = chapter_number or ""
-                    result["article_number"] = article_number or ""
-                    result["paragraph_number"] = paragraph_number or ""
-                    result["item_number"] = item_number or ""
+                    # 모든 위계형 필드 추출
+                    for field in hierarchical_fields.keys():
+                        if hasattr(hit, field):
+                            hierarchical_fields[field] = getattr(hit, field)
+                        elif hasattr(hit, 'entity') and isinstance(hit.entity, dict):
+                            hierarchical_fields[field] = hit.entity.get(field, hierarchical_fields[field])
+                    
+                    # 위계형 정보 구성 (기존 호환성 유지)
+                    result["hierarchical_info"] = {
+                        "chapter_number": hierarchical_fields['chapter_number'] or "",
+                        "article_number": hierarchical_fields['article_number'] or "",
+                        "paragraph_number": hierarchical_fields['paragraph_number'] or "",
+                        "item_number": hierarchical_fields['item_number'] or "",
+                        "full_reference": self._build_legal_reference(
+                            hierarchical_fields['chapter_number'], 
+                            hierarchical_fields['article_number'], 
+                            hierarchical_fields['paragraph_number'], 
+                            hierarchical_fields['item_number']
+                        )
+                    }
+                    
+                    # === 모든 새로운 위계형 필드들을 개별 필드로도 반환 ===
+                    for field, value in hierarchical_fields.items():
+                        result[field] = value
                     
                     formatted_results.append(result)
             
@@ -312,7 +309,7 @@ class HierarchicalRetriever:
             return []
     
     def _build_legal_reference(self, chapter_number: str, article_number: str, paragraph_number: str, item_number: str) -> str:
-        """법령 참조 문자열 구성"""
+        """법령 참조 문자열 구성 (새로운 위계형 필드들 지원)"""
         reference_parts = []
         
         if chapter_number:

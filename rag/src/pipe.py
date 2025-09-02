@@ -801,8 +801,17 @@ class InteractManager:
         collection_load_end = time.time()
         print(f"[TIMING] 컬렉션 로드 완료: {(collection_load_end - collection_load_start):.4f}초")
         
-         # 위계형 필드만 선택적으로 추가
-        hierarchical_fields = ["chapter_number", "article_number", "paragraph_number", "item_number"]
+        # === 새로운 위계형 필드들 완전 포함 ===
+        hierarchical_fields = [
+            "chapter_number", "chapter_title", 
+            "section_number", "section_title",
+            "division_number", "division_title",
+            "article_number", "article_title", 
+            "paragraph_number", "subparagraph_number",
+            "item_number",
+            "is_omission", "is_deletion", "is_amendment", 
+            "is_appendix", "is_attachment"
+        ]
         available_fields = [field.name for field in collection.schema.fields]
         
         for field in hierarchical_fields:

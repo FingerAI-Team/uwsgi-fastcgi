@@ -56,103 +56,279 @@ class HierarchicalProcessor(InteractManager):
     
     def chunk_by_articles(self, text: str) -> List[Tuple[str, Dict[str, Any]]]:
         """
-        라인 시작 기반 조항 단위 청킹
-        
-        Args:
-            text (str): 청킹할 텍스트
-            
-        Returns:
-            List[Tuple[str, Dict]]: (청크 텍스트, 위계 정보) 튜플의 리스트
+        라인 시작 기반 위계형 청킹 (장/절/관/조/항/호/목 단위)
+        - 조: 제10조, 제10조의2, (제목) 지원
+        - 항: ①, (1), 1. 지원  
+        - 호: 1), (1), 가), (가), 가. 지원
+        - 목: 가., 나., 다., 라. 지원
+        - 생략/삭제: '…생략', '[삭제]' 태깅
+        - 개정/신설: '[전문개정]', '[신설]' 태깅
+        - 부칙: 부칙<제112호> 형태 지원
         """
+        import re
+
         try:
-            self.logger.info(f"🔧 라인 시작 기반 조항 청킹 시작: {len(text)}자")
+            self.logger.info(f"🔧 위계형 청킹 시작: {len(text)}자")
+
+            # -------------------------
+            # 0) 정규식/정규화 설정
+            # -------------------------
+            FLAGS = re.UNICODE | re.MULTILINE
+
+            # 동그라미 숫자 → (n) 통일
+            CIRCLED_MAP = {chr(0x2460 + i): f"({i+1})" for i in range(20)}  # ①~⑳
+            def normalize_line(s: str) -> str:
+                s = s.replace("\t", " ").replace("\r", "")
+                for k, v in CIRCLED_MAP.items():
+                    s = s.replace(k, v)
+                return s.strip()
+
+            # 페이지 번호 등 단독 숫자 라인 제거
+            PAT_PAGE_NO = re.compile(r"^\s*[-–—]*\s*\d+\s*[-–—]*\s*$", FLAGS)
+
+            # 상·중·하위 구조
+            PAT_CHAPTER = re.compile(r"^\s*제(?P<num>\d+)장\s*(?:\((?P<title>[^)]+)\))?\s*$", FLAGS)
+            PAT_SECTION = re.compile(r"^\s*제(?P<num>\d+)절\s*(?:\((?P<title>[^)]+)\))?\s*$", FLAGS)
+            PAT_DIVISION = re.compile(r"^\s*제(?P<num>\d+)관\s*(?:\((?P<title>[^)]+)\))?\s*$", FLAGS)
+
+            # 조(의조+제목) - 의조 패턴 강화
+            PAT_ARTICLE = re.compile(
+                r"^\s*제(?P<num>\d+)조(?:의(?P<sub>\d+))?\s*(?:\((?P<title>[^)]+)\))?\s*$", FLAGS
+            )
+
+            # 항: (1) / 1.    (동그라미 숫자는 normalize에서 (n)으로 변환됨)
+            PAT_PARAGRAPH = re.compile(r"^\s*(?:\((?P<p>\d+)\)|(?P<p2>\d+)\.)\s+", FLAGS)
+
+            # 호: 1. / 1) / (1) / 가. / (가)
+            PAT_SUBPARA = re.compile(
+                r"^\s*(?:(?P<n1>\d+)[\.\)]|\((?P<n2>\d+)\)|(?P<ko1>[가-힣])[\.\)]|\((?P<ko2>[가-힣])\))\s+",
+                FLAGS
+            )
+
+            # 목: 가., 나., 다., 라. (호보다 더 하위)
+            PAT_ITEM = re.compile(
+                r"^\s*(?:(?P<ko>[가-힣])\.|\((?P<ko2>[가-힣])\))\s+", FLAGS
+            )
+
+            # 생략/삭제/개정/신설
+            PAT_OMISSION = re.compile(
+                r"(?:제\d+조부터\s+제\d+조까지(?:는)?\s*생략한다?|이하\s*생략|생략한다?|\[\s*삭제\s*[^\]]*\]|삭제)\s*$",
+                FLAGS
+            )
             
-            chunks = []
-            current_chunk = ""
-            current_hierarchy = {
+            PAT_AMENDMENT = re.compile(
+                r"\[(?:전문개정|개정|신설|삭제)\s+[^\]]+\]", FLAGS
+            )
+
+            # 부칙 패턴
+            PAT_APPENDIX = re.compile(
+                r"^부칙\s*(?:\([^)]+\))?\s*<[^>]+>", FLAGS
+            )
+
+            # 별지 패턴
+            PAT_ATTACHMENT = re.compile(
+                r"^\[별지\s+제\s*\d+\s*호[^\]]*\]", FLAGS
+            )
+
+            # -------------------------
+            # 1) 유틸: 플러시/메타 복제
+            # -------------------------
+            chunks: List[Tuple[str, Dict[str, Any]]] = []
+            buf: List[str] = []
+
+            meta = {
                 "chapter_number": "",
+                "chapter_title": "",
+                "section_number": "",
+                "section_title": "",
+                "division_number": "",
+                "division_title": "",
                 "article_number": "",
+                "article_title": "",
                 "paragraph_number": "",
+                "subparagraph_number": "",
                 "item_number": "",
-                "is_omission": False
+                "is_omission": False,
+                "is_deletion": False,
+                "is_amendment": False,
+                "is_appendix": False,
+                "is_attachment": False,
             }
-            
-            lines = text.split('\n')
-            
+
+            def flush(reason: str):
+                # 버퍼 내용을 하나의 청크로 저장
+                txt = "\n".join([x for x in buf]).strip()
+                if txt:
+                    chunks.append((txt, meta.copy()))
+                buf.clear()
+
+            # 하위 위계 초기화 헬퍼
+            def reset_below(level: str):
+                """level 이하 하위 위계를 초기화"""
+                order = ["chapter", "section", "division", "article", "paragraph", "subparagraph", "item"]
+                idx = order.index(level)
+                for lv in order[idx+1:]:
+                    if lv == "chapter":
+                        meta["chapter_number"] = ""; meta["chapter_title"] = ""
+                    elif lv == "section":
+                        meta["section_number"] = ""; meta["section_title"] = ""
+                    elif lv == "division":
+                        meta["division_number"] = ""; meta["division_title"] = ""
+                    elif lv == "article":
+                        meta["article_number"] = ""; meta["article_title"] = ""
+                    elif lv == "paragraph":
+                        meta["paragraph_number"] = ""
+                    elif lv == "subparagraph":
+                        meta["subparagraph_number"] = ""
+                    elif lv == "item":
+                        meta["item_number"] = ""
+                
+                # 상태 플래그도 초기화
+                meta["is_omission"] = False
+                meta["is_deletion"] = False
+                meta["is_amendment"] = False
+                meta["is_appendix"] = False
+                meta["is_attachment"] = False
+
+            # -------------------------
+            # 2) 본문 라인 순회
+            # -------------------------
+            lines = [normalize_line(x) for x in text.split("\n") if x.strip() and not PAT_PAGE_NO.match(x)]
             for line in lines:
-                line = line.strip()
-                if not line:
+                # 2-1) 부칙/별지 먼저 체크 (상위 구조)
+                if PAT_APPENDIX.match(line):
+                    flush("new_appendix")
+                    meta["is_appendix"] = True
+                    buf.append(line)
+                    reset_below("chapter")  # 부칙은 최상위
                     continue
-                
-                # 생략 패턴 확인 (가장 먼저 체크)
-                omission_match = re.search(self.article_patterns["omission"], line)
-                if omission_match:
-                    # 이전 청크가 있으면 저장
-                    if current_chunk.strip():
-                        chunks.append((current_chunk.strip(), current_hierarchy.copy()))
                     
-                    # 생략 청크 생성
-                    omission_hierarchy = current_hierarchy.copy()
-                    omission_hierarchy["is_omission"] = True
-                    chunks.append((line.strip(), omission_hierarchy))
-                    
-                    # 현재 위계 정보 초기화
-                    current_hierarchy["article_number"] = ""
-                    current_hierarchy["paragraph_number"] = ""
-                    current_hierarchy["item_number"] = ""
-                    current_hierarchy["is_omission"] = False
-                    current_chunk = ""
+                if PAT_ATTACHMENT.match(line):
+                    flush("new_attachment")
+                    meta["is_attachment"] = True
+                    buf.append(line)
+                    reset_below("chapter")  # 별지도 최상위
                     continue
-                
-                # 장 패턴 확인 (라인 시작)
-                if re.match(r"^제\d+장", line):
-                    # 새 장 시작 - 이전 청크 저장
-                    if current_chunk.strip():
-                        chunks.append((current_chunk.strip(), current_hierarchy.copy()))
-                    
-                    chapter_match = re.search(r"제(\d+)장", line)
-                    current_hierarchy["chapter_number"] = f"제{chapter_match.group(1)}장"
-                    current_hierarchy["article_number"] = ""
-                    current_hierarchy["paragraph_number"] = ""
-                    current_hierarchy["item_number"] = ""
-                    current_hierarchy["is_omission"] = False
-                    current_chunk = line
+
+                # 2-2) 생략/삭제/개정 체크
+                if PAT_OMISSION.search(line):
+                    # 현재 버퍼 flush
+                    flush("before_omission")
+                    # 생략/삭제 라인 자체도 하나의 청크로 기록
+                    buf.append(line)
+                    meta["is_omission"] = True
+                    if "삭제" in line:
+                        meta["is_deletion"] = True
+                    flush("omission_line")
+                    # 생략 태그는 라인별 의미이므로 다시 false로 세팅
+                    meta["is_omission"] = False
+                    meta["is_deletion"] = False
                     continue
-                
-                # 조문 패턴 확인 (라인 시작)
-                if re.match(r"^제\d+조", line):
-                    # 새 조문 시작 - 이전 청크 저장
-                    if current_chunk.strip():
-                        chunks.append((current_chunk.strip(), current_hierarchy.copy()))
-                    
-                    # 현재 조문 번호 추출 (참조 제외)
-                    article_match = re.search(r"제(\d+)조(?:의(\d+))?", line)
-                    if article_match:
-                        current_hierarchy["article_number"] = f"제{article_match.group(1)}조"
-                        if article_match.group(2):
-                            current_hierarchy["article_number"] += f"의{article_match.group(2)}"
-                    
-                    current_hierarchy["paragraph_number"] = ""
-                    current_hierarchy["item_number"] = ""
-                    current_chunk = line
-                    
-                else:
-                    # 조문 내용 추가
-                    if current_chunk:
-                        current_chunk += "\n" + line
+
+                # 2-3) 개정/신설 체크
+                if PAT_AMENDMENT.search(line):
+                    # 현재 버퍼 flush
+                    flush("before_amendment")
+                    # 개정 라인 자체도 하나의 청크로 기록
+                    buf.append(line)
+                    meta["is_amendment"] = True
+                    flush("amendment_line")
+                    # 개정 태그는 라인별 의미이므로 다시 false로 세팅
+                    meta["is_amendment"] = False
+                    continue
+
+                # 2-4) 상위 구조: 장/절/관
+                m = PAT_CHAPTER.match(line)
+                if m:
+                    flush("new_chapter")
+                    meta["chapter_number"] = f"제{m.group('num')}장"
+                    meta["chapter_title"] = (m.group('title') or "").strip()
+                    # 장이 바뀌면 하위 초기화
+                    reset_below("chapter")
+                    buf.append(line)
+                    continue
+
+                m = PAT_SECTION.match(line)
+                if m:
+                    flush("new_section")
+                    meta["section_number"] = f"제{m.group('num')}절"
+                    meta["section_title"] = (m.group('title') or "").strip()
+                    reset_below("section")
+                    buf.append(line)
+                    continue
+
+                m = PAT_DIVISION.match(line)
+                if m:
+                    flush("new_division")
+                    meta["division_number"] = f"제{m.group('num')}관"
+                    meta["division_title"] = (m.group('title') or "").strip()
+                    reset_below("division")
+                    buf.append(line)
+                    continue
+
+                # 2-5) 조(의조 포함)
+                m = PAT_ARTICLE.match(line)
+                if m:
+                    flush("new_article")
+                    num = m.group("num")
+                    sub = m.group("sub")
+                    meta["article_number"] = f"제{num}조" + (f"의{sub}" if sub else "")
+                    meta["article_title"] = (m.group("title") or "").strip()
+                    # 조가 바뀌면 하위 초기화
+                    reset_below("article")
+                    buf.append(line)
+                    continue
+
+                # 2-6) 항
+                m = PAT_PARAGRAPH.match(line)
+                if m:
+                    # 새 항이 시작되면 이전 버퍼를 항 단위로 flush
+                    flush("new_paragraph")
+                    pnum = m.group("p") or m.group("p2")
+                    meta["paragraph_number"] = pnum
+                    # 항 하위 초기화
+                    meta["subparagraph_number"] = ""
+                    meta["item_number"] = ""
+                    # 항 마커 제거 후 본문만 버퍼에 넣음
+                    line_wo_marker = PAT_PARAGRAPH.sub("", line, count=1).strip()
+                    buf.append(line_wo_marker)
+                    continue
+
+                # 2-7) 호
+                m = PAT_SUBPARA.match(line)
+                if m:
+                    flush("new_subpara")
+                    if m.group("n1") or m.group("n2"):
+                        sp = m.group("n1") or m.group("n2")  # 숫자 호
                     else:
-                        current_chunk = line
-            
-            # 마지막 청크 추가
-            if current_chunk.strip():
-                chunks.append((current_chunk.strip(), current_hierarchy.copy()))
-            
-            self.logger.info(f"✅ 라인 시작 기반 조항 청킹 완료: {len(chunks)}개 청크")
+                        sp = (m.group("ko1") or m.group("ko2") or "").strip()  # 한글 호(가, 나…)
+                    meta["subparagraph_number"] = sp
+                    # 호 하위 초기화
+                    meta["item_number"] = ""
+                    line_wo_marker = PAT_SUBPARA.sub("", line, count=1).strip()
+                    buf.append(line_wo_marker)
+                    continue
+
+                # 2-8) 목 (호보다 더 하위)
+                m = PAT_ITEM.match(line)
+                if m:
+                    flush("new_item")
+                    item = (m.group("ko") or m.group("ko2") or "").strip()
+                    meta["item_number"] = item
+                    line_wo_marker = PAT_ITEM.sub("", line, count=1).strip()
+                    buf.append(line_wo_marker)
+                    continue
+
+                # 2-9) 그 외 일반 본문 라인
+                buf.append(line)
+
+            # 3) 마지막 청크 플러시
+            flush("eof")
+            self.logger.info(f"✅ 위계형 청킹 완료: {len(chunks)}개 청크")
             return chunks
-            
+
         except Exception as e:
             self.logger.error(f"조항 단위 청킹 중 오류: {e}")
-            # 오류 시 기존 청킹 방식으로 폴백
             return self._fallback_chunking(text)
     
     def _fallback_chunking(self, text: str) -> List[Tuple[str, Dict[str, Any]]]:
@@ -453,10 +629,23 @@ class HierarchicalProcessor(InteractManager):
             # 헬퍼 메서드 사용하여 컬렉션 인스턴스 가져오기
             collection = self._get_collection_instance(collection_name)
             
-            # 출력 필드 설정
-            output_fields = ["passage_uid", "doc_id", "raw_doc_id", "passage_id", "domain", 
-                           "title", "author", "text", "info", "tags", "chapter_number", 
-                           "article_number", "paragraph_number", "item_number", "is_omission"]
+            # === 새로운 위계형 필드들 완전 포함 ===
+            output_fields = [
+                "passage_uid", "doc_id", "raw_doc_id", "passage_id", "domain", 
+                "title", "author", "text", "info", "tags",
+                
+                # === 위계형 필드들 ===
+                "chapter_number", "chapter_title", 
+                "section_number", "section_title",
+                "division_number", "division_title",
+                "article_number", "article_title", 
+                "paragraph_number", "subparagraph_number",
+                "item_number",
+                
+                # === 상태 플래그들 ===
+                "is_omission", "is_deletion", "is_amendment", 
+                "is_appendix", "is_attachment"
+            ]
             
             if include_embeddings:
                 output_fields.append("text_emb")
@@ -690,10 +879,21 @@ class HierarchicalProcessor(InteractManager):
                         
                         # === 위계형 필드 추가 ===
                         "chapter_number": hierarchy.get("chapter_number", ""),
+                        "chapter_title": hierarchy.get("chapter_title", ""),
+                        "section_number": hierarchy.get("section_number", ""),
+                        "section_title": hierarchy.get("section_title", ""),
+                        "division_number": hierarchy.get("division_number", ""),
+                        "division_title": hierarchy.get("division_title", ""),
                         "article_number": hierarchy.get("article_number", ""),
+                        "article_title": hierarchy.get("article_title", ""),
                         "paragraph_number": hierarchy.get("paragraph_number", ""),
+                        "subparagraph_number": hierarchy.get("subparagraph_number", ""),
                         "item_number": hierarchy.get("item_number", ""),
-                        "is_omission": hierarchy.get("is_omission", False)
+                        "is_omission": hierarchy.get("is_omission", False),
+                        "is_deletion": hierarchy.get("is_deletion", False),
+                        "is_amendment": hierarchy.get("is_amendment", False),
+                        "is_appendix": hierarchy.get("is_appendix", False),
+                        "is_attachment": hierarchy.get("is_attachment", False)
                     }
                     
                     print(f"[DEBUG] Data item info field: {data_item['info']} (type: {type(data_item['info'])})")
@@ -704,7 +904,8 @@ class HierarchicalProcessor(InteractManager):
                     # DB 삽입 시작 (배치 처리 사용 - 기존과 동일)
                     db_insert_start = time.time()
                     print(f"[DEBUG] Preparing hierarchical chunk {i+1} with passage_uid: {passage_uid} for batch insert")
-                    print(f"[DEBUG] Hierarchical info: article={hierarchy.get('article_number', 'N/A')}, paragraph={hierarchy.get('paragraph_number', 'N/A')}, item={hierarchy.get('item_number', 'N/A')}")
+                    print(f"[DEBUG] Hierarchical info: chapter={hierarchy.get('chapter_number', 'N/A')}({hierarchy.get('chapter_title', '')}), article={hierarchy.get('article_number', 'N/A')}({hierarchy.get('article_title', '')}), paragraph={hierarchy.get('paragraph_number', 'N/A')}, subpara={hierarchy.get('subparagraph_number', 'N/A')}, item={hierarchy.get('item_number', 'N/A')}")
+                    print(f"[DEBUG] Status flags: omission={hierarchy.get('is_omission', False)}, deletion={hierarchy.get('is_deletion', False)}, amendment={hierarchy.get('is_amendment', False)}, appendix={hierarchy.get('is_appendix', False)}, attachment={hierarchy.get('is_attachment', False)}")
                     
                     try:
                         # 배치에 추가하고 필요시 삽입

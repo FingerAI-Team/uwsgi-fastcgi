@@ -504,31 +504,42 @@ def search_data():
         # 응답 포맷팅 시작
         format_start = time.time()
         
-        # 각 결과에서 불필요한 필드 제거 및 정리
+        # === 새로운 위계형 필드들 완전 포함 ===
         cleaned_results = []
         for result in final_results:
             cleaned_result = {
+                # === 기본 필드들 ===
                 "doc_id": result.get('doc_id'),
                 "raw_doc_id": result.get('raw_doc_id'),
                 "passage_id": result.get('passage_id'),
+                "passage_uid": result.get('passage_uid'),
                 "domain": result.get('domain'),
                 "title": result.get('title'),
                 "author": result.get('author'),
                 "text": result.get('text'),
                 "info": result.get('info'),
                 "tags": result.get('tags'),
-                "score": result.get('score')
-            }
-            # 위계형 필드가 있는 경우 동적으로 추가
-            if result.get('chapter_number') is not None:
-                cleaned_result["chapter_number"] = result.get('chapter_number')
-            if result.get('article_number') is not None:
-                cleaned_result["article_number"] = result.get('article_number')
-            if result.get('paragraph_number') is not None:
-                cleaned_result["paragraph_number"] = result.get('paragraph_number')
-            if result.get('item_number') is not None:
-                cleaned_result["item_number"] = result.get('item_number')
+                "score": result.get('score'),
                 
+                # === 새로운 위계형 필드들 완전 포함 ===
+                "chapter_number": result.get('chapter_number', ""),
+                "chapter_title": result.get('chapter_title', ""),
+                "section_number": result.get('section_number', ""),
+                "section_title": result.get('section_title', ""),
+                "division_number": result.get('division_number', ""),
+                "division_title": result.get('division_title', ""),
+                "article_number": result.get('article_number', ""),
+                "article_title": result.get('article_title', ""),
+                "paragraph_number": result.get('paragraph_number', ""),
+                "subparagraph_number": result.get('subparagraph_number', ""),
+                "item_number": result.get('item_number', ""),
+                "is_omission": result.get('is_omission', False),
+                "is_deletion": result.get('is_deletion', False),
+                "is_amendment": result.get('is_amendment', False),
+                "is_appendix": result.get('is_appendix', False),
+                "is_attachment": result.get('is_attachment', False),
+            }
+            
             cleaned_results.append(cleaned_result)
         
         format_end = time.time()
@@ -2966,31 +2977,41 @@ def legal_search():
         # 위계형 검색 실행
         results = retriever.search(collection_name, query_text, search_params)
         
-        # 응답 포맷팅 (기존 RAG search와 동일한 형식)
+        # === 위계형 검색 결과 구조 완전 업데이트 ===
         cleaned_results = []
         for result in results:
             cleaned_result = {
+                # === 기본 필드들 ===
                 "doc_id": result.get('doc_id'),
                 "raw_doc_id": result.get('raw_doc_id'),
                 "passage_id": result.get('passage_id'),
+                "passage_uid": result.get('passage_uid'),
                 "domain": result.get('domain'),
                 "title": result.get('title'),
                 "author": result.get('author'),
                 "text": result.get('text'),
                 "info": result.get('info'),
                 "tags": result.get('tags'),
-                "score": result.get('score')
+                "score": result.get('score'),
+                
+                # === 새로운 위계형 필드들 완전 포함 ===
+                "chapter_number": result.get('chapter_number', ""),
+                "chapter_title": result.get('chapter_title', ""),
+                "section_number": result.get('section_number', ""),
+                "section_title": result.get('section_title', ""),
+                "division_number": result.get('division_number', ""),
+                "division_title": result.get('division_title', ""),
+                "article_number": result.get('article_number', ""),
+                "article_title": result.get('article_title', ""),
+                "paragraph_number": result.get('paragraph_number', ""),
+                "subparagraph_number": result.get('subparagraph_number', ""),
+                "item_number": result.get('item_number', ""),
+                "is_omission": result.get('is_omission', False),
+                "is_deletion": result.get('is_deletion', False),
+                "is_amendment": result.get('is_amendment', False),
+                "is_appendix": result.get('is_appendix', False),
+                "is_attachment": result.get('is_attachment', False),
             }
-            
-            # 위계형 필드가 있는 경우 동적으로 추가
-            if result.get('chapter_number') is not None:
-                cleaned_result["chapter_number"] = result.get('chapter_number')
-            if result.get('article_number') is not None:
-                cleaned_result["article_number"] = result.get('article_number')
-            if result.get('paragraph_number') is not None:
-                cleaned_result["paragraph_number"] = result.get('paragraph_number')
-            if result.get('item_number') is not None:
-                cleaned_result["item_number"] = result.get('item_number')
             
             cleaned_results.append(cleaned_result)
         

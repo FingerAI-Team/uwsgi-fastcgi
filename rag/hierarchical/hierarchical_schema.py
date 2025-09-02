@@ -104,10 +104,46 @@ class HierarchicalSchema:
                     description="장 번호 (제1장, 제2장 등)"
                 ),
                 FieldSchema(
+                    name="chapter_title", 
+                    dtype=DataType.VARCHAR, 
+                    max_length=256,
+                    description="장 제목"
+                ),
+                FieldSchema(
+                    name="section_number", 
+                    dtype=DataType.VARCHAR, 
+                    max_length=32,
+                    description="절 번호 (제1절, 제2절 등)"
+                ),
+                FieldSchema(
+                    name="section_title", 
+                    dtype=DataType.VARCHAR, 
+                    max_length=256,
+                    description="절 제목"
+                ),
+                FieldSchema(
+                    name="division_number", 
+                    dtype=DataType.VARCHAR, 
+                    max_length=32,
+                    description="관 번호 (제1관, 제2관 등)"
+                ),
+                FieldSchema(
+                    name="division_title", 
+                    dtype=DataType.VARCHAR, 
+                    max_length=256,
+                    description="관 제목"
+                ),
+                FieldSchema(
                     name="article_number", 
                     dtype=DataType.VARCHAR, 
                     max_length=64,
                     description="조 번호 (제1조, 제2조의2 등)"
+                ),
+                FieldSchema(
+                    name="article_title", 
+                    dtype=DataType.VARCHAR, 
+                    max_length=256,
+                    description="조 제목"
                 ),
                 FieldSchema(
                     name="paragraph_number", 
@@ -116,15 +152,41 @@ class HierarchicalSchema:
                     description="항 번호 (①, ②, ③ 등)"
                 ),
                 FieldSchema(
-                    name="item_number", 
+                    name="subparagraph_number", 
                     dtype=DataType.VARCHAR, 
                     max_length=32,
                     description="호 번호 (1., 2., 3. 등)"
                 ),
                 FieldSchema(
+                    name="item_number", 
+                    dtype=DataType.VARCHAR, 
+                    max_length=32,
+                    description="목 번호 (가., 나., 다., 라. 등)"
+                ),
+                FieldSchema(
                     name="is_omission", 
                     dtype=DataType.BOOL,
                     description="생략 여부 (true/false)"
+                ),
+                FieldSchema(
+                    name="is_deletion", 
+                    dtype=DataType.BOOL,
+                    description="삭제 여부 (true/false)"
+                ),
+                FieldSchema(
+                    name="is_amendment", 
+                    dtype=DataType.BOOL,
+                    description="개정/신설 여부 (true/false)"
+                ),
+                FieldSchema(
+                    name="is_appendix", 
+                    dtype=DataType.BOOL,
+                    description="부칙 여부 (true/false)"
+                ),
+                FieldSchema(
+                    name="is_attachment", 
+                    dtype=DataType.BOOL,
+                    description="별지 여부 (true/false)"
                 ),
             ]
             
