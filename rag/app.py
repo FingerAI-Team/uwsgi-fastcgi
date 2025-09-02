@@ -519,6 +519,16 @@ def search_data():
                 "tags": result.get('tags'),
                 "score": result.get('score')
             }
+            # 위계형 필드가 있는 경우 동적으로 추가
+            if result.get('chapter_number') is not None:
+                cleaned_result["chapter_number"] = result.get('chapter_number')
+            if result.get('article_number') is not None:
+                cleaned_result["article_number"] = result.get('article_number')
+            if result.get('paragraph_number') is not None:
+                cleaned_result["paragraph_number"] = result.get('paragraph_number')
+            if result.get('item_number') is not None:
+                cleaned_result["item_number"] = result.get('item_number')
+                
             cleaned_results.append(cleaned_result)
         
         format_end = time.time()
@@ -2956,29 +2966,54 @@ def legal_search():
         # 위계형 검색 실행
         results = retriever.search(collection_name, query_text, search_params)
         
+        # 응답 포맷팅 (기존 RAG search와 동일한 형식)
+        cleaned_results = []
+        for result in results:
+            cleaned_result = {
+                "doc_id": result.get('doc_id'),
+                "raw_doc_id": result.get('raw_doc_id'),
+                "passage_id": result.get('passage_id'),
+                "domain": result.get('domain'),
+                "title": result.get('title'),
+                "author": result.get('author'),
+                "text": result.get('text'),
+                "info": result.get('info'),
+                "tags": result.get('tags'),
+                "score": result.get('score')
+            }
+            
+            # 위계형 필드가 있는 경우 동적으로 추가
+            if result.get('chapter_number') is not None:
+                cleaned_result["chapter_number"] = result.get('chapter_number')
+            if result.get('article_number') is not None:
+                cleaned_result["article_number"] = result.get('article_number')
+            if result.get('paragraph_number') is not None:
+                cleaned_result["paragraph_number"] = result.get('paragraph_number')
+            if result.get('item_number') is not None:
+                cleaned_result["item_number"] = result.get('item_number')
+            
+            cleaned_results.append(cleaned_result)
+        
         # 응답 생성 (기존 RAG search와 동일한 형식)
-        response = {
-            "result_code": "S000000",
+        response_data = {
+            "result_code": "F000000",
             "message": "검색이 성공적으로 완료되었습니다.",
-            "search_result": {
-                "query": query_text,
-                "results": results,
-                "total_results": len(results),
-                "search_params": {
-                    "top_k": top_k,
-                    "domains": domains,
-                    "filter_conditions": filter_conditions
-                }
+            "search_params": {
+                "query_text": query_text,
+                "top_k": top_k,
+                "domains": domains,
+                "filters": filter_conditions
             },
-            "performance_metrics": {
-                "total_processing_time": time.time() - start_time,
-                "validation_time": validation_time - start_time,
-                "search_time": time.time() - validation_time
+            "total_results": len(results),
+            "returned_results": len(cleaned_results),
+            "search_result": cleaned_results,
+            "performance": {
+                "total_time": time.time() - start_time
             }
         }
         
-        logger.info(f"✅ 위계형 검색 완료: {len(results)}개 결과, 총 처리시간: {time.time() - start_time:.4f}초")
-        return jsonify(response)
+        logger.info(f"✅ 위계형 검색 완료: {len(cleaned_results)}개 결과, 총 처리시간: {time.time() - start_time:.4f}초")
+        return jsonify(response_data)
         
     except Exception as e:
         logger.error(f"위계형 검색 중 오류: {e}")
