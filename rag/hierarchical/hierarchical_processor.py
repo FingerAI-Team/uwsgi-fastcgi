@@ -120,14 +120,19 @@ class HierarchicalProcessor(InteractManager):
                 r"\[(?:전문개정|개정|신설|삭제)\s+[^\]]+\]", FLAGS
             )
 
-            # 부칙 패턴
+            # 부칙 패턴 - 한자 포함 및 패턴 확장
             PAT_APPENDIX = re.compile(
-                r"^부칙\s*(?:\([^)]+\))?\s*<[^>]+>", FLAGS
+                r"^(?:부칙|附則)\s*(?:\([^)]+\))?\s*(?:<[^>]+>)?", FLAGS
             )
 
             # 별지 패턴
             PAT_ATTACHMENT = re.compile(
                 r"^\[별지\s+제\s*\d+\s*호[^\]]*\]", FLAGS
+            )
+
+            # 부칙 내부 조항 패턴 (부칙 내에서만 사용)
+            PAT_APPENDIX_ARTICLE = re.compile(
+                r"^\s*제(?P<num>\d+)조\s*(?:\((?P<title>[^)]+)\))?\s*$", FLAGS
             )
 
             # -------------------------
@@ -153,6 +158,7 @@ class HierarchicalProcessor(InteractManager):
                 "is_amendment": False,
                 "is_appendix": False,
                 "is_attachment": False,
+                "appendix_type": "main",  # main: 메인 법령, 부칙: 부칙, 별지: 별지
             }
 
             def flush(reason: str):
@@ -189,6 +195,7 @@ class HierarchicalProcessor(InteractManager):
                 meta["is_amendment"] = False
                 meta["is_appendix"] = False
                 meta["is_attachment"] = False
+                meta["appendix_type"] = "main"  # 메인 법령으로 초기화
 
             # -------------------------
             # 2) 본문 라인 순회
@@ -199,15 +206,19 @@ class HierarchicalProcessor(InteractManager):
                 if PAT_APPENDIX.match(line):
                     flush("new_appendix")
                     meta["is_appendix"] = True
+                    # 부칙 정보 추가
+                    meta["appendix_type"] = "부칙"
+                    # 🚨 중요: 메인 법령 정보는 유지 (reset_below 호출하지 않음)
+                    # 부칙은 메인 법령의 파생물이므로 연결성 보존
                     buf.append(line)
-                    reset_below("chapter")  # 부칙은 최상위
                     continue
                     
                 if PAT_ATTACHMENT.match(line):
                     flush("new_attachment")
                     meta["is_attachment"] = True
+                    meta["appendix_type"] = "별지"
+                    # 별지도 메인 법령과 연결
                     buf.append(line)
-                    reset_below("chapter")  # 별지도 최상위
                     continue
 
                 # 2-2) 생략/삭제/개정 체크
@@ -266,7 +277,7 @@ class HierarchicalProcessor(InteractManager):
                     buf.append(line)
                     continue
 
-                # 2-5) 조(의조 포함)
+                # 2-5) 조(의조 포함) - 부칙 내부 조항도 처리
                 m = PAT_ARTICLE.match(line)
                 if m:
                     flush("new_article")
@@ -275,6 +286,18 @@ class HierarchicalProcessor(InteractManager):
                     meta["article_number"] = f"제{num}조" + (f"의{sub}" if sub else "")
                     meta["article_title"] = (m.group("title") or "").strip()
                     # 조가 바뀌면 하위 초기화
+                    reset_below("article")
+                    buf.append(line)
+                    continue
+
+                # 부칙 내부 조항 패턴 체크 (부칙 내에서만)
+                if meta.get("is_appendix") and PAT_APPENDIX_ARTICLE.match(line):
+                    flush("new_appendix_article")
+                    num = m.group(1)
+                    title = m.group(2) or ""
+                    meta["article_number"] = f"제{num}조"
+                    meta["article_title"] = title.strip()
+                    # 부칙 내 조항이므로 하위 초기화
                     reset_below("article")
                     buf.append(line)
                     continue
@@ -893,7 +916,8 @@ class HierarchicalProcessor(InteractManager):
                         "is_deletion": hierarchy.get("is_deletion", False),
                         "is_amendment": hierarchy.get("is_amendment", False),
                         "is_appendix": hierarchy.get("is_appendix", False),
-                        "is_attachment": hierarchy.get("is_attachment", False)
+                        "is_attachment": hierarchy.get("is_attachment", False),
+                        "appendix_type": "main",  # main: 메인 법령, 부칙: 부칙, 별지: 별지
                     }
                     
                     print(f"[DEBUG] Data item info field: {data_item['info']} (type: {type(data_item['info'])})")

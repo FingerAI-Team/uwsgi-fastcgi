@@ -188,6 +188,12 @@ class HierarchicalSchema:
                     dtype=DataType.BOOL,
                     description="별지 여부 (true/false)"
                 ),
+                FieldSchema(
+                    name="appendix_type", 
+                    dtype=DataType.VARCHAR, 
+                    max_length=32,
+                    description="부칙/별지 유형 (main, 부칙, 별지)"
+                ),
             ]
             
             self.logger.info(f"✅ 위계형 스키마 생성: {len(base_fields)}개 필드")

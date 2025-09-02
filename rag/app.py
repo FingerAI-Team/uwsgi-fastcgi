@@ -531,7 +531,7 @@ def search_data():
                 "paragraph_number", "subparagraph_number",
                 "item_number",
                 "is_omission", "is_deletion", "is_amendment", 
-                "is_appendix", "is_attachment"
+                "is_appendix", "is_attachment", "appendix_type"  # 부칙/별지 유형 추가
             ]
             
             for field in hierarchical_fields:
@@ -3009,6 +3009,7 @@ def legal_search():
                 "is_amendment": result.get('is_amendment', False),
                 "is_appendix": result.get('is_appendix', False),
                 "is_attachment": result.get('is_attachment', False),
+                "appendix_type": result.get('appendix_type', ""),  # 부칙/별지 유형 추가
             }
             
             cleaned_results.append(cleaned_result)
