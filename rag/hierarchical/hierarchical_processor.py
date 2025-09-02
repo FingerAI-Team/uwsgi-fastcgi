@@ -299,7 +299,14 @@ class HierarchicalProcessor(InteractManager):
             
             # 인덱스 정보 수집
             self.logger.info(f"🔍 컬렉션 인덱스 정보 수집: {collection_name}")
-            indexes = collection.indexes
+            indexes = []
+            for idx in collection.indexes:
+                index_info = {
+                    "name": idx.name if hasattr(idx, 'name') else str(idx),
+                    "type": str(type(idx).__name__),
+                    "params": getattr(idx, 'params', {})
+                }
+                indexes.append(index_info)
             
             # 파티션 정보 수집
             self.logger.info(f"📦 컬렉션 파티션 정보 수집: {collection_name}")

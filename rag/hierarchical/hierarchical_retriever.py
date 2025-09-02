@@ -215,15 +215,17 @@ class HierarchicalRetriever:
                 self.logger.error("InteractManager가 없습니다")
                 return []
             
-            # 기존 검색 파라미터로 변환
-            search_params = {
-                "top_k": params.get("top_k", 10),
-                "filter_conditions": params.get("filter_conditions", {})
+            # /rag/search와 동일한 방식으로 검색 실행
+            filter_conditions = {
+                'domain': collection_name,
+                **(params.get("filter_conditions", {}))
             }
             
-            # 기존 검색 실행
-            results = self.interact_manager.search(
-                collection_name, query, search_params
+            # retrieve_data 메서드 사용 (search 메서드 대신)
+            results = self.interact_manager.retrieve_data(
+                query, 
+                params.get("top_k", 10), 
+                filter_conditions=filter_conditions
             )
             
             return results
