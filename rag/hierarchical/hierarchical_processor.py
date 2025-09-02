@@ -567,7 +567,13 @@ class HierarchicalProcessor(InteractManager):
             
             # 중복된 문서가 존재하는 경우 (기존과 동일)
             if duplicate_results and hashed_doc_id in duplicate_results:
-                existing_chunks = len(duplicate_results.get(hashed_doc_id, []))
+                # duplicate_results가 리스트인 경우 처리
+                if isinstance(duplicate_results, list):
+                    existing_chunks = len(duplicate_results)  # 리스트 길이로 청크 수 추정
+                else:
+                    # 딕셔너리인 경우 기존 방식 사용
+                    existing_chunks = len(duplicate_results.get(hashed_doc_id, []))
+                
                 print(f"[DEBUG] Document with doc_id {hashed_doc_id} already exists in domain {domain} with at least {existing_chunks} chunks")
                 timing_logger.info(f"DUPLICATE_FOUND - doc_id: {hashed_doc_id}, chunks: {existing_chunks}, ignore: {ignore}")
                 
