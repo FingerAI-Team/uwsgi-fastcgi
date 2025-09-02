@@ -752,6 +752,17 @@ class InteractManager:
         # 기본 출력 필드 설정
         output_fields = ["doc_id", "raw_doc_id", "passage_id", "domain", "title", "author", "text", "info", "tags"]
         
+        # 위계형 필드만 선택적으로 추가
+        hierarchical_fields = ["chapter_number", "article_number", "paragraph_number", "item_number"]
+        available_fields = [field.name for field in collection.schema.fields]
+        
+        for field in hierarchical_fields:
+            if field in available_fields:
+                output_fields.append(field)
+                print(f"[DEBUG] 위계형 필드 추가: {field}")
+        
+        print(f"[DEBUG] 최종 output_fields: {output_fields}")
+        
         # 검색 표현식 구성
         expr_parts = []
         
