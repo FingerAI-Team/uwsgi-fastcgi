@@ -682,7 +682,7 @@ class HierarchicalProcessor(InteractManager):
                 
                 # === 상태 플래그들 ===
                 "is_omission", "is_deletion", "is_amendment", 
-                "is_appendix", "is_attachment"
+                "is_appendix", "is_attachment", "appendix_type"
             ]
             
             if include_embeddings:

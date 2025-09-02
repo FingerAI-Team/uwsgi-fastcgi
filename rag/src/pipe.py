@@ -810,7 +810,7 @@ class InteractManager:
             "paragraph_number", "subparagraph_number",
             "item_number",
             "is_omission", "is_deletion", "is_amendment", 
-            "is_appendix", "is_attachment"
+            "is_appendix", "is_attachment", "appendix_type"
         ]
         available_fields = [field.name for field in collection.schema.fields]
         
