@@ -158,7 +158,7 @@ class HierarchicalProcessor(InteractManager):
                 "is_amendment": False,
                 "is_appendix": False,
                 "is_attachment": False,
-                "appendix_type": "main",  # main: 메인 법령, 부칙: 부칙, 별지: 별지
+                "appendix_type": "header",  # header: 헤더, main: 메인컨텐츠, 부칙: 부칙, 별지: 별지
             }
 
             def flush(reason: str):
@@ -195,13 +195,27 @@ class HierarchicalProcessor(InteractManager):
                 meta["is_amendment"] = False
                 meta["is_appendix"] = False
                 meta["is_attachment"] = False
-                meta["appendix_type"] = "main"  # 메인 법령으로 초기화
+                meta["appendix_type"] = "main"  # 메인컨텐츠로 초기화
 
             # -------------------------
             # 2) 본문 라인 순회
             # -------------------------
             lines = [normalize_line(x) for x in text.split("\n") if x.strip() and not PAT_PAGE_NO.match(x)]
+            main_content_started = False  # 메인컨텐츠 시작 여부
+            
             for line in lines:
+                # 메인컨텐츠 시작점 판단 (첫 번째 위계 구조)
+                if not main_content_started and any([
+                    PAT_CHAPTER.match(line),      # 장
+                    PAT_SECTION.match(line),      # 절  
+                    PAT_DIVISION.match(line),     # 관
+                    PAT_ARTICLE.match(line)       # 조
+                ]):
+                    # 메인컨텐츠 시작! 헤더 청크 완성
+                    flush("header_complete")
+                    main_content_started = True
+                    meta["appendix_type"] = "main"  # 메인컨텐츠로 변경
+                
                 # 2-1) 부칙/별지 먼저 체크 (상위 구조)
                 if PAT_APPENDIX.match(line):
                     flush("new_appendix")
@@ -251,55 +265,56 @@ class HierarchicalProcessor(InteractManager):
                 # 2-4) 상위 구조: 장/절/관
                 m = PAT_CHAPTER.match(line)
                 if m:
-                    flush("new_chapter")
+                    buf.append(line)  # 🚨 중요: 장 라인을 먼저 버퍼에 추가
                     meta["chapter_number"] = f"제{m.group('num')}장"
                     meta["chapter_title"] = (m.group('title') or "").strip()
                     # 장이 바뀌면 하위 초기화
                     reset_below("chapter")
-                    buf.append(line)
+                    flush("new_chapter")  # 🚨 그 다음에 flush
                     continue
 
                 m = PAT_SECTION.match(line)
                 if m:
-                    flush("new_section")
+                    buf.append(line)  # 🚨 중요: 절 라인을 먼저 버퍼에 추가
                     meta["section_number"] = f"제{m.group('num')}절"
                     meta["section_title"] = (m.group('title') or "").strip()
                     reset_below("section")
-                    buf.append(line)
+                    flush("new_section")  # 🚨 그 다음에 flush
                     continue
 
                 m = PAT_DIVISION.match(line)
                 if m:
-                    flush("new_division")
+                    buf.append(line)  # 🚨 중요: 관 라인을 먼저 버퍼에 추가
                     meta["division_number"] = f"제{m.group('num')}관"
                     meta["division_title"] = (m.group('title') or "").strip()
                     reset_below("division")
-                    buf.append(line)
+                    flush("new_division")  # 🚨 그 다음에 flush
                     continue
 
                 # 2-5) 조(의조 포함) - 부칙 내부 조항도 처리
                 m = PAT_ARTICLE.match(line)
                 if m:
-                    flush("new_article")
+                    buf.append(line)  # 🚨 중요: 조 라인을 먼저 버퍼에 추가
                     num = m.group("num")
                     sub = m.group("sub")
                     meta["article_number"] = f"제{num}조" + (f"의{sub}" if sub else "")
                     meta["article_title"] = (m.group("title") or "").strip()
                     # 조가 바뀌면 하위 초기화
                     reset_below("article")
-                    buf.append(line)
+                    flush("new_article")  # 🚨 그 다음에 flush
                     continue
 
                 # 부칙 내부 조항 패턴 체크 (부칙 내에서만)
-                if meta.get("is_appendix") and PAT_APPENDIX_ARTICLE.match(line):
-                    flush("new_appendix_article")
-                    num = m.group(1)
-                    title = m.group(2) or ""
+                m = PAT_APPENDIX_ARTICLE.match(line)
+                if meta.get("is_appendix") and m:
+                    buf.append(line)  # 🚨 중요: 조 라인을 먼저 버퍼에 추가
+                    num = m.group("num")
+                    title = m.group("title") or ""
                     meta["article_number"] = f"제{num}조"
                     meta["article_title"] = title.strip()
                     # 부칙 내 조항이므로 하위 초기화
                     reset_below("article")
-                    buf.append(line)
+                    flush("new_appendix_article")  # 🚨 그 다음에 flush
                     continue
 
                 # 2-6) 항
@@ -314,7 +329,7 @@ class HierarchicalProcessor(InteractManager):
                     meta["item_number"] = ""
                     # 항 마커 제거 후 본문만 버퍼에 넣음
                     line_wo_marker = PAT_PARAGRAPH.sub("", line, count=1).strip()
-                    buf.append(line_wo_marker)
+                    buf.append(line_wo_marker)  # 🚨 항 본문을 버퍼에 추가
                     continue
 
                 # 2-7) 호
@@ -329,7 +344,7 @@ class HierarchicalProcessor(InteractManager):
                     # 호 하위 초기화
                     meta["item_number"] = ""
                     line_wo_marker = PAT_SUBPARA.sub("", line, count=1).strip()
-                    buf.append(line_wo_marker)
+                    buf.append(line_wo_marker)  # 🚨 호 본문을 버퍼에 추가
                     continue
 
                 # 2-8) 목 (호보다 더 하위)
@@ -339,7 +354,7 @@ class HierarchicalProcessor(InteractManager):
                     item = (m.group("ko") or m.group("ko2") or "").strip()
                     meta["item_number"] = item
                     line_wo_marker = PAT_ITEM.sub("", line, count=1).strip()
-                    buf.append(line_wo_marker)
+                    buf.append(line_wo_marker)  # 🚨 목 본문을 버퍼에 추가
                     continue
 
                 # 2-9) 그 외 일반 본문 라인
