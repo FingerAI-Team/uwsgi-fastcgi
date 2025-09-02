@@ -932,7 +932,7 @@ class HierarchicalProcessor(InteractManager):
                         "is_amendment": hierarchy.get("is_amendment", False),
                         "is_appendix": hierarchy.get("is_appendix", False),
                         "is_attachment": hierarchy.get("is_attachment", False),
-                        "appendix_type": "main",  # main: 메인 법령, 부칙: 부칙, 별지: 별지
+                        "appendix_type": hierarchy.get("appendix_type", "main"),  # hierarchy에서 가져오기
                     }
                     
                     print(f"[DEBUG] Data item info field: {data_item['info']} (type: {type(data_item['info'])})")
