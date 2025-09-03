@@ -193,6 +193,9 @@ class HierarchicalProcessor(InteractManager):
                 if line_num not in headers_by_line:
                     headers_by_line[line_num] = []
                 headers_by_line[line_num].append(header)
+                
+                # 상세 로그 추가
+                self.logger.debug(f"📌 헤더 라인 {line_num}에 추가: {header.type} - '{header.text}'")
             
             # 각 라인 처리
             for line_num, line in enumerate(lines):
@@ -200,6 +203,8 @@ class HierarchicalProcessor(InteractManager):
                 
                 # 헤더가 있는 경우
                 if current_line_headers:
+                    self.logger.debug(f"🔍 라인 {line_num}: 헤더 발견 - {len(current_line_headers)}개")
+                    
                     # 이전 버퍼 내용을 청크로 저장
                     flush("header_found")
                     
@@ -209,16 +214,19 @@ class HierarchicalProcessor(InteractManager):
                              if len(header.groups) > 0:
                                  meta["chapter_number"] = f"제{header.groups[0]}장"
                                  meta["chapter_title"] = header.groups[1] if len(header.groups) > 1 else ""
+                                 self.logger.debug(f"   ✅ 장 정보 업데이트: {meta['chapter_number']} - {meta['chapter_title']}")
                                  reset_below("chapter")
                          elif header.type == "section":
                              if len(header.groups) > 0:
                                  meta["section_number"] = f"제{header.groups[0]}절"
                                  meta["section_title"] = header.groups[1] if len(header.groups) > 1 else ""
+                                 self.logger.debug(f"   ✅ 절 정보 업데이트: {meta['section_number']} - {meta['section_title']}")
                                  reset_below("section")
                          elif header.type == "division":
                              if len(header.groups) > 0:
                                  meta["division_number"] = f"제{header.groups[0]}관"
                                  meta["division_title"] = header.groups[1] if len(header.groups) > 1 else ""
+                                 self.logger.debug(f"   ✅ 관 정보 업데이트: {meta['division_number']} - {meta['division_title']}")
                                  reset_below("division")
                          elif header.type == "article":
                              if len(header.groups) > 0:
@@ -226,18 +234,22 @@ class HierarchicalProcessor(InteractManager):
                                  if len(header.groups) > 1 and header.groups[1]:
                                      meta["article_number"] += f"의{header.groups[1]}"
                                  meta["article_title"] = header.groups[2] if len(header.groups) > 2 else ""
+                                 self.logger.debug(f"   ✅ 조 정보 업데이트: {meta['article_number']} - {meta['article_title']}")
                                  reset_below("article")
                          elif header.type == "paragraph":
                              if len(header.groups) > 0:
                                  meta["paragraph_number"] = header.groups[0] if header.groups[0] else (header.groups[1] if len(header.groups) > 1 else "")
+                                 self.logger.debug(f"   ✅ 항 정보 업데이트: {meta['paragraph_number']}")
                                  reset_below("paragraph")
                          elif header.type == "subparagraph":
                              if len(header.groups) > 0:
                                  meta["subparagraph_number"] = header.groups[0] if header.groups[0] else (header.groups[1] if len(header.groups) > 1 else "")
+                                 self.logger.debug(f"   ✅ 호 정보 업데이트: {meta['subparagraph_number']}")
                                  reset_below("paragraph")
                          elif header.type == "item":
                              if len(header.groups) > 0:
                                  meta["item_number"] = header.groups[0] if header.groups[0] else (header.groups[1] if len(header.groups) > 1 else "")
+                                 self.logger.debug(f"   ✅ 목 정보 업데이트: {meta['item_number']}")
                                  reset_below("item")
                          
                          # Phase 1, 2 시스템의 상태 플래그 통합 (완벽 호환)
@@ -250,10 +262,12 @@ class HierarchicalProcessor(InteractManager):
                     
                     # 헤더 라인을 버퍼에 추가
                     buf.append(line)
+                    self.logger.debug(f"   📝 헤더 라인을 버퍼에 추가: '{line[:50]}...'")
                     
                 else:
                     # 헤더가 없는 경우 (본문)
                     buf.append(line)
+                    self.logger.debug(f" 라인 {line_num}: 본문을 버퍼에 추가: '{line[:50]}...'")
             
             # 마지막 버퍼 내용을 청크로 저장
             flush("eof")

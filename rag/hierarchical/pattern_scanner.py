@@ -122,6 +122,10 @@ class PatternScanner:
                 matches = compiled_pattern.finditer(line)
                 
                 for match in matches:
+                    # 상세 로그 추가
+                    self.logger.debug(f"🔍 패턴 매칭 발견: {pattern_type} - '{match.group()}' (라인: {line[:50]}...)")
+                    self.logger.debug(f"   📍 위치: {match.start()}-{match.end()}, 그룹: {match.groups()}")
+                    
                     pattern_info = {
                         "type": pattern_type,
                         "description": description,
@@ -137,20 +141,24 @@ class PatternScanner:
                         # 의조인 경우
                         pattern_info["sub_number"] = match.groups()[1]
                         pattern_info["is_sub_article"] = True
+                        self.logger.debug(f"   ✅ 의조 패턴 감지: {match.groups()[1]}")
                     elif pattern_type == "paragraph" and "①" in match.group():
                         # 원형 숫자인 경우
                         pattern_info["circle_number"] = match.group()
+                        self.logger.debug(f"   ✅ 원형 숫자 패턴 감지: {match.group()}")
                     
                     # 상태 플래그 감지 및 추가
                     status_flags = self._detect_status_flags(line)
                     pattern_info["status_flags"] = status_flags
+                    if any(status_flags.values()):
+                        self.logger.debug(f"   🏷️ 상태 플래그 감지: {status_flags}")
                     
                     patterns_found.append(pattern_info)
             
             # 위치 순으로 정렬
             patterns_found.sort(key=lambda x: x["start"])
             
-            self.logger.debug(f"라인 스캔 완료: {len(patterns_found)}개 패턴 발견")
+            self.logger.debug(f"📊 라인 스캔 완료: {len(patterns_found)}개 패턴 발견")
             return patterns_found
             
         except Exception as e:

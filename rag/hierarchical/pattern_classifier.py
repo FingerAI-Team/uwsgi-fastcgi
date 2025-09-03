@@ -63,13 +63,15 @@ class PatternClassifier:
         
         try:
             for pattern in analysis_result.patterns:
+                self.logger.debug(f"🔍 패턴 분류 시작: '{pattern.text}' (타입: {pattern.type})")
+                
                 # 1단계: 참조/인용 vs 헤더 판별
                 if self._is_reference_pattern(pattern):
                     classification_result["references"].append(pattern)
-                    self.logger.debug(f"참조/인용 패턴 분류: {pattern.text}")
+                    self.logger.debug(f"📌 참조/인용으로 분류: '{pattern.text}'")
                 else:
                     classification_result["headers"].append(pattern)
-                    self.logger.debug(f"헤더 패턴 분류: {pattern.text}")
+                    self.logger.debug(f"📌 헤더로 분류: '{pattern.text}'")
             
             # 2단계: 단일 vs 복합 패턴 판별
             for line_num in analysis_result.line_analysis:
@@ -109,21 +111,28 @@ class PatternClassifier:
             참조/인용 패턴이면 True
         """
         try:
-            line_text = pattern.line_text
+            # 헤더 텍스트만 검색 (수정된 부분)
+            header_text = pattern.text
+            
+            self.logger.debug(f"🔍 참조 패턴 판별 시작: '{header_text}' (타입: {pattern.type})")
             
             # 참조 패턴들 체크
             for compiled_pattern, description in self.compiled_reference_patterns:
-                if compiled_pattern.search(line_text):
-                    self.logger.debug(f"참조 패턴 발견: {description} - {pattern.text}")
+                if compiled_pattern.search(header_text):
+                    self.logger.debug(f"✅ 참조 패턴 매칭: {description} - '{header_text}'")
+                    self.logger.debug(f"   📍 매칭된 정규식: {compiled_pattern.pattern}")
                     return True
             
             # 추가 문맥 분석
             if self._has_postposition_after(pattern):
+                self.logger.debug(f"✅ 조사 뒤에 오는 패턴: '{header_text}'")
                 return True
             
             if self._is_quoted_text(pattern):
+                self.logger.debug(f"✅ 따옴표로 감싸진 텍스트: '{header_text}'")
                 return True
             
+            self.logger.debug(f"❌ 참조 패턴 아님: '{header_text}' → 헤더로 분류")
             return False
             
         except Exception as e:
