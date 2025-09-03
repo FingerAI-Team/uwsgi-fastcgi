@@ -86,10 +86,10 @@ flowchart TD
     Q --> R
     
     R --> S{사용자 지정 도메인?<br/>domains 파라미터}
-    S -->|Yes| T[사용자 도메인 사용<br/>kwargs['domains']]
+    S -->|Yes| T[사용자 도메인 사용 ]
     S -->|No| U{도메인 셀렉터 결과?<br/>domain_candidates}
     
-    U -->|Yes| V[자동 선택 도메인<br/>domain_result['domain_candidates']]
+    U -->|Yes| V[자동 선택 도메인<br/>]
     U -->|No| W[전체 도메인 검색<br/>빈 도메인 리스트]
     
     T --> X[Enhanced Search API 호출<br/>POST /prompt/enhanced_search]
@@ -132,7 +132,7 @@ flowchart TD
     
     PP --> SS
     
-    SS --> TT[인용 패턴 추출<br/>📚[숫자] 정규식]
+    SS --> TT[인용 패턴 추출<br/> 정규식]
     TT --> UU[참고문헌 생성<br/>references 배열]
     UU --> VV[구조화된 응답 구성<br/>JSON 형식]
     VV --> WW[세션에 봇 응답 저장<br/>SessionManager.add_bot_message]
@@ -355,7 +355,7 @@ flowchart TD
     M --> P[응답 파싱<br/>parse_structured_response]
     O --> P
     
-    P --> Q[인용 패턴 추출<br/>📚[숫자] 정규식]
+    P --> Q[인용 패턴 추출<br/> 정규식]
     Q --> R[참고문헌 매핑<br/>검색 결과와 매핑]
     R --> S[구조화된 응답 구성<br/>JSON 형식]
     S --> T[세션에 봇 응답 저장<br/>SessionManager.add_bot_message]
