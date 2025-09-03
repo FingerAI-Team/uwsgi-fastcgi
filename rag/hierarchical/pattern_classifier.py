@@ -23,7 +23,7 @@ class PatternClassifier:
             (r'["""](제\d+[장절관조]|\(\d+\)|①|(\d+)\.|([가-힣])\.)["""]', "quoted_header"),
             
             # 조사 뒤에 오는 헤더
-            (r'(제\d+[장절관조]|\(\d+\)|①|(\d+)\.|([가-힣])\.)[에의에서]', "postposition_header"),
+            (r'(제\d+[장절관조]|\(\d+\)|①|(\d+)\.|([가-힣])\.)\s*[에의에서]', "postposition_header")
             
             # 연속 참조 (중간 공백 없음)
             (r'제\d+조제\d+항', "continuous_reference"),
