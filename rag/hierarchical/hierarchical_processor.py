@@ -5,7 +5,6 @@
 기존의 모든 배치 처리, GPU 관리, 데이터 파이프라인을 그대로 활용합니다.
 """
 
-import re
 import logging
 import os
 import time
@@ -20,15 +19,8 @@ class HierarchicalProcessor(InteractManager):
         super().__init__(*args, **kwargs)
         self.logger = logging.getLogger('hierarchical')
         
-        # 조항 패턴 정의 (장 포함 + 생략 패턴)
-        self.article_patterns = {
-            "chapter": r"제(\d+)장",      # 제1장, 제2장 등
-            "main_article": r"제(\d+)조",
-            "sub_article": r"제(\d+)조의(\d+)",
-            "paragraph": r"(\d+)\.",  # 1., 2., 3. 등
-            "item": r"(\d+)\)",       # 1), 2), 3) 등
-            "omission": r"(?:제\d+조부터\s+제\d+조까지는\s+생략한다?|이하\s+생략|생략한다?|\.\.\.)",  # 생략 패턴
-        }
+        # 새로운 패턴 시스템으로 대체됨 (PatternScanner 사용)
+        # 기존 article_patterns는 삭제됨
         
         # 위계형 스키마 초기화
         from .hierarchical_schema import HierarchicalSchema
@@ -56,91 +48,81 @@ class HierarchicalProcessor(InteractManager):
     
     def chunk_by_articles(self, text: str) -> List[Tuple[str, Dict[str, Any]]]:
         """
-        라인 시작 기반 위계형 청킹 (장/절/관/조/항/호/목 단위)
-        - 조: 제10조, 제10조의2, (제목) 지원
-        - 항: ①, (1), 1. 지원  
-        - 호: 1), (1), 가), (가), 가. 지원
-        - 목: 가., 나., 다., 라. 지원
-        - 생략/삭제: '…생략', '[삭제]' 태깅
-        - 개정/신설: '[전문개정]', '[신설]' 태깅
-        - 부칙: 부칙<제112호> 형태 지원
+        새로운 패턴 스캐너를 사용한 위계형 청킹 (장/절/관/조/항/호/목 단위)
+        
+        기존 버퍼 로직은 유지하되 패턴 인식만 새로운 시스템 사용
         """
-        import re
-
         try:
-            self.logger.info(f"🔧 위계형 청킹 시작: {len(text)}자")
-
-            # -------------------------
-            # 0) 정규식/정규화 설정
-            # -------------------------
-            FLAGS = re.UNICODE | re.MULTILINE
-
-            # 동그라미 숫자 → (n) 통일
-            CIRCLED_MAP = {chr(0x2460 + i): f"({i+1})" for i in range(20)}  # ①~⑳
-            def normalize_line(s: str) -> str:
-                s = s.replace("\t", " ").replace("\r", "")
-                for k, v in CIRCLED_MAP.items():
-                    s = s.replace(k, v)
-                return s.strip()
-
-            # 페이지 번호 등 단독 숫자 라인 제거
-            PAT_PAGE_NO = re.compile(r"^\s*[-–—]*\s*\d+\s*[-–—]*\s*$", FLAGS)
-
-            # 상·중·하위 구조
-            PAT_CHAPTER = re.compile(r"^\s*제(?P<num>\d+)장\s*(?:\((?P<title>[^)]+)\))?\s*$", FLAGS)
-            PAT_SECTION = re.compile(r"^\s*제(?P<num>\d+)절\s*(?:\((?P<title>[^)]+)\))?\s*$", FLAGS)
-            PAT_DIVISION = re.compile(r"^\s*제(?P<num>\d+)관\s*(?:\((?P<title>[^)]+)\))?\s*$", FLAGS)
-
-            # 조(의조+제목) - 의조 패턴 강화
-            PAT_ARTICLE = re.compile(
-                r"^\s*제(?P<num>\d+)조(?:의(?P<sub>\d+))?\s*(?:\((?P<title>[^)]+)\))?\s*$", FLAGS
-            )
-
-            # 항: (1) / 1.    (동그라미 숫자는 normalize에서 (n)으로 변환됨)
-            PAT_PARAGRAPH = re.compile(r"^\s*(?:\((?P<p>\d+)\)|(?P<p2>\d+)\.)\s+", FLAGS)
-
-            # 호: 1. / 1) / (1) / 가. / (가)
-            PAT_SUBPARA = re.compile(
-                r"^\s*(?:(?P<n1>\d+)[\.\)]|\((?P<n2>\d+)\)|(?P<ko1>[가-힣])[\.\)]|\((?P<ko2>[가-힣])\))\s+",
-                FLAGS
-            )
-
-            # 목: 가., 나., 다., 라. (호보다 더 하위)
-            PAT_ITEM = re.compile(
-                r"^\s*(?:(?P<ko>[가-힣])\.|\((?P<ko2>[가-힣])\))\s+", FLAGS
-            )
-
-            # 생략/삭제/개정/신설
-            PAT_OMISSION = re.compile(
-                r"(?:제\d+조부터\s+제\d+조까지(?:는)?\s*생략한다?|이하\s*생략|생략한다?|\[\s*삭제\s*[^\]]*\]|삭제)\s*$",
-                FLAGS
-            )
+            self.logger.info(f"🔧 새로운 패턴 시스템으로 위계형 청킹 시작: {len(text)}자")
             
-            PAT_AMENDMENT = re.compile(
-                r"\[(?:전문개정|개정|신설|삭제)\s+[^\]]+\]", FLAGS
-            )
-
-            # 부칙 패턴 - 한자 포함 및 패턴 확장
-            PAT_APPENDIX = re.compile(
-                r"^(?:부칙|附則)\s*(?:\([^)]+\))?\s*(?:<[^>]+>)?", FLAGS
-            )
-
-            # 별지 패턴
-            PAT_ATTACHMENT = re.compile(
-                r"^\[별지\s+제\s*\d+\s*호[^\]]*\]", FLAGS
-            )
-
-            # 부칙 내부 조항 패턴 (부칙 내에서만 사용)
-            PAT_APPENDIX_ARTICLE = re.compile(
-                r"^\s*제(?P<num>\d+)조\s*(?:\((?P<title>[^)]+)\))?\s*$", FLAGS
-            )
-
-            # -------------------------
-            # 1) 유틸: 플러시/메타 복제
-            # -------------------------
+            # 새로운 패턴 시스템 사용
+            from .pattern_scanner import PatternScanner
+            from .pattern_classifier import PatternClassifier
+            from .data_structures import PatternAnalysisResult
+            
+            # 패턴 스캐너 및 분류기 초기화
+            scanner = PatternScanner()
+            classifier = PatternClassifier()
+            
+            # 텍스트를 라인별로 분리
+            lines = [line.strip() for line in text.split('\n') if line.strip()]
+            
+            # 패턴 스캔
+            all_patterns = scanner.scan_multiple_lines(lines)
+            
+            # PatternAnalysisResult로 변환
+            analysis_result = PatternAnalysisResult()
+            for pattern in all_patterns:
+                # HeaderInfo 객체로 변환
+                from .data_structures import HeaderInfo
+                header_info = HeaderInfo(
+                    type=pattern['type'],
+                    description=pattern['description'],
+                    text=pattern['text'],
+                    start=pattern['start'],
+                    end=pattern['end'],
+                    line_number=pattern['line_number'],
+                    line_text=pattern['line_text'],
+                    groups=pattern['groups']
+                )
+                analysis_result.add_pattern(header_info)
+            
+            # 패턴 분류
+            classification_result = classifier.classify_patterns(analysis_result)
+            
+            # 기존 버퍼 로직과 연동하여 청킹
+            return self._process_with_existing_buffer_logic(lines, classification_result, text)
+            
+        except (ImportError, AttributeError) as e:
+            self.logger.error(f"패턴 시스템 모듈 로딩 오류: {e}")
+            return self._fallback_chunking(text)
+        except (ValueError, TypeError) as e:
+            self.logger.error(f"패턴 데이터 처리 오류: {e}")
+            return self._fallback_chunking(text)
+        except Exception as e:
+            self.logger.error(f"새로운 패턴 시스템으로 청킹 중 예상치 못한 오류: {e}")
+            # 오류 발생 시 기존 방식으로 폴백
+            return self._fallback_chunking(text)
+    
+    def _process_with_existing_buffer_logic(self, lines: List[str], classification_result: Dict[str, Any], text: str = "") -> List[Tuple[str, Dict[str, Any]]]:
+        """
+        기존 버퍼 로직을 사용하여 청킹 처리
+        
+        Args:
+            lines: 원본 라인들
+            classification_result: 패턴 분류 결과
+            
+        Returns:
+            청킹 결과
+        """
+        try:
+            self.logger.info("🔧 기존 버퍼 로직으로 청킹 처리 시작")
+            
+            # 기존 버퍼 시스템 초기화
             chunks: List[Tuple[str, Dict[str, Any]]] = []
             buf: List[str] = []
-
+            
+            # 위계 메타데이터 초기화
             meta = {
                 "chapter_number": "",
                 "chapter_title": "",
@@ -158,215 +140,114 @@ class HierarchicalProcessor(InteractManager):
                 "is_amendment": False,
                 "is_appendix": False,
                 "is_attachment": False,
-                "appendix_type": "header",  # header: 헤더, main: 메인컨텐츠, 부칙: 부칙, 별지: 별지
+                "appendix_type": "main",
             }
-
+            
             def flush(reason: str):
-                # 버퍼 내용을 하나의 청크로 저장
+                """버퍼 내용을 청크로 저장"""
                 txt = "\n".join([x for x in buf]).strip()
                 if txt:
                     chunks.append((txt, meta.copy()))
+                    self.logger.debug(f"청크 저장: {reason} - {txt[:50]}...")
                 buf.clear()
-
-            # 하위 위계 초기화 헬퍼
+            
             def reset_below(level: str):
                 """level 이하 하위 위계를 초기화"""
                 order = ["chapter", "section", "division", "article", "paragraph", "subparagraph", "item"]
-                idx = order.index(level)
-                for lv in order[idx+1:]:
-                    if lv == "chapter":
-                        meta["chapter_number"] = ""; meta["chapter_title"] = ""
-                    elif lv == "section":
-                        meta["section_number"] = ""; meta["section_title"] = ""
-                    elif lv == "division":
-                        meta["division_number"] = ""; meta["division_title"] = ""
-                    elif lv == "article":
-                        meta["article_number"] = ""; meta["article_title"] = ""
-                    elif lv == "paragraph":
-                        meta["paragraph_number"] = ""
-                    elif lv == "subparagraph":
-                        meta["subparagraph_number"] = ""
-                    elif lv == "item":
-                        meta["item_number"] = ""
-                
-                # 상태 플래그도 초기화
-                meta["is_omission"] = False
-                meta["is_deletion"] = False
-                meta["is_amendment"] = False
-                meta["is_appendix"] = False
-                meta["is_attachment"] = False
-                meta["appendix_type"] = "main"  # 메인컨텐츠로 초기화
-
-            # -------------------------
-            # 2) 본문 라인 순회
-            # -------------------------
-            lines = [normalize_line(x) for x in text.split("\n") if x.strip() and not PAT_PAGE_NO.match(x)]
-            main_content_started = False  # 메인컨텐츠 시작 여부
-            
-            for line in lines:
-                # 메인컨텐츠 시작점 판단 (첫 번째 위계 구조)
-                if not main_content_started and any([
-                    PAT_CHAPTER.match(line),      # 장
-                    PAT_SECTION.match(line),      # 절  
-                    PAT_DIVISION.match(line),     # 관
-                    PAT_ARTICLE.match(line)       # 조
-                ]):
-                    # 메인컨텐츠 시작! 헤더 청크 완성
-                    flush("header_complete")
-                    main_content_started = True
-                    meta["appendix_type"] = "main"  # 메인컨텐츠로 변경
-                
-                # 2-1) 부칙/별지 먼저 체크 (상위 구조)
-                if PAT_APPENDIX.match(line):
-                    flush("new_appendix")
-                    meta["is_appendix"] = True
-                    # 부칙 정보 추가
-                    meta["appendix_type"] = "부칙"
-                    # 🚨 중요: 메인 법령 정보는 유지 (reset_below 호출하지 않음)
-                    # 부칙은 메인 법령의 파생물이므로 연결성 보존
-                    buf.append(line)
-                    continue
+                if level in order:
+                    idx = order.index(level)
+                    for lv in order[idx+1:]:
+                        if lv == "chapter":
+                            meta["chapter_number"] = ""; meta["chapter_title"] = ""
+                        elif lv == "section":
+                            meta["section_number"] = ""; meta["section_title"] = ""
+                        elif lv == "division":
+                            meta["division_number"] = ""; meta["division_title"] = ""
+                        elif lv == "article":
+                            meta["article_number"] = ""; meta["article_title"] = ""
+                        elif lv == "paragraph":
+                            meta["paragraph_number"] = ""
+                        elif lv == "subparagraph":
+                            meta["subparagraph_number"] = ""
+                        elif lv == "item":
+                            meta["item_number"] = ""
                     
-                if PAT_ATTACHMENT.match(line):
-                    flush("new_attachment")
-                    meta["is_attachment"] = True
-                    meta["appendix_type"] = "별지"
-                    # 별지도 메인 법령과 연결
-                    buf.append(line)
-                    continue
-
-                # 2-2) 생략/삭제/개정 체크
-                if PAT_OMISSION.search(line):
-                    # 현재 버퍼 flush
-                    flush("before_omission")
-                    # 생략/삭제 라인 자체도 하나의 청크로 기록
-                    buf.append(line)
-                    meta["is_omission"] = True
-                    if "삭제" in line:
-                        meta["is_deletion"] = True
-                    flush("omission_line")
-                    # 생략 태그는 라인별 의미이므로 다시 false로 세팅
+                    # 상태 플래그도 초기화
                     meta["is_omission"] = False
                     meta["is_deletion"] = False
-                    continue
-
-                # 2-3) 개정/신설 체크
-                if PAT_AMENDMENT.search(line):
-                    # 현재 버퍼 flush
-                    flush("before_amendment")
-                    # 개정 라인 자체도 하나의 청크로 기록
-                    buf.append(line)
-                    meta["is_amendment"] = True
-                    flush("amendment_line")
-                    # 개정 태그는 라인별 의미이므로 다시 false로 세팅
                     meta["is_amendment"] = False
-                    continue
-
-                # 2-4) 상위 구조: 장/절/관
-                m = PAT_CHAPTER.match(line)
-                if m:
-                    buf.append(line)  # 🚨 중요: 장 라인을 먼저 버퍼에 추가
-                    meta["chapter_number"] = f"제{m.group('num')}장"
-                    meta["chapter_title"] = (m.group('title') or "").strip()
-                    # 장이 바뀌면 하위 초기화
-                    reset_below("chapter")
-                    flush("new_chapter")  # 🚨 그 다음에 flush
-                    continue
-
-                m = PAT_SECTION.match(line)
-                if m:
-                    buf.append(line)  # 🚨 중요: 절 라인을 먼저 버퍼에 추가
-                    meta["section_number"] = f"제{m.group('num')}절"
-                    meta["section_title"] = (m.group('title') or "").strip()
-                    reset_below("section")
-                    flush("new_section")  # 🚨 그 다음에 flush
-                    continue
-
-                m = PAT_DIVISION.match(line)
-                if m:
-                    buf.append(line)  # 🚨 중요: 관 라인을 먼저 버퍼에 추가
-                    meta["division_number"] = f"제{m.group('num')}관"
-                    meta["division_title"] = (m.group('title') or "").strip()
-                    reset_below("division")
-                    flush("new_division")  # 🚨 그 다음에 flush
-                    continue
-
-                # 2-5) 조(의조 포함) - 부칙 내부 조항도 처리
-                m = PAT_ARTICLE.match(line)
-                if m:
-                    buf.append(line)  # 🚨 중요: 조 라인을 먼저 버퍼에 추가
-                    num = m.group("num")
-                    sub = m.group("sub")
-                    meta["article_number"] = f"제{num}조" + (f"의{sub}" if sub else "")
-                    meta["article_title"] = (m.group("title") or "").strip()
-                    # 조가 바뀌면 하위 초기화
-                    reset_below("article")
-                    flush("new_article")  # 🚨 그 다음에 flush
-                    continue
-
-                # 부칙 내부 조항 패턴 체크 (부칙 내에서만)
-                m = PAT_APPENDIX_ARTICLE.match(line)
-                if meta.get("is_appendix") and m:
-                    buf.append(line)  # 🚨 중요: 조 라인을 먼저 버퍼에 추가
-                    num = m.group("num")
-                    title = m.group("title") or ""
-                    meta["article_number"] = f"제{num}조"
-                    meta["article_title"] = title.strip()
-                    # 부칙 내 조항이므로 하위 초기화
-                    reset_below("article")
-                    flush("new_appendix_article")  # 🚨 그 다음에 flush
-                    continue
-
-                # 2-6) 항
-                m = PAT_PARAGRAPH.match(line)
-                if m:
-                    # 새 항이 시작되면 이전 버퍼를 항 단위로 flush
-                    flush("new_paragraph")
-                    pnum = m.group("p") or m.group("p2")
-                    meta["paragraph_number"] = pnum
-                    # 항 하위 초기화
-                    meta["subparagraph_number"] = ""
-                    meta["item_number"] = ""
-                    # 항 마커 제거 후 본문만 버퍼에 넣음
-                    line_wo_marker = PAT_PARAGRAPH.sub("", line, count=1).strip()
-                    buf.append(line_wo_marker)  # 🚨 항 본문을 버퍼에 추가
-                    continue
-
-                # 2-7) 호
-                m = PAT_SUBPARA.match(line)
-                if m:
-                    flush("new_subpara")
-                    if m.group("n1") or m.group("n2"):
-                        sp = m.group("n1") or m.group("n2")  # 숫자 호
-                    else:
-                        sp = (m.group("ko1") or m.group("ko2") or "").strip()  # 한글 호(가, 나…)
-                    meta["subparagraph_number"] = sp
-                    # 호 하위 초기화
-                    meta["item_number"] = ""
-                    line_wo_marker = PAT_SUBPARA.sub("", line, count=1).strip()
-                    buf.append(line_wo_marker)  # 🚨 호 본문을 버퍼에 추가
-                    continue
-
-                # 2-8) 목 (호보다 더 하위)
-                m = PAT_ITEM.match(line)
-                if m:
-                    flush("new_item")
-                    item = (m.group("ko") or m.group("ko2") or "").strip()
-                    meta["item_number"] = item
-                    line_wo_marker = PAT_ITEM.sub("", line, count=1).strip()
-                    buf.append(line_wo_marker)  # 🚨 목 본문을 버퍼에 추가
-                    continue
-
-                # 2-9) 그 외 일반 본문 라인
-                buf.append(line)
-
-            # 3) 마지막 청크 플러시
+                    meta["is_appendix"] = False
+                    meta["is_attachment"] = False
+                    meta["appendix_type"] = "main"
+            
+            # 헤더 패턴들을 라인별로 정리
+            headers_by_line = {}
+            for header in classification_result["headers"]:
+                # HeaderInfo 객체의 line_number 속성 사용
+                line_num = header.line_number
+                if line_num not in headers_by_line:
+                    headers_by_line[line_num] = []
+                headers_by_line[line_num].append(header)
+            
+            # 각 라인 처리
+            for line_num, line in enumerate(lines):
+                current_line_headers = headers_by_line.get(line_num, [])
+                
+                # 헤더가 있는 경우
+                if current_line_headers:
+                    # 이전 버퍼 내용을 청크로 저장
+                    flush("header_found")
+                    
+                    # 헤더별로 메타데이터 업데이트
+                    for header in current_line_headers:
+                         if header.type == "chapter":
+                             meta["chapter_number"] = f"제{header.groups[0]}장"
+                             meta["chapter_title"] = header.groups[1] if len(header.groups) > 1 else ""
+                             reset_below("chapter")
+                         elif header.type == "section":
+                             meta["section_number"] = f"제{header.groups[0]}절"
+                             meta["section_title"] = header.groups[1] if len(header.groups) > 1 else ""
+                             reset_below("section")
+                         elif header.type == "division":
+                             meta["division_number"] = f"제{header.groups[0]}관"
+                             meta["division_title"] = header.groups[1] if len(header.groups) > 1 else ""
+                             reset_below("division")
+                         elif header.type == "article":
+                             meta["article_number"] = f"제{header.groups[0]}조"
+                             if len(header.groups) > 1 and header.groups[1]:
+                                 meta["article_number"] += f"의{header.groups[1]}"
+                             meta["article_title"] = header.groups[2] if len(header.groups) > 2 else ""
+                             reset_below("article")
+                         elif header.type == "paragraph":
+                             meta["paragraph_number"] = header.groups[0] if header.groups[0] else header.groups[1]
+                             reset_below("paragraph")
+                         elif header.type == "subparagraph":
+                             meta["subparagraph_number"] = header.groups[0] if header.groups[0] else header.groups[1]
+                             reset_below("paragraph")
+                         elif header.type == "item":
+                             meta["item_number"] = header.groups[0] if header.groups[0] else header.groups[1]
+                             reset_below("item")
+                         
+                         # Phase 1, 2 시스템의 상태 플래그 통합 (완벽 호환)
+                         if hasattr(header, 'status_flags') and header.status_flags:
+                             meta.update(header.status_flags)
+                             self.logger.debug(f"상태 플래그 통합: {header.status_flags}")
+                    
+                    # 헤더 라인을 버퍼에 추가
+                    buf.append(line)
+                    
+                else:
+                    # 헤더가 없는 경우 (본문)
+                    buf.append(line)
+            
+            # 마지막 버퍼 내용을 청크로 저장
             flush("eof")
-            self.logger.info(f"✅ 위계형 청킹 완료: {len(chunks)}개 청크")
+            
+            self.logger.info(f"✅ 새로운 패턴 시스템으로 청킹 완료: {len(chunks)}개 청크")
             return chunks
-
+            
         except Exception as e:
-            self.logger.error(f"조항 단위 청킹 중 오류: {e}")
+            self.logger.error(f"기존 버퍼 로직 처리 중 오류: {e}")
             return self._fallback_chunking(text)
     
     def _fallback_chunking(self, text: str) -> List[Tuple[str, Dict[str, Any]]]:
@@ -1063,123 +944,7 @@ class HierarchicalProcessor(InteractManager):
             self.logger.error(f"위계형 데이터 검색 중 오류: {e}")
             return []
     
-    def _extract_legal_references(self, query: str) -> Dict[str, Any]:
-        """쿼리에서 조문 참조 추출"""
-        try:
-            refs = {
-                "has_references": False,
-                "articles": [],
-                "paragraphs": [],
-                "items": []
-            }
-            
-            # 조문 패턴 매칭
-            article_matches = re.finditer(self.article_patterns["main_article"], query)
-            for match in article_matches:
-                refs["articles"].append(f"제{match.group(1)}조")
-                refs["has_references"] = True
-            
-            # 조문의 조 패턴 매칭
-            sub_article_matches = re.finditer(self.article_patterns["sub_article"], query)
-            for match in sub_article_matches:
-                refs["articles"].append(f"제{match.group(1)}조의{match.group(2)}")
-                refs["has_references"] = True
-            
-            # 항 패턴 매칭
-            paragraph_matches = re.finditer(self.article_patterns["paragraph"], query)
-            for match in paragraph_matches:
-                refs["paragraphs"].append(f"{match.group(1)}.")
-                refs["has_references"] = True
-            
-            # 호 패턴 매칭
-            item_matches = re.finditer(self.article_patterns["item"], query)
-            for match in item_matches:
-                refs["items"].append(f"{match.group(1)})")
-                refs["has_references"] = True
-            
-            return refs
-            
-        except Exception as e:
-            self.logger.error(f"조문 참조 추출 중 오류: {e}")
-            return {"has_references": False, "articles": [], "paragraphs": [], "items": []}
-    
-    def _search_by_legal_references(self, query: str, top_k: int, 
-                                  legal_refs: Dict[str, Any], 
-                                  filter_conditions: Dict = None) -> List[Dict[str, Any]]:
-        """조문 참조 기반 정확한 검색"""
-        try:
-            # 기본 도메인 설정
-            domain = "legal"
-            if filter_conditions and "domain" in filter_conditions:
-                domain = filter_conditions["domain"]
-            
-            # 조문 참조로 필터링 조건 구성
-            expr_parts = []
-            
-            # 조문 필터
-            if legal_refs["articles"]:
-                article_expr = " || ".join([f'article_number == "{article}"' for article in legal_refs["articles"]])
-                expr_parts.append(f"({article_expr})")
-            
-            # 항 필터
-            if legal_refs["paragraphs"]:
-                paragraph_expr = " || ".join([f'paragraph_number == "{paragraph}"' for paragraph in legal_refs["paragraphs"]])
-                expr_parts.append(f"({paragraph_expr})")
-            
-            # 호 필터
-            if legal_refs["items"]:
-                item_expr = " || ".join([f'item_number == "{item}"' for item in legal_refs["items"]])
-                expr_parts.append(f"({item_expr})")
-            
-            # 기존 필터 조건 추가
-            if filter_conditions:
-                if "domain" in filter_conditions:
-                    expr_parts.append(f'domain == "{filter_conditions["domain"]}"')
-            
-            # 최종 검색 표현식
-            expr = " && ".join(expr_parts) if expr_parts else None
-            
-            # 기존 retrieve_data의 검색 로직 활용
-            results = super().retrieve_data(query, top_k, filter_conditions)
-            
-            # 조문 참조가 있는 결과만 필터링
-            if expr:
-                filtered_results = []
-                for result in results:
-                    # 조문 참조와 일치하는지 확인
-                    if self._matches_legal_references(result, legal_refs):
-                        filtered_results.append(result)
-                return filtered_results
-            
-            return results
-            
-        except Exception as e:
-            self.logger.error(f"조문 참조 검색 중 오류: {e}")
-            return []
-    
-    def _matches_legal_references(self, result: Dict[str, Any], legal_refs: Dict[str, Any]) -> bool:
-        """결과가 조문 참조와 일치하는지 확인"""
-        try:
-            # 조문 매칭
-            if legal_refs["articles"]:
-                result_article = result.get("article_number", "")
-                if not any(article in result_article for article in legal_refs["articles"]):
-                    return False
-            
-            # 항 매칭
-            if legal_refs["paragraphs"]:
-                result_paragraph = result.get("paragraph_number", "")
-                if not any(paragraph in result_paragraph for paragraph in legal_refs["paragraphs"]):
-                    return False
-            
-            # 호 매칭
-            if legal_refs["items"]:
-                result_item = result.get("item_number", "")
-                if not any(item in result_item for item in legal_refs["items"]):
-                    return False
-            
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"조문 참조 매칭 중 오류: {e}")
-            return True  # 오류 시 매칭된 것으로 처리
+    # 기존 패턴 기반 메서드들은 새로운 패턴 시스템으로 대체되어 삭제됨
+    # - _extract_legal_references: PatternScanner로 대체
+    # - _search_by_legal_references: 새로운 패턴 시스템으로 대체
+    # - _matches_legal_references: 새로운 패턴 시스템으로 대체
