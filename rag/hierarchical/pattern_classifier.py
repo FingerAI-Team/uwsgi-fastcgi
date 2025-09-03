@@ -13,7 +13,7 @@ class PatternClassifier:
     """패턴 분류기"""
     
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger('hierarchical')
         
         # 참조/인용 패턴 정의
         self.reference_patterns = [

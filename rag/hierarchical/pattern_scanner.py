@@ -12,7 +12,7 @@ class PatternScanner:
     """법령 헤더 패턴 스캐너"""
     
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger('hierarchical')
         
         # 정규식 패턴 정의 (FLAGS 설정)
         self.FLAGS = re.UNICODE | re.MULTILINE
