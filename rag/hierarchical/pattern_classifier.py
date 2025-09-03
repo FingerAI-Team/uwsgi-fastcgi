@@ -169,18 +169,15 @@ class PatternClassifier:
     def _is_quoted_text(self, pattern: HeaderInfo) -> bool:
         """패턴이 따옴표로 감싸진 텍스트인지 확인"""
         try:
-            line_text = pattern.line_text
+            # 패턴 텍스트 자체만 검사 (전체 라인이 아님)
+            pattern_text = pattern.text.strip()
             
-            # 따옴표 패턴 체크
-            quote_patterns = [
-                r'["""].*["""]',  # 일반 따옴표
-                r'[''].*['']',    # 작은따옴표
-            ]
-            
-            for quote_pattern in quote_patterns:
-                if re.search(quote_pattern, line_text):
-                    self.logger.debug(f"따옴표로 감싸진 텍스트: {pattern.text}")
-                    return True
+            # 패턴이 따옴표로 시작하고 끝나는지 확인
+            if (pattern_text.startswith('"') and pattern_text.endswith('"')) or \
+               (pattern_text.startswith('"') and pattern_text.endswith('"')) or \
+               (pattern_text.startswith("'") and pattern_text.endswith("'")):
+                self.logger.debug(f"따옴표로 감싸진 텍스트: {pattern_text}")
+                return True
             
             return False
             
