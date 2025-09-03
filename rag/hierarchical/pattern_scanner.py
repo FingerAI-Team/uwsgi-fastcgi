@@ -20,29 +20,20 @@ class PatternScanner:
         self.FLAGS = re.UNICODE | re.MULTILINE
         
         # 헤더 패턴 정의
-        self.header_patterns = [
-            # 장/절/관
-            (r"제(\d+)장", "chapter", "장"),
-            (r"제(\d+)절", "section", "절"),
-            (r"제(\d+)관", "division", "관"),
-            
-            # 조 (의조 포함)
-            (r"제(\d+)조(?:의(\d+))?", "article", "조"),
-            
-            # 항
-            (r"\((\d+)\)", "paragraph", "항"),
-            (r"①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩", "paragraph", "항"),
-            
-            # 호
-            (r"(\d+)\.", "subparagraph", "호"),
-            
-            # 목
-            (r"([가-힣])\.", "item", "목"),
+        self.patterns = [
+            ("chapter", r'제(\d+)장', "장"),
+            ("section", r'제(\d+)절', "절"),
+            ("division", r'제(\d+)관', "관"),
+            ("article", r'제(\d+)조(?:의(\d+))?', "조"),
+            ("paragraph", r'\((\d+)\)', "항"),
+            ("paragraph", r'①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩', "항"),
+            ("subparagraph", r'(\d+\.)', "호"),  # 마침표 포함
+            ("item", r'^([가-힣])\.', "목"),     # 라인 시작에만
         ]
         
         # 컴파일된 정규식 패턴들
         self.compiled_patterns = []
-        for pattern, pattern_type, description in self.header_patterns:
+        for pattern_type, pattern, description in self.patterns:
             try:
                 compiled = re.compile(pattern, self.FLAGS)
                 self.compiled_patterns.append((compiled, pattern_type, description))

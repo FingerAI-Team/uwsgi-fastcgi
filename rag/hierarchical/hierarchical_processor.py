@@ -247,7 +247,7 @@ class HierarchicalProcessor(InteractManager):
                              if len(header.groups) > 0:
                                  meta["subparagraph_number"] = header.groups[0] if header.groups[0] else (header.groups[1] if len(header.groups) > 1 else "")
                                  self.logger.debug(f"   ✅ 호 정보 업데이트: {meta['subparagraph_number']}")
-                                 reset_below("paragraph")
+                                 reset_below("subparagraph")
                          elif header.type == "item":
                              if len(header.groups) > 0:
                                  meta["item_number"] = header.groups[0] if header.groups[0] else (header.groups[1] if len(header.groups) > 1 else "")
