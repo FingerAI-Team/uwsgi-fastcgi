@@ -75,6 +75,11 @@ class HierarchicalProcessor(InteractManager):
             for pattern in all_patterns:
                 # HeaderInfo 객체로 변환
                 from .data_structures import HeaderInfo
+                # groups 튜플 안전성 확인
+                groups = pattern.get('groups', ())
+                if groups is None:
+                    groups = ()
+                
                 header_info = HeaderInfo(
                     type=pattern['type'],
                     description=pattern['description'],
@@ -83,7 +88,7 @@ class HierarchicalProcessor(InteractManager):
                     end=pattern['end'],
                     line_number=pattern['line_number'],
                     line_text=pattern['line_text'],
-                    groups=pattern['groups']
+                    groups=groups
                 )
                 analysis_result.add_pattern(header_info)
             
@@ -201,37 +206,47 @@ class HierarchicalProcessor(InteractManager):
                     # 헤더별로 메타데이터 업데이트
                     for header in current_line_headers:
                          if header.type == "chapter":
-                             meta["chapter_number"] = f"제{header.groups[0]}장"
-                             meta["chapter_title"] = header.groups[1] if len(header.groups) > 1 else ""
-                             reset_below("chapter")
+                             if len(header.groups) > 0:
+                                 meta["chapter_number"] = f"제{header.groups[0]}장"
+                                 meta["chapter_title"] = header.groups[1] if len(header.groups) > 1 else ""
+                                 reset_below("chapter")
                          elif header.type == "section":
-                             meta["section_number"] = f"제{header.groups[0]}절"
-                             meta["section_title"] = header.groups[1] if len(header.groups) > 1 else ""
-                             reset_below("section")
+                             if len(header.groups) > 0:
+                                 meta["section_number"] = f"제{header.groups[0]}절"
+                                 meta["section_title"] = header.groups[1] if len(header.groups) > 1 else ""
+                                 reset_below("section")
                          elif header.type == "division":
-                             meta["division_number"] = f"제{header.groups[0]}관"
-                             meta["division_title"] = header.groups[1] if len(header.groups) > 1 else ""
-                             reset_below("division")
+                             if len(header.groups) > 0:
+                                 meta["division_number"] = f"제{header.groups[0]}관"
+                                 meta["division_title"] = header.groups[1] if len(header.groups) > 1 else ""
+                                 reset_below("division")
                          elif header.type == "article":
-                             meta["article_number"] = f"제{header.groups[0]}조"
-                             if len(header.groups) > 1 and header.groups[1]:
-                                 meta["article_number"] += f"의{header.groups[1]}"
-                             meta["article_title"] = header.groups[2] if len(header.groups) > 2 else ""
-                             reset_below("article")
+                             if len(header.groups) > 0:
+                                 meta["article_number"] = f"제{header.groups[0]}조"
+                                 if len(header.groups) > 1 and header.groups[1]:
+                                     meta["article_number"] += f"의{header.groups[1]}"
+                                 meta["article_title"] = header.groups[2] if len(header.groups) > 2 else ""
+                                 reset_below("article")
                          elif header.type == "paragraph":
-                             meta["paragraph_number"] = header.groups[0] if header.groups[0] else header.groups[1]
-                             reset_below("paragraph")
+                             if len(header.groups) > 0:
+                                 meta["paragraph_number"] = header.groups[0] if header.groups[0] else (header.groups[1] if len(header.groups) > 1 else "")
+                                 reset_below("paragraph")
                          elif header.type == "subparagraph":
-                             meta["subparagraph_number"] = header.groups[0] if header.groups[0] else header.groups[1]
-                             reset_below("paragraph")
+                             if len(header.groups) > 0:
+                                 meta["subparagraph_number"] = header.groups[0] if header.groups[0] else (header.groups[1] if len(header.groups) > 1 else "")
+                                 reset_below("paragraph")
                          elif header.type == "item":
-                             meta["item_number"] = header.groups[0] if header.groups[0] else header.groups[1]
-                             reset_below("item")
+                             if len(header.groups) > 0:
+                                 meta["item_number"] = header.groups[0] if header.groups[0] else (header.groups[1] if len(header.groups) > 1 else "")
+                                 reset_below("item")
                          
                          # Phase 1, 2 시스템의 상태 플래그 통합 (완벽 호환)
                          if hasattr(header, 'status_flags') and header.status_flags:
                              meta.update(header.status_flags)
                              self.logger.debug(f"상태 플래그 통합: {header.status_flags}")
+                         
+                         # 디버깅: groups 튜플 상태 확인
+                         self.logger.debug(f"헤더 타입: {header.type}, groups: {header.groups}, groups 길이: {len(header.groups)}")
                     
                     # 헤더 라인을 버퍼에 추가
                     buf.append(line)
