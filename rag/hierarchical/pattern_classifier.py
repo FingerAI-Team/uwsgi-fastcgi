@@ -118,14 +118,21 @@ class PatternClassifier:
             
             self.logger.debug(f"🔍 참조 패턴 판별 시작: '{header_text}' (타입: {pattern.type})")
             
-            # 참조 패턴들 체크
+            # 1단계: 범위 표현인 경우 문맥 검사
+            if self._is_range_expression(header_text):
+                # 생략/규정 키워드가 뒤따르면 헤더로 분류
+                if self._has_omission_keyword_after(pattern):
+                    self.logger.debug(f"✅ 범위 + 생략 키워드로 헤더 판별: '{header_text}'")
+                    return False  # 헤더로 분류
+            
+            # 2단계: 참조 패턴들 체크
             for compiled_pattern, description in self.compiled_reference_patterns:
                 if compiled_pattern.search(header_text):
                     self.logger.debug(f"✅ 참조 패턴 매칭: {description} - '{header_text}'")
                     self.logger.debug(f"   📍 매칭된 정규식: {compiled_pattern.pattern}")
                     return True
             
-            # 추가 문맥 분석
+            # 3단계: 추가 문맥 분석
             if self._has_postposition_after(pattern):
                 self.logger.debug(f"✅ 조사 뒤에 오는 패턴: '{header_text}'")
                 return True
@@ -179,6 +186,46 @@ class PatternClassifier:
             
         except Exception as e:
             self.logger.error(f"따옴표 확인 중 오류: {e}")
+            return False
+    
+    def _is_range_expression(self, header_text: str) -> bool:
+        """패턴이 범위 표현인지 확인"""
+        try:
+            range_patterns = [
+                r'제\d+[장절관조]부터\s+제\d+[장절관조]까지',
+                r'제\d+조부터\s+제\d+조까지',
+                r'제\d+장부터\s+제\d+장까지'
+            ]
+            
+            for pattern in range_patterns:
+                if re.search(pattern, header_text):
+                    self.logger.debug(f"범위 표현 감지: '{header_text}'")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"범위 표현 확인 중 오류: {e}")
+            return False
+    
+    def _has_omission_keyword_after(self, pattern: HeaderInfo) -> bool:
+        """패턴 뒤에 생략/규정 키워드가 있는지 확인"""
+        try:
+            line_text = pattern.line_text
+            after_pattern = line_text[pattern.end:].strip()
+            
+            # 생략/규정 키워드 체크
+            omission_keywords = ["생략", "omission", "별표", "같다", "규정한다", "적용한다", "시행한다"]
+            
+            for keyword in omission_keywords:
+                if keyword in after_pattern:
+                    self.logger.debug(f"생략/규정 키워드 발견: '{pattern.text}' + '{keyword}' (뒤따르는 텍스트: '{after_pattern[:30]}...')")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"생략 키워드 확인 중 오류: {e}")
             return False
     
     def analyze_complex_patterns(self, complex_patterns: List[HeaderInfo]) -> List[Dict[str, Any]]:
