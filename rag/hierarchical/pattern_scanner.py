@@ -13,6 +13,8 @@ class PatternScanner:
     
     def __init__(self):
         self.logger = logging.getLogger('hierarchical')
+        # 로거 레벨을 DEBUG로 설정
+        self.logger.setLevel(logging.DEBUG)
         
         # 정규식 패턴 정의 (FLAGS 설정)
         self.FLAGS = re.UNICODE | re.MULTILINE

@@ -18,6 +18,8 @@ class HierarchicalProcessor(InteractManager):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.logger = logging.getLogger('hierarchical')
+        # 로거 레벨을 DEBUG로 설정
+        self.logger.setLevel(logging.DEBUG)
         
         # 새로운 패턴 시스템으로 대체됨 (PatternScanner 사용)
         # 기존 article_patterns는 삭제됨

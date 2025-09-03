@@ -14,6 +14,8 @@ class PatternClassifier:
     
     def __init__(self):
         self.logger = logging.getLogger('hierarchical')
+        # 로거 레벨을 DEBUG로 설정
+        self.logger.setLevel(logging.DEBUG)
         
         # 참조/인용 패턴 정의
         self.reference_patterns = [
