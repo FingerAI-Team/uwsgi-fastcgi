@@ -146,17 +146,49 @@ class RagChatService:
             # 도메인 선택 우선순위: 사용자 지정 > 도메인 셀렉터 > 기본 도메인
             search_kwargs = kwargs.copy()
             
-            # 1. 사용자가 직접 지정한 도메인이 있으면 우선 사용
+            # 사용자 제공 도메인 정규화 (허용 범위)
+            allowed_domains = []
             if "domains" in kwargs and kwargs["domains"]:
-                logger.info(f"[도메인 선택] 사용자 지정 도메인 우선 사용: {kwargs['domains']}")
+                if isinstance(kwargs["domains"], list):
+                    allowed_domains = [d.strip() for d in kwargs["domains"] if isinstance(d, str) and d.strip()]
+                else:
+                    allowed_domains = [str(kwargs["domains"]).strip()]
             elif "domain" in kwargs and kwargs["domain"]:
-                logger.info(f"[도메인 선택] 사용자 지정 단일 도메인 우선 사용: {kwargs['domain']}")
-            # 2. 사용자 지정이 없고 도메인 셀렉터가 도메인을 찾았으면 사용
-            elif domain_result["domain_candidates"]:
-                search_kwargs["domains"] = domain_result["domain_candidates"]
-                logger.info(f"[도메인 선택] 도메인 셀렉터 결과 사용: {domain_result['domain_candidates']}")
-            # 3. 둘 다 없으면 전체 도메인에서 검색
+                if isinstance(kwargs["domain"], list):
+                    allowed_domains = [d.strip() for d in kwargs["domain"] if isinstance(d, str) and d.strip()]
+                elif isinstance(kwargs["domain"], str) and kwargs["domain"].strip():
+                    allowed_domains = [kwargs["domain"].strip()]
+            
+            domain_candidates = domain_result.get("domain_candidates", [])
+            
+            if allowed_domains:
+                # 프론트가 제공한 도메인 범위 내에서만 자동 추론 결과를 사용
+                if domain_candidates:
+                    intersection = [d for d in domain_candidates if d in allowed_domains]
+                    if intersection:
+                        search_kwargs["domains"] = intersection
+                        # 단일 도메인 키는 제거하여 우선순위 충돌 방지
+                        if "domain" in search_kwargs:
+                            search_kwargs.pop("domain", None)
+                        logger.info(f"[도메인 선택] 사용자 제공 범위 내 추론 결과 사용(교집합): {intersection} (허용: {allowed_domains}, 후보: {domain_candidates})")
+                    else:
+                        # 교집합이 없으면 사용자 제공 범위를 사용
+                        search_kwargs["domains"] = allowed_domains
+                        if "domain" in search_kwargs:
+                            search_kwargs.pop("domain", None)
+                        logger.info(f"[도메인 선택] 추론 결과와 교집합 없음 → 사용자 제공 범위 사용: {allowed_domains}")
+                else:
+                    # 추론 결과가 없으면 사용자 제공 범위를 사용
+                    search_kwargs["domains"] = allowed_domains
+                    if "domain" in search_kwargs:
+                        search_kwargs.pop("domain", None)
+                    logger.info(f"[도메인 선택] 도메인 추론 없음 → 사용자 제공 범위 사용: {allowed_domains}")
+            elif domain_candidates:
+                # 사용자 제공이 없으면 추론 결과 사용
+                search_kwargs["domains"] = domain_candidates
+                logger.info(f"[도메인 선택] 도메인 셀렉터 결과 사용: {domain_candidates}")
             else:
+                # 아무 것도 없으면 전체 도메인 검색
                 logger.info(f"[도메인 선택] 전체 도메인에서 검색")
             
             # 검색 결과만 반환 (도메인 정보는 검색 파라미터로만 사용)

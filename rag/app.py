@@ -1506,15 +1506,13 @@ def insert_raw_data():
                     status_counts["error"] += 1
                     continue
 
+                # author와 date는 선택사항이므로 기본값 설정
+                if 'author' not in doc:
+                    doc['author'] = 'unknown'
+                if 'tags' not in doc:
+                    doc['tags'] = {}
                 if 'date' not in doc['tags']:
-                    results.append({
-                        "status": "error",
-                        "result_code": "F000005",
-                        "message": "tags.date는 필수 입력값입니다.",
-                        "title": doc['title']
-                    })
-                    status_counts["error"] += 1
-                    continue
+                    doc['tags']['date'] = 'unknown'
 
                 # passage_id가 정수인지 확인
                 try:
@@ -3305,84 +3303,321 @@ def legal_insert():
                     status_counts["error"] += 1
                     continue
 
+                # author와 date는 선택사항이므로 기본값 설정
+                if 'author' not in doc:
+                    doc['author'] = 'unknown'
+                if 'tags' not in doc:
+                    doc['tags'] = {}
                 if 'date' not in doc['tags']:
+                    doc['tags']['date'] = 'unknown'
+
+                # passage_id가 정수인지 확인
+                try:
+                    passage_id = int(doc['passage_id'])
+                    doc['passage_id'] = passage_id
+                except (ValueError, TypeError):
                     results.append({
                         "status": "error",
-                        "result_code": "F000006",
-                        "message": "tags.date는 필수 입력값입니다.",
-                        "title": doc['title'],
-                        "index": doc_index
+                        "result_code": "F000008",
+                        "message": "passage_id는 정수여야 합니다.",
+                        "title": doc['title']
                     })
                     status_counts["error"] += 1
                     continue
                 
-                # 위계형 삽입 실행
-                insert_result = processor.insert_hierarchical_data(
-                    domain=doc['domain'],
-                    doc_id=f"{doc['title']}_{doc['tags']['date']}",  # 자동 생성
-                    title=doc['title'],
-                    author=doc['author'],
-                    text=doc['text'],
-                    info=doc.get('info', {}),
-                    tags=doc['tags'],
-                    ignore=ignore
-                )
+                # 유효한 문서 목록에 추가
+                valid_documents.append(doc)
                 
-                if insert_result == "success":
-                    results.append({
-                        "status": "success",
-                        "result_code": "S000000",
-                        "message": "위계형 삽입이 성공적으로 완료되었습니다.",
-                        "title": doc['title'],
-                        "index": doc_index
-                    })
-                    status_counts["success"] += 1
-                elif insert_result == "skipped":
-                    results.append({
-                        "status": "skipped",
-                        "result_code": "S000001",
-                        "message": "중복 문서로 인해 건너뛰었습니다.",
-                        "title": doc['title'],
-                        "index": doc_index
-                    })
-                    status_counts["skipped"] += 1
-                else:
-                    results.append({
-                        "status": "error",
-                        "result_code": "F000007",
-                        "message": f"삽입 중 오류가 발생했습니다: {insert_result}",
-                        "title": doc['title'],
-                        "index": doc_index
-                    })
-                    status_counts["error"] += 1
-                    
             except Exception as e:
+                logger.error(f"Error validating document: {str(e)}")
                 results.append({
                     "status": "error",
-                    "result_code": "F000008",
-                    "message": f"문서 처리 중 오류가 발생했습니다: {str(e)}",
-                    "title": doc.get('title', 'unknown'),
-                    "index": doc_index
+                    "result_code": "F000006",
+                    "message": f"문서 유효성 검사 중 오류가 발생했습니다: {str(e)}",
+                    "title": doc.get('title', 'unknown')
                 })
                 status_counts["error"] += 1
         
-        # 최종 응답
+        # 도메인별로 문서 그룹화
+        domain_documents = {}
+        for doc in valid_documents:
+            domain = doc['domain']
+            if domain not in domain_documents:
+                domain_documents[domain] = []
+            domain_documents[domain].append(doc)
+        
+        # 각 도메인별 처리
+        for domain, docs in domain_documents.items():
+            try:
+                # 도메인 처리 시작 시간 기록
+                domain_start_time = time.time()
+                logger.info(f"도메인 '{domain}' 처리 시작 - 문서 수: {len(docs)}개")
+                
+                # 도메인이 없으면 생성
+                if domain not in milvus_db.get_list_collection():
+                    interact_manager.create_domain(domain)
+                    # 새로 생성된 컬렉션 로드
+                    collection = Collection(domain)
+                    collection.load()
+                    print(f"[DEBUG] New collection {domain} created and loaded")
+                
+                # ---------- 중복 문서 일괄 검사 및 삭제 처리 시작 ----------
+                if not ignore:  # ignore=False인 경우만 중복 검사 및 삭제 수행
+                    duplicate_check_start = time.time()
+                    
+                    # 문서 ID 목록 생성 및 해시 처리
+                    doc_ids = []
+                    doc_id_to_passage_ids = {}  # {doc_id: [passage_id1, passage_id2, ...]}
+                    
+                    for doc in docs:
+                        raw_doc_id = doc['doc_id']
+                        hashed_doc_id = interact_manager.data_p.hash_text(raw_doc_id, hash_type='blake')
+                        passage_id = doc['passage_id']
+                        
+                        if hashed_doc_id not in doc_id_to_passage_ids:
+                            doc_id_to_passage_ids[hashed_doc_id] = []
+                            doc_ids.append(hashed_doc_id)
+                        
+                        doc_id_to_passage_ids[hashed_doc_id].append(passage_id)
+                    
+                    # 중복 체크 (일괄 처리)
+                    logger.info(f"도메인 '{domain}'에서 {len(doc_ids)}개 문서의 중복 여부 일괄 확인")
+                    duplicate_results = interact_manager.check_duplicates(doc_ids, domain)
+                    
+                    if duplicate_results:
+                        # 일괄 삭제를 위한 passage_uid 목록 생성
+                        passage_uids_to_delete = []
+                        for hashed_doc_id in duplicate_results:
+                            for passage_id in doc_id_to_passage_ids.get(hashed_doc_id, []):
+                                passage_uid = f"{hashed_doc_id}-p{passage_id}"
+                                passage_uids_to_delete.append(passage_uid)
+                        
+                        if passage_uids_to_delete:
+                            # 일괄 삭제 실행
+                            logger.info(f"도메인 '{domain}'에서 {len(passage_uids_to_delete)}개 중복 passage 일괄 삭제 시작")
+                            
+                            try:
+                                collection = Collection(domain)
+                                collection.load()
+                                
+                                # 효율적인 일괄 삭제를 위한 쿼리 생성
+                                # 최대 100개씩 나누어 삭제 (OR 연산자 과부하 방지)
+                                batch_size = 100
+                                total_deleted = 0
+                                
+                                for i in range(0, len(passage_uids_to_delete), batch_size):
+                                    batch = passage_uids_to_delete[i:i+batch_size]
+                                    expr_parts = [f'passage_uid == "{uid}"' for uid in batch]
+                                    del_expr = " || ".join(expr_parts)
+                                    
+                                    # 삭제 실행
+                                    deleted_result = collection.delete(del_expr)
+                                    
+                                    # 삭제 결과 처리
+                                    if hasattr(deleted_result, 'delete_count'):
+                                        deleted_count = deleted_result.delete_count
+                                    else:
+                                        try:
+                                            deleted_count = int(deleted_result)
+                                        except (TypeError, ValueError):
+                                            deleted_count = getattr(deleted_result, 'num_deleted', 0) or getattr(deleted_result, 'count', 0)
+                                    
+                                    total_deleted += deleted_count
+                                
+                                # 변경사항 즉시 적용
+                                collection.flush()
+                                logger.info(f"도메인 '{domain}'에서 총 {total_deleted}개 중복 passage 삭제 완료")
+                                
+                            except Exception as delete_error:
+                                logger.error(f"일괄 삭제 오류: {str(delete_error)}")
+                                # 일괄 삭제 실패 시 개별 삭제로 폴백
+                                total_deleted = 0
+                                for passage_uid in passage_uids_to_delete:
+                                    try:
+                                        del_expr = f'passage_uid == "{passage_uid}"'
+                                        deleted_result = collection.delete(del_expr)
+                                        total_deleted += 1
+                                    except Exception as e:
+                                        logger.error(f"개별 passage 삭제 실패: {passage_uid}, 오류: {str(e)}")
+                                
+                                collection.flush()
+                                logger.info(f"도메인 '{domain}'에서 개별 삭제로 총 {total_deleted}개 passage 삭제 완료")
+                    
+                    duplicate_check_end = time.time()
+                    logger.info(f"중복 검사 및 삭제 소요 시간: {duplicate_check_end - duplicate_check_start:.4f}초")
+                # ---------- 중복 문서 일괄 검사 및 삭제 처리 종료 ----------
+                
+                # 문서 처리 함수 정의 (이제 중복 검사 및 삭제는 하지 않음)
+                def process_document(doc):
+                    try:
+                        # 문서 ID 해시 및 passage_uid 생성
+                        raw_doc_id = doc['doc_id']
+                        hashed_doc_id = interact_manager.data_p.hash_text(raw_doc_id, hash_type='blake')
+                        passage_id = doc['passage_id']
+                        passage_uid = f"{hashed_doc_id}-p{passage_id}"
+                        
+                        # 중복 체크 결과 활용
+                        is_duplicate = duplicate_results and hashed_doc_id in duplicate_results if not ignore else False
+                        
+                        # 임베딩 생성 및 데이터 삽입
+                        # 중복인 경우와 ignore=true인 경우 건너뛰기
+                        if ignore and is_duplicate:
+                            return {
+                                "doc_id": doc['doc_id'],
+                                "passage_id": doc['passage_id'],
+                                "domain": doc['domain'],
+                                "title": doc['title'],
+                                "status": "skipped",
+                                "result_code": "F000000",
+                                "message": "이미 존재하는 문서로 건너뛰었습니다."
+                            }
+                        
+                        # 실제 임베딩 및 데이터 삽입 수행
+                        # raw_insert_data 메소드에서 중복 검사 및 삭제 로직 없이 임베딩 및 배치 삽입만 수행
+                        status = interact_manager.raw_insert_data_improved(
+                            doc['domain'],
+                            hashed_doc_id,  # 이미 해시된 doc_id 전달
+                            raw_doc_id,     # 원본 doc_id도 전달
+                            doc['passage_id'],
+                            passage_uid,    # 미리 생성된 passage_uid 전달
+                            doc['title'],
+                            doc['author'],
+                            doc['text'],
+                            doc.get('info', {}),
+                            doc['tags']
+                        )
+                        
+                        result = {
+                            "doc_id": doc['doc_id'],
+                            "passage_id": doc['passage_id'],
+                            "domain": doc['domain'],
+                            "title": doc['title']
+                        }
+                        
+                        if is_duplicate:
+                            result.update({
+                                "status": "updated",
+                                "result_code": "F000000",
+                                "message": "기존 문서를 삭제하고 새로운 문서로 업데이트했습니다."
+                            })
+                        else:
+                            result.update({
+                                "status": "success",
+                                "result_code": "F000000",
+                                "message": "문서가 성공적으로 저장되었습니다."
+                            })
+                        
+                        return result
+                    except Exception as e:
+                        logger.error(f"Error inserting document: {str(e)}")
+                        import traceback
+                        logger.error(f"Error details: {traceback.format_exc()}")
+                        return {
+                            "status": "error",
+                            "result_code": "F000006",
+                            "message": f"문서 저장 중 오류가 발생했습니다: {str(e)}",
+                            "title": doc.get('title', 'unknown')
+                        }
+                
+                # 문서 단위 병렬 처리 실행 - 스레드 수 제한하여 GPU 충돌 방지
+                max_document_threads = min(
+                    int(os.getenv('INSERT_DOCUMENT_THREADS', '2')),  # 기본값을 5에서 2로 변경하여 동시성 문제 감소
+                    len(docs)  # 문서 수보다 많은 스레드는 불필요
+                )
+                logger.info(f"[TIMING] 도메인 '{domain}'의 문서 병렬 처리 시작: {len(docs)}개 문서, 최대 {max_document_threads}개 스레드")
+                
+                # 문서 처리를 병렬로 수행
+                doc_results = []
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_document_threads) as executor:
+                    # 각 문서에 대한 처리 작업 제출
+                    future_to_doc = {executor.submit(process_document, doc): doc for doc in docs}
+                    
+                    # 결과 수집
+                    for future in concurrent.futures.as_completed(future_to_doc):
+                        try:
+                            result = future.result()
+                            doc_results.append(result)
+                            
+                            # 상태 카운터 업데이트
+                            if result["status"] == "success":
+                                status_counts["success"] += 1
+                            elif result["status"] == "updated":
+                                status_counts["updated"] += 1
+                            elif result["status"] == "skipped":
+                                status_counts["skipped"] += 1
+                            elif result["status"] == "error":
+                                status_counts["error"] += 1
+                            
+                            # 결과 목록에 추가
+                            results.append(result)
+                        except Exception as e:
+                            logger.error(f"Error getting result: {str(e)}")
+                            # 오류 처리
+                            error_result = {
+                                "status": "error",
+                                "result_code": "F000006",
+                                "message": f"문서 처리 결과 수집 중 오류: {str(e)}",
+                                "domain": domain
+                            }
+                            results.append(error_result)
+                            status_counts["error"] += 1
+                
+                logger.info(f"[TIMING] 도메인 '{domain}'의 문서 처리 완료: {len(doc_results)}개 결과")
+                
+                # 도메인 처리 완료 로깅
+                domain_end_time = time.time()
+                logger.info(f"도메인 '{domain}' 처리 완료 - 소요시간: {domain_end_time - domain_start_time:.4f}초, 메모리: {get_memory_usage():.2f} MB")
+                
+            except Exception as e:
+                logger.error(f"Error processing domain {domain}: {str(e)}")
+                # 도메인 처리 실패 시 해당 도메인의 모든 문서를 오류로 처리
+                for doc in docs:
+                    error_result = {
+                        "status": "error",
+                        "result_code": "F000006",
+                        "message": f"도메인 처리 중 오류 발생: {str(e)}",
+                        "title": doc.get('title', 'unknown'),
+                        "domain": domain
+                    }
+                    results.append(error_result)
+                    status_counts["error"] += 1
+        
+        # 전체 상태 결정
+        if status_counts["error"] == len(request_data["documents"]):
+            overall_status = "error"  # 모두 실패
+            status_code = 500
+        elif status_counts["error"] == 0 and status_counts["skipped"] == 0 and status_counts["updated"] == 0:
+            overall_status = "success"  # 모두 새로 성공
+            status_code = 200
+        elif status_counts["error"] == 0:
+            overall_status = "partial_success"  # 일부는 성공/업데이트/건너뜀
+            status_code = 207  # Multi-Status
+        else:
+            overall_status = "partial_error"  # 일부 실패
+            status_code = 207  # Multi-Status
+        
+        # API 전체 실행 시간 측정 완료
+        api_end_time = time.time()
+        api_duration = api_end_time - start_time
+        memory_end = get_memory_usage()
+        logger.info(f"=== RAW INSERT API 종료 === 총 소요시간: {api_duration:.4f}초, 최종 상태: {overall_status}, 문서: {len(request_data['documents'])}개, 성공: {status_counts['success']}개, 건너뜀: {status_counts['skipped']}개, 업데이트: {status_counts['updated']}개, 오류: {status_counts['error']}개")
+        logger.info(f"메모리 사용량 변화: {memory_before:.2f}MB → {memory_end:.2f}MB (변화: {memory_end-memory_before:.2f}MB)")
+        
         return jsonify({
-            "result_code": "S000000" if status_counts["error"] == 0 else "S000001",
-            "message": "위계형 법령 삽입이 완료되었습니다.",
-            "data": {
-                "total_documents": len(request_data["documents"]),
-                "status_counts": status_counts,
-                "results": results
-            },
-            "timestamp": datetime.now().isoformat()
-        }), 200 if status_counts["error"] == 0 else 207
+            "status": overall_status,
+            "message": f"총 {len(request_data['documents'])}개 문서 중 {status_counts['success']}개 성공, {status_counts['updated']}개 업데이트, {status_counts['skipped']}개 건너뜀, {status_counts['error']}개 실패",
+            "status_counts": status_counts,
+            "results": results
+        }), status_code
         
     except Exception as e:
-        logger.error(f"위계형 법령 삽입 중 오류: {e}")
+        logger.error(f"Error in insert endpoint: {str(e)}")
+        import traceback
+        logger.error(f"Error in insert_raw_data: {traceback.format_exc()}")
         return jsonify({
-            "result_code": "F000999",
-            "message": f"위계형 법령 삽입 중 오류가 발생했습니다: {str(e)}"
+            "status": "error",
+            "result_code": "F000007",
+            "message": f"요청 처리 중 오류가 발생했습니다: {str(e)}"
         }), 500
 
 
