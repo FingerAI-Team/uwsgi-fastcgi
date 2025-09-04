@@ -1478,8 +1478,8 @@ def insert_raw_data():
         # ignore 옵션 처리 (기본값: True)
         ignore = request_data.get('ignore', True)
 
-        # 필수 필드 검증 (doc_id, passage_id 추가)
-        required_fields = ['doc_id', 'passage_id', 'domain', 'title', 'author', 'text', 'tags']
+        # 필수 필드 검증 (author, info, tags는 선택 필드로 처리)
+        required_fields = ['doc_id', 'passage_id', 'domain', 'title', 'text']
         results = []
         
         # 상태별 카운터 초기화
@@ -1661,6 +1661,30 @@ def insert_raw_data():
                         
                         # 중복 체크 결과 활용
                         is_duplicate = duplicate_results and hashed_doc_id in duplicate_results if not ignore else False
+
+                        # 최소 변경: ignore=true인 경우, 기존 passage_uid가 있으면 즉시 건너뜀 처리
+                        if ignore:
+                            try:
+                                collection = Collection(domain)
+                                collection.load()
+                                exists = collection.query(
+                                    expr=f'passage_uid == "{passage_uid}"',
+                                    output_fields=["passage_uid"],
+                                    limit=1
+                                )
+                                if exists:
+                                    return {
+                                        "doc_id": doc['doc_id'],
+                                        "passage_id": doc['passage_id'],
+                                        "domain": doc['domain'],
+                                        "title": doc['title'],
+                                        "status": "skipped",
+                                        "result_code": "F000000",
+                                        "message": "이미 존재하는 문서로 건너뛰었습니다."
+                                    }
+                            except Exception as _e:
+                                # 쿼리 실패 시에는 계속 진행 (삽입 시 충돌은 Milvus가 처리)
+                                pass
                         
                         # 임베딩 생성 및 데이터 삽입
                         # 중복인 경우와 ignore=true인 경우 건너뛰기
