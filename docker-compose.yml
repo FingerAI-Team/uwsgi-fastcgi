@@ -218,6 +218,7 @@ services:
       - UWSGI_CHMOD_SOCKET=666
       - RAG_SEARCH_TOP_K=100
       - RERANKER_TOP_K=20
+      - MAX_SYSTEM_PROMPT_CHARS=${MAX_SYSTEM_PROMPT_CHARS:-100000}
     networks:
       - rag_network
     command: uwsgi --ini /prompt/uwsgi.ini

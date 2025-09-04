@@ -245,8 +245,21 @@ class RagChatService:
         def load_system_prompt(inputs):
             search_results = inputs.get("search_results", [])
             has_documents = len(search_results) > 0
-            system_prompt = self._load_system_prompt(has_documents)
-            logger.info(f"[체인 실행] 4단계 - 시스템 프롬프트 로드: 문서 유무={has_documents}, 템플릿={'rag_chat_with_docs' if has_documents else 'rag_chat_no_docs'}")
+            
+            # 우선순위: kwargs.system_prompt_override > 템플릿 분기
+            override_prompt = None
+            try:
+                override_prompt = inputs.get("kwargs", {}).get("system_prompt_override")
+                if isinstance(override_prompt, str) and override_prompt.strip():
+                    logger.info(f"[체인 실행] 4단계 - 시스템 프롬프트 오버라이드 사용: 길이={len(override_prompt)} 문자")
+                    system_prompt = override_prompt
+                else:
+                    system_prompt = self._load_system_prompt(has_documents)
+                    logger.info(f"[체인 실행] 4단계 - 시스템 프롬프트 로드: 문서 유무={has_documents}, 템플릿={'rag_chat_with_docs' if has_documents else 'rag_chat_no_docs'}")
+            except Exception as e:
+                logger.warning(f"[체인 실행] 4단계 - 오버라이드 처리 중 예외, 템플릿 사용: {str(e)}")
+                system_prompt = self._load_system_prompt(has_documents)
+            
             return {
                 "system_prompt": system_prompt,
                 **inputs

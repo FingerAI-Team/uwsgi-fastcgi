@@ -8,6 +8,7 @@ from typing import Dict, Any
 import traceback
 import asyncio
 import httpx
+import base64
 from services.rag_chat_service import RagChatService
 
 # 로깅 설정
@@ -34,6 +35,7 @@ LLM_GATEWAY_ENDPOINT = os.environ.get("LLM_GATEWAY_ENDPOINT", "http://nginx")  #
 VLLM_ENDPOINT = os.environ.get("VLLM_ENDPOINT", "http://vllm:8000")  # vLLM 서비스 엔드포인트 (Mistral-7B)
 VLLM_MODEL = os.environ.get("VLLM_MODEL", "/app/models/mistralai/Mistral-7B-Instruct-v0.2")  # vLLM 모델 경로
 MEMORY_DIR = os.environ.get("MEMORY_DIR", "./memory")
+MAX_SYSTEM_PROMPT_CHARS = int(os.environ.get("MAX_SYSTEM_PROMPT_CHARS", "100000"))
 
 # LLM Provider 설정
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama")  # ollama 또는 vllm
@@ -1217,6 +1219,28 @@ def chatbot():
         stream = data.get("stream", False)
         model = data.get("model")
         
+        # system_prompt_b64 처리 (제공 시 템플릿 분기 우회)
+        system_prompt_override = None
+        try:
+            b64_value = data.get("system_prompt_b64")
+            if isinstance(b64_value, str) and b64_value.strip():
+                # 공백/개행 제거 후 디코드
+                cleaned_b64 = "".join(b64_value.split())
+                decoded_bytes = base64.b64decode(cleaned_b64, validate=False)
+                system_prompt_override = decoded_bytes.decode("utf-8", errors="replace")
+                # 길이 제한 검사
+                if len(system_prompt_override) > MAX_SYSTEM_PROMPT_CHARS:
+                    logger.warning(f"system_prompt_b64 길이 초과: {len(system_prompt_override)} > {MAX_SYSTEM_PROMPT_CHARS}")
+                    return jsonify({
+                        "error": "system_prompt가 허용 길이를 초과했습니다",
+                        "max": MAX_SYSTEM_PROMPT_CHARS,
+                        "length": len(system_prompt_override)
+                    }), 400
+                # 길이만 로깅하여 내용 노출 방지
+                logger.info(f"system_prompt_b64 제공됨: 길이={len(system_prompt_override)} 문자 (상한={MAX_SYSTEM_PROMPT_CHARS})")
+        except Exception as e:
+            logger.warning(f"system_prompt_b64 디코딩 실패, 기본 템플릿 사용: {e}")
+        
         # 필수 파라미터 검증
         if not query:
             return jsonify({"error": "질문이 필요합니다"}), 400
@@ -1253,6 +1277,9 @@ def chatbot():
         for param in ["domains", "domain", "author", "start_date", "end_date", "title", "info_filter", "tags_filter"]:
             if param in data:
                 search_params[param] = data[param]
+        # system_prompt 오버라이드 전파
+        if system_prompt_override:
+            search_params["system_prompt_override"] = system_prompt_override
         
         # 스트리밍 모드에 따라 다른 처리
         if stream:
