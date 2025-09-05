@@ -215,7 +215,9 @@ class InteractManager:
             
             # 새 컬렉션 로드
             collection = Collection(collection_name)
+            print(f"[DEBUG] Collection {collection} pre load")
             collection.load()
+            print(f"[DEBUG] Collection {collection_name} successfully loaded and cached")
             
             # 캐시에 추가
             self.loaded_collections[collection_name] = collection
