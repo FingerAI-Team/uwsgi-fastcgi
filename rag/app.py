@@ -765,8 +765,7 @@ def insert_data():
                     insert_logger.info(f"새 도메인 생성: {domain}")
                     interact_manager.create_domain(domain)
                     # 새로 생성된 컬렉션 로드
-                    collection = Collection(domain)
-                    collection.load()
+                    collection = interact_manager.get_collection(domain)
                     logger.info(f"New collection {domain} created and loaded")
                 
                 # 1. 문서 ID 해시 계산 및 중복 확인 준비
@@ -788,8 +787,7 @@ def insert_data():
                 insert_logger.info(f"문서 ID 해시 계산 완료: {len(doc_hashes)}개")
                 
                 # 컬렉션 로드
-                collection = Collection(domain)
-                collection.load()
+                collection = interact_manager.get_collection(domain)
                 
                 # 2. 중복 문서 일괄 확인 (단일 쿼리로 모든 문서 체크)
                 duplicate_check_start = time.time()
@@ -1560,8 +1558,7 @@ def insert_raw_data():
                 if domain not in milvus_db.get_list_collection():
                     interact_manager.create_domain(domain)
                     # 새로 생성된 컬렉션 로드
-                    collection = Collection(domain)
-                    collection.load()
+                    collection = interact_manager.get_collection(domain)
                     print(f"[DEBUG] New collection {domain} created and loaded")
                 
                 # ---------- 중복 문서 일괄 검사 및 삭제 처리 시작 ----------
@@ -1600,8 +1597,7 @@ def insert_raw_data():
                             logger.info(f"도메인 '{domain}'에서 {len(passage_uids_to_delete)}개 중복 passage 일괄 삭제 시작")
                             
                             try:
-                                collection = Collection(domain)
-                                collection.load()
+                                collection = interact_manager.get_collection(domain)
                                 
                                 # 효율적인 일괄 삭제를 위한 쿼리 생성
                                 # 최대 100개씩 나누어 삭제 (OR 연산자 과부하 방지)
@@ -2577,8 +2573,7 @@ def test_in_operator():
         test_logger.info(f"IN 연산자 테스트 시작: {len(doc_ids)}개 문서, 도메인: {domain}, 배치 크기: {batch_size}")
         
         # 컬렉션 로드
-        collection = Collection(domain)
-        collection.load()
+        collection = interact_manager.get_collection(domain)
         test_logger.info(f"컬렉션 '{domain}' 로드 완료")
         
         # 결과 저장 변수
@@ -2727,8 +2722,7 @@ def test_or_operator():
             }), 404
         
         # 컬렉션 로드
-        collection = Collection(domain)
-        collection.load()
+        collection = interact_manager.get_collection(domain)
         test_logger.info(f"컬렉션 '{domain}' 로드 완료")
         
         # 컬렉션 스키마 로깅 (디버깅용)
@@ -3437,8 +3431,7 @@ def legal_insert():
                 if domain not in milvus_db.get_list_collection():
                     interact_manager.create_domain(domain)
                     # 새로 생성된 컬렉션 로드
-                    collection = Collection(domain)
-                    collection.load()
+                    collection = interact_manager.get_collection(domain)
                     print(f"[DEBUG] New collection {domain} created and loaded")
                 
                 # ---------- 중복 문서 일괄 검사 및 삭제 처리 시작 ----------
@@ -3477,8 +3470,7 @@ def legal_insert():
                             logger.info(f"도메인 '{domain}'에서 {len(passage_uids_to_delete)}개 중복 passage 일괄 삭제 시작")
                             
                             try:
-                                collection = Collection(domain)
-                                collection.load()
+                                collection = interact_manager.get_collection(domain)
                                 
                                 # 효율적인 일괄 삭제를 위한 쿼리 생성
                                 # 최대 100개씩 나누어 삭제 (OR 연산자 과부하 방지)
