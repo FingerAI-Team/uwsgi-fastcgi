@@ -1661,7 +1661,7 @@ def insert_raw_data():
                         
                         # 중복 체크 결과 활용
                         is_duplicate = duplicate_results and hashed_doc_id in duplicate_results if not ignore else False
-
+                        logger.info(f"[DEBUG] is_duplicate: {is_duplicate}, doc_id: {doc['doc_id']}")
                         # 최소 변경: ignore=true인 경우, 기존 passage_uid가 있으면 즉시 건너뜀 처리
                         if ignore:
                             try:
@@ -1699,6 +1699,7 @@ def insert_raw_data():
                                 "message": "이미 존재하는 문서로 건너뛰었습니다."
                             }
                         
+                        logger.info(f"[DEBUG] before raw_insert_data_improved")
                         # 실제 임베딩 및 데이터 삽입 수행
                         # raw_insert_data 메소드에서 중복 검사 및 삭제 로직 없이 임베딩 및 배치 삽입만 수행
                         status = interact_manager.raw_insert_data_improved(
@@ -1733,7 +1734,7 @@ def insert_raw_data():
                                 "result_code": "F000000",
                                 "message": "문서가 성공적으로 저장되었습니다."
                             })
-                        
+                        logger.info(f"[DEBUG] after raw_insert_data_improved, result: {result}")
                         return result
                     except Exception as e:
                         logger.error(f"Error inserting document: {str(e)}")
@@ -1757,8 +1758,9 @@ def insert_raw_data():
                 doc_results = []
                 with concurrent.futures.ThreadPoolExecutor(max_workers=max_document_threads) as executor:
                     # 각 문서에 대한 처리 작업 제출
+                    logger.info(f"[DEBUG] docs: {docs}")
                     future_to_doc = {executor.submit(process_document, doc): doc for doc in docs}
-                    
+                    logger.info(f"[DEBUG] future_to_doc: {future_to_doc}")
                     # 결과 수집
                     for future in concurrent.futures.as_completed(future_to_doc):
                         try:
