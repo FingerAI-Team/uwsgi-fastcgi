@@ -124,7 +124,7 @@ class MilvusEnvManager(MilVus):
             field_schema = FieldSchema(
                 name=schema_name,
                 dtype=data_type,
-                is_primariy=is_primary,
+                is_primary=is_primary,
                 dim=dim 
             )
         elif data_type == DataType.VARCHAR:

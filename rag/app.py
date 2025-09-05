@@ -2219,6 +2219,60 @@ def calculate_domain_document_count(collection, domain_name):
         logger.error(f"도메인 '{domain_name}'의 문서 개수 계산 중 예외 발생: {str(e)}")
         return "계산 불가"
 
+@app.route('/rag/domains/create', methods=['POST'])
+def create_domain():
+    """
+    단일 도메인(컬렉션)을 생성합니다.
+    
+    Request Body:
+    {
+        "domain": "도메인명"
+    }
+    """
+    try:
+        request_data = request.get_json()
+        if not request_data:
+            return jsonify({
+                "result_code": "F000001",
+                "message": "요청 본문이 비어있습니다."
+            }), 400
+        
+        domain = request_data.get('domain')
+        if not domain or not isinstance(domain, str) or not domain.strip():
+            return jsonify({
+                "result_code": "F000002",
+                "message": "domain 필드는 비어있을 수 없습니다."
+            }), 400
+        domain = domain.strip()
+        
+        # 이미 존재하는지 확인
+        available_collections = milvus_db.get_list_collection()
+        if domain in available_collections:
+            return jsonify({
+                "result_code": "S000000",
+                "status": "exists",
+                "message": "이미 존재하는 도메인입니다.",
+                "domain": domain
+            }), 200
+        
+        # 생성
+        logger.info(f"새 도메인 생성: {domain}")
+        interact_manager.create_domain(domain)
+        
+        
+        return jsonify({
+            "result_code": "S000000",
+            "status": "created",
+            "message": "도메인이 성공적으로 생성되었습니다.",
+            "domain": domain
+        }), 201
+    except Exception as e:
+        logger.error(f"도메인 생성 중 오류: {str(e)}")
+        return jsonify({
+            "result_code": "F000010",
+            "message": f"도메인 생성에 실패했습니다: {str(e)}"
+        }), 500
+
 @app.route('/rag/domains/delete', methods=['POST'])
 def delete_domains():
     """
