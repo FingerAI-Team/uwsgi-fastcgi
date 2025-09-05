@@ -751,10 +751,10 @@ class InteractManager:
         cleanse_time = time.time()
         print(f"[TIMING] 텍스트 전처리 완료: {(cleanse_time - start_time):.4f}초")
         
-        # 기본 출력 필드 설정
-        output_fields = ["doc_id", "raw_doc_id", "passage_id", "domain", "title", "author", "text", "info", "tags"]
+        # 기본 출력 필드 후보 (실제 스키마에 있는 필드만 사용)
+        base_output_fields = ["doc_id", "raw_doc_id", "passage_id", "domain", "title", "author", "text", "info", "tags"]
         
-        # 검색 표현식 구성
+        # 검색 표현식 구성 준비
         expr_parts = []
         
         # 도메인 필터
@@ -763,8 +763,9 @@ class InteractManager:
             if 'domain' in filter_conditions:
                 domain = filter_conditions['domain']
             elif 'domains' in filter_conditions:
-                # domains가 있으면 단일 도메인 검색에서는 무시 (app.py에서 처리)
-                return []
+                # domains가 있으면 단일 도메인 검색에서는 무시
+                # (여기서는 실제 검색 컬렉션이 도메인과 1:1이므로 별도 처리 불필요)
+                pass
         
         if not domain:
             # 도메인이 지정되지 않은 경우 기본 도메인 사용
@@ -816,37 +817,37 @@ class InteractManager:
         ]
         available_fields = [field.name for field in collection.schema.fields]
         
+        # 출력 필드: 스키마에 존재하는 필드만 사용, 없으면 '*'
+        output_fields = [f for f in base_output_fields if f in available_fields]
         for field in hierarchical_fields:
             if field in available_fields:
                 output_fields.append(field)
                 print(f"[DEBUG] 위계형 필드 추가: {field}")
-        
+        if not output_fields:
+            output_fields = ["*"]
         print(f"[DEBUG] 최종 output_fields: {output_fields}")
         
-        # 검색 표현식 구성
+        # 검색 표현식 구성 (스키마에 존재하는 필드만 사용)
         expr_build_start = time.time()
-        
-        if domain:
+        if domain and 'domain' in available_fields:
             expr_parts.append(f"domain == '{domain}'")
         
-        # 날짜 범위 필터 (YYYYMMDD 형식 문자열 비교)
-        if filter_conditions and 'date_range' in filter_conditions:
+        # 날짜 범위 필터 (YYYYMMDD 형식 문자열 비교) - 'tags' 필드가 있을 때만
+        if filter_conditions and 'date_range' in filter_conditions and 'tags' in available_fields:
             date_range = filter_conditions['date_range']
-            # 날짜는 문자열 비교를 사용하되, YYYYMMDD 형식이므로 직접 비교 가능
             if date_range.get('start'):
                 expr_parts.append(f"tags['date'] >= '{date_range['start']}'")
             if date_range.get('end'):
                 expr_parts.append(f"tags['date'] <= '{date_range['end']}'")
         
-        # 제목 필터
-        if filter_conditions and 'title' in filter_conditions:
+        # 제목 필터 - 'title' 필드가 있을 때만
+        if filter_conditions and 'title' in filter_conditions and 'title' in available_fields:
             title_query = filter_conditions['title'].replace("'", "''")  # SQL injection 방지
             expr_parts.append(f"title like '%{title_query}%'")
         
-        # info 필드 필터
-        if filter_conditions and 'info' in filter_conditions:
+        # info 필드 필터 - 'info' 필드가 있을 때만
+        if filter_conditions and 'info' in filter_conditions and 'info' in available_fields:
             for key, value in filter_conditions['info'].items():
-                # SQL injection 방지를 위한 이스케이프 처리
                 key = key.replace("'", "''")
                 if isinstance(value, str):
                     value = value.replace("'", "''")
@@ -854,11 +855,10 @@ class InteractManager:
                 else:
                     expr_parts.append(f"info['{key}'] == {value}")
         
-        # tags 필드 필터
-        if filter_conditions and 'tags' in filter_conditions:
+        # tags 필드 필터 - 'tags' 필드가 있을 때만
+        if filter_conditions and 'tags' in filter_conditions and 'tags' in available_fields:
             for key, value in filter_conditions['tags'].items():
                 if key != 'date':  # 날짜는 이미 처리됨
-                    # SQL injection 방지를 위한 이스케이프 처리
                     key = key.replace("'", "''")
                     if isinstance(value, str):
                         value = value.replace("'", "''")
