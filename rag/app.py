@@ -1665,8 +1665,8 @@ def insert_raw_data():
                         # 최소 변경: ignore=true인 경우, 기존 passage_uid가 있으면 즉시 건너뜀 처리
                         if ignore:
                             try:
-                                collection = Collection(domain)
-                                collection.load()
+                                # 캐시/자동 로드를 사용하는 안전한 컬렉션 획득
+                                collection = interact_manager.get_collection(domain)
                                 exists = collection.query(
                                     expr=f'passage_uid == "{passage_uid}"',
                                     output_fields=["passage_uid"],
