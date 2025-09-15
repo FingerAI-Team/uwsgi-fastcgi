@@ -258,6 +258,8 @@ services:
       - "11434:11434"
     networks:
       - rag_network
+    environment:
+      - CUDA_VISIBLE_DEVISES=1
     deploy:
       resources:
         reservations:
