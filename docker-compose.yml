@@ -348,7 +348,7 @@ services:
     environment:
       - VISION_CONFIG=/vision/config.json
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
-      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama-gpu:11434}
+      - OLLAMA_HOST=${VLLM_ENDPOINT:-http://vllm:8000}
       - UWSGI_PROTOCOL=fastcgi
       - UWSGI_SOCKET=/tmp/vision.sock
       - UWSGI_CHMOD_SOCKET=666
