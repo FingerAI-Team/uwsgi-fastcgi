@@ -5,6 +5,7 @@ import json
 import requests
 from typing import Optional, Dict, Any
 import base64
+import httpx
 
 app = Flask(__name__)
 
@@ -30,18 +31,104 @@ def load_config():
 config = load_config()
 logger.info(f"전역 config 변수 내용: {config}")  # 전역 변수에 저장된 설정 내용 로깅
 
-def call_ollama_api(model: str, prompt: str, image_url: str) -> Optional[Dict[str, Any]]:
-    """Ollama API를 호출하여 이미지 분석을 수행합니다."""
+# 환경 변수 설정
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama")  # ollama 또는 vllm
+LLM_SERVER_ENDPOINT = os.environ.get("LLM_SERVER_ENDPOINT", "http://llm-server:8000")  # llm-server (Gemma3 12B)
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://ollama-gpu:11434")  # Ollama 서비스 직접 호출용
+
+def call_vllm_api(model: str, prompt: str, image_base64: str) -> Optional[Dict[str, Any]]:
+    """vLLM OpenAI 호환 API를 호출하여 이미지 분석을 수행합니다."""
     try:
-        # LLM_PROVIDER에 따라 Ollama 서비스 상태 확인
-        llm_provider = os.environ.get("LLM_PROVIDER", "ollama")
-        ollama_host = os.environ.get("OLLAMA_HOST", "http://ollama-gpu:11434")
+        # vLLM OpenAI 호환 API 형식으로 요청 데이터 구성
+        # 이미지가 포함된 경우 OpenAI 형식의 멀티모달 메시지 구조 사용
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_base64}"
+                        }
+                    }
+                ]
+            }
+        ]
         
-        if llm_provider == "vllm":
-            logger.info("vLLM 모드: Ollama 서비스가 다운되어 있습니다")
+        vllm_data = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "temperature": 0.7,
+            "max_tokens": 2048
+        }
         
-        logger.info(f"LLM Host URL: {ollama_host}")
+        logger.info(f"vLLM API 호출: {LLM_SERVER_ENDPOINT}/v1/chat/completions")
+        logger.info(f"vLLM 요청 모델: {model}")
         
+        # vLLM API 호출
+        response = httpx.Client(timeout=60).post(
+            f"{LLM_SERVER_ENDPOINT}/v1/chat/completions",
+            json=vllm_data
+        )
+        
+        # 응답 검증
+        if response.status_code != 200:
+            logger.error(f"vLLM API 오류 응답: {response.text}")
+            # vLLM이 이미지를 지원하지 않는 경우 적절한 메시지 반환
+            if response.status_code == 400:
+                return {
+                    "response": "죄송합니다. 현재 vLLM 모드에서는 이미지 분석 기능을 지원하지 않습니다. Ollama 모드로 전환해주세요.",
+                    "error": "vLLM does not support image analysis"
+                }
+            return None
+            
+        result = response.json()
+        
+        # vLLM 응답에서 텍스트 추출
+        if "choices" in result and len(result["choices"]) > 0:
+            response_text = result["choices"][0]["message"]["content"]
+            # Ollama 형식으로 변환
+            ollama_response = {
+                "response": response_text,
+                "model": model,
+                "done": True
+            }
+            logger.info(f"vLLM 이미지 분석 성공: {len(response_text)} 문자")
+            return ollama_response
+        else:
+            logger.warning(f"vLLM API 응답에서 content를 찾을 수 없습니다: {result}")
+            return {
+                "response": "죄송합니다. vLLM에서 이미지 분석 응답을 처리할 수 없습니다.",
+                "error": "vLLM response format error"
+            }
+        
+    except httpx.ConnectError as e:
+        logger.error(f"vLLM 서비스 연결 실패: {e}")
+        return {
+            "response": "vLLM 서비스에 연결할 수 없습니다. 서비스 상태를 확인해주세요.",
+            "error": "vLLM connection failed"
+        }
+    except httpx.TimeoutException as e:
+        logger.error(f"vLLM 요청 타임아웃: {e}")
+        return {
+            "response": "vLLM 요청이 타임아웃되었습니다.",
+            "error": "vLLM timeout"
+        }
+    except Exception as e:
+        logger.error(f"vLLM API 호출 중 오류 발생: {str(e)}", exc_info=True)
+        return {
+            "response": "vLLM 이미지 분석 중 오류가 발생했습니다.",
+            "error": str(e)
+        }
+
+def call_ollama_api(model: str, prompt: str, image_url: str) -> Optional[Dict[str, Any]]:
+    """LLM API를 호출하여 이미지 분석을 수행합니다. (Ollama 또는 vLLM)"""
+    try:
         # 이미지 URL에서 이미지를 다운로드하고 base64로 인코딩
         try:
             image_response = requests.get(image_url)
@@ -52,44 +139,52 @@ def call_ollama_api(model: str, prompt: str, image_url: str) -> Optional[Dict[st
             logger.error(f"이미지 다운로드 실패: {str(e)}")
             return None
         
-        # API 요청 데이터
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "images": [image_base64],
-            "stream": False  # 스트리밍 비활성화
-        }
-        logger.info(f"Ollama API 요청 데이터 - model: {model}")  # 모델명 로깅
-        logger.info("Ollama API 요청 준비 완료")
-        
-        # API 호출
-        response = requests.post(
-            f"{ollama_host}/api/generate",
-            json=payload,
-            timeout=30  # 30초 타임아웃 설정
-        )
-        
-        # 응답 검증
-        if response.status_code != 200:
-            logger.error(f"Ollama API 오류 응답: {response.text}")
-            return None
+        # LLM_PROVIDER에 따라 적절한 API 호출
+        if LLM_PROVIDER == "vllm":
+            logger.info("vLLM 모드로 이미지 분석 시도")
+            return call_vllm_api(model, prompt, image_base64)
+        else:
+            # Ollama API 호출
+            logger.info(f"Ollama 모드로 이미지 분석 - Host: {OLLAMA_HOST}")
             
-        result = response.json()
-        
-        if not result.get('response'):
-            logger.warning(f"Ollama API 응답에 'response' 필드가 없습니다: {result}")
-            return None
+            # API 요청 데이터
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "images": [image_base64],
+                "stream": False  # 스트리밍 비활성화
+            }
+            logger.info(f"Ollama API 요청 데이터 - model: {model}")  # 모델명 로깅
+            logger.info("Ollama API 요청 준비 완료")
             
-        return result
+            # API 호출
+            response = requests.post(
+                f"{OLLAMA_HOST}/api/generate",
+                json=payload,
+                timeout=30  # 30초 타임아웃 설정
+            )
+            
+            # 응답 검증
+            if response.status_code != 200:
+                logger.error(f"Ollama API 오류 응답: {response.text}")
+                return None
+                
+            result = response.json()
+            
+            if not result.get('response'):
+                logger.warning(f"Ollama API 응답에 'response' 필드가 없습니다: {result}")
+                return None
+                
+            return result
         
     except requests.exceptions.Timeout:
-        logger.error("Ollama API 호출 시간 초과")
+        logger.error("LLM API 호출 시간 초과")
         return None
     except requests.exceptions.RequestException as e:
-        logger.error(f"Ollama API 호출 실패: {str(e)}")
+        logger.error(f"LLM API 호출 실패: {str(e)}")
         return None
     except json.JSONDecodeError:
-        logger.error("Ollama API 응답을 JSON으로 파싱할 수 없습니다")
+        logger.error("LLM API 응답을 JSON으로 파싱할 수 없습니다")
         return None
     except Exception as e:
         logger.error(f"예상치 못한 오류 발생: {str(e)}", exc_info=True)
@@ -101,7 +196,9 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "service": "vision",
-        "default_model": config.get('default_model')
+        "default_model": config.get('default_model'),
+        "llm_provider": LLM_PROVIDER,
+        "llm_endpoint": LLM_SERVER_ENDPOINT if LLM_PROVIDER == "vllm" else OLLAMA_HOST
     }), 200
 
 @app.route('/vision/analyze', methods=['POST'])
@@ -128,17 +225,12 @@ def analyze_media():
         
         logger.info(f"분석 파라미터 - URL: {image_url}, Prompt: {prompt}, Model: {model}")
         
-        # Ollama API 호출
+        # LLM API 호출
         logger.info("LLM API 호출 시작")
         result = call_ollama_api(model, prompt, image_url)
         if not result:
-            llm_provider = os.environ.get("LLM_PROVIDER", "ollama")
-            if llm_provider == "vllm":
-                logger.error("vLLM 모드: vllm 서비스가 다운되어 있습니다")
-                return jsonify({"error": "vLLM 모드에서는 이미지 분석을 지원하지 않습니다. Ollama 서비스가 필요합니다."}), 503
-            else:
-                logger.error("Ollama API 호출 실패")
-                return jsonify({"error": "이미지 분석에 실패했습니다"}), 500
+            logger.error("LLM API 호출 실패")
+            return jsonify({"error": "이미지 분석에 실패했습니다"}), 500
             
         logger.info(f"LLM API 응답: {result}")
             
