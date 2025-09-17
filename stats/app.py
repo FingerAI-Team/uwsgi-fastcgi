@@ -459,32 +459,12 @@ def rotate_nginx_log():
             log_processor.processed_logs.clear()
             logger.info("LogProcessor 재초기화 완료")
         
-        # 백업 파일 정리 (7일 이상)
-        cleanup_old_backups()
+        # 백업 파일은 보관 (삭제하지 않음)
         
     except Exception as e:
         logger.error(f"로그 로테이션 중 오류: {e}")
 
-# 오래된 백업 파일 정리
-def cleanup_old_backups():
-    """7일 이상 지난 백업 파일 삭제"""
-    try:
-        current_time = time.time()
-        seven_days_ago = current_time - (7 * 24 * 3600)  # 7일 전
-        
-        for filename in os.listdir(BACKUP_DIR):
-            if filename.startswith("api-stats_") and filename.endswith(".log"):
-                file_path = os.path.join(BACKUP_DIR, filename)
-                file_mtime = os.path.getmtime(file_path)
-                
-                if file_mtime < seven_days_ago:
-                    os.remove(file_path)
-                    logger.info(f"오래된 백업 파일 삭제: {filename}")
-        
-        logger.info("백업 파일 정리 완료")
-        
-    except Exception as e:
-        logger.error(f"백업 파일 정리 중 오류: {e}")
+# 백업 파일 정리 함수 제거 - 백업 파일은 영구 보관
 
 # 상태 확인 엔드포인트
 @app.route('/health', methods=['GET'])

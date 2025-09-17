@@ -122,6 +122,7 @@ services:
     environment:
       - NGINX_HOST=localhost
       - NGINX_PORT=80
+      - TZ=Asia/Seoul
 
   # RAG 서비스
   rag:
