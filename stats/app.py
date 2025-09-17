@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from dotenv import load_dotenv
 import threading
 import json
+import shutil  # 파일 복사용
 
 # 환경 변수 로드
 load_dotenv()
@@ -36,6 +37,8 @@ DB_NAME = os.environ.get('MYSQL_DATABASE', 'api_stats')
 NGINX_LOG_PATH = os.environ.get('NGINX_LOG_PATH', '/var/log/nginx/api-stats.log')
 LOCK_FILE_PATH = os.environ.get('LOCK_FILE_PATH', '/tmp/stats_log_processor.lock')
 LOG_CHECK_INTERVAL = int(os.environ.get('LOG_CHECK_INTERVAL', 5))  # 5초 간격으로 변경
+LOG_ROTATION_INTERVAL = int(os.environ.get('LOG_ROTATION_INTERVAL', 604800))  # 7일 (초 단위)
+BACKUP_DIR = os.environ.get('BACKUP_DIR', '/var/log/nginx/backups')
 
 # 데이터베이스 연결 문자열
 DATABASE_URI = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
@@ -47,8 +50,10 @@ CORS(app)
 # 파일 시스템 감시 설정 변경
 log_processor = None
 log_thread = None
+log_rotation_thread = None
 lock_file = None
 has_lock = False
+last_rotation_time = time.time()
 
 # 애플리케이션 초기화 함수
 def init_app(app):
@@ -63,6 +68,9 @@ def init_app(app):
     
     # 로그 모니터링 시작
     start_log_monitoring()
+    
+    # 로그 로테이션 스케줄러 시작
+    start_log_rotation_scheduler()
 
 # 애플리케이션 종료 시 리소스 정리
 def cleanup():
@@ -102,6 +110,7 @@ def check_db_connection():
     except SQLAlchemyError as e:
         logger.error(f"데이터베이스 연결 확인 실패: {e}")
         return False
+
 
 # 로깅 함수
 def log_api_call(endpoint, method, status_code, response_time, request_size=None, response_size=None, user_agent=None, ip_address=None):
@@ -358,6 +367,124 @@ def start_log_monitoring():
     
     except Exception as e:
         logger.error(f"로그 모니터링 시작 중 오류: {e}")
+
+# 로그 로테이션 스케줄러 시작
+def start_log_rotation_scheduler():
+    """로그 로테이션 스케줄러 시작"""
+    global log_rotation_thread
+    
+    # 이미 실행 중인 경우 중복 실행 방지
+    if log_rotation_thread and log_rotation_thread.is_alive():
+        logger.info("로그 로테이션 스케줄러가 이미 실행 중입니다.")
+        return
+    
+    try:
+        # 로그 로테이션 스레드 시작
+        log_rotation_thread = threading.Thread(target=log_rotation_scheduler, daemon=True)
+        log_rotation_thread.start()
+        logger.info("로그 로테이션 스케줄러 시작, 주기: {}초".format(LOG_ROTATION_INTERVAL))
+    
+    except Exception as e:
+        logger.error(f"로그 로테이션 스케줄러 시작 중 오류: {e}")
+
+# 로그 로테이션 스케줄러 함수
+def log_rotation_scheduler():
+    """일정 간격으로 로그 로테이션 실행"""
+    global last_rotation_time
+    
+    while True:
+        try:
+            current_time = time.time()
+            
+            # 로테이션 주기 확인
+            if current_time - last_rotation_time >= LOG_ROTATION_INTERVAL:
+                logger.info("로그 로테이션 시간 도달, 로테이션 시작")
+                rotate_nginx_log()
+                last_rotation_time = current_time
+            
+            # 1시간마다 체크
+            time.sleep(3600)
+            
+        except Exception as e:
+            logger.error(f"로그 로테이션 스케줄러 오류: {e}")
+            time.sleep(3600)  # 오류 발생 시 1시간 후 재시도
+
+# nginx 로그 로테이션 함수
+def rotate_nginx_log():
+    """nginx 로그 파일 로테이션"""
+    try:
+        # 백업 디렉토리 생성
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        
+        # 로그 파일이 존재하는지 확인
+        if not os.path.exists(NGINX_LOG_PATH):
+            logger.warning(f"로그 파일이 존재하지 않습니다: {NGINX_LOG_PATH}")
+            return
+        
+        # 백업 파일명 생성
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = os.path.join(BACKUP_DIR, f"api-stats_{timestamp}.log")
+        
+        # 현재 로그 파일을 백업
+        shutil.copy2(NGINX_LOG_PATH, backup_file)
+        logger.info(f"로그 백업 완료: {backup_file}")
+        
+        # nginx 컨테이너에 USR1 시그널 전송 (로그 파일 재오픈)
+        import subprocess
+        try:
+            subprocess.run(["docker", "exec", "milvus-nginx", "nginx", "-s", "reopen"], 
+                         check=True, capture_output=True, text=True)
+            logger.info("nginx 로그 파일 재오픈 신호 전송 완료")
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"nginx reopen 실패: {e}, 컨테이너 재시작 시도")
+            try:
+                subprocess.run(["docker", "restart", "milvus-nginx"], 
+                             check=True, capture_output=True, text=True)
+                logger.info("nginx 컨테이너 재시작 완료")
+            except subprocess.CalledProcessError as restart_e:
+                logger.error(f"nginx 컨테이너 재시작 실패: {restart_e}")
+        
+        # 잠시 대기 후 빈 로그 파일 생성
+        time.sleep(2)
+        with open(NGINX_LOG_PATH, 'w') as f:
+            pass  # 빈 파일 생성
+        os.chmod(NGINX_LOG_PATH, 0o666)
+        logger.info("새 로그 파일 생성 완료")
+        
+        # LogProcessor 재초기화 (새 파일을 처음부터 읽도록)
+        global log_processor
+        if log_processor:
+            log_processor.last_position = 0
+            log_processor.initialized = False
+            log_processor.processed_logs.clear()
+            logger.info("LogProcessor 재초기화 완료")
+        
+        # 백업 파일 정리 (7일 이상)
+        cleanup_old_backups()
+        
+    except Exception as e:
+        logger.error(f"로그 로테이션 중 오류: {e}")
+
+# 오래된 백업 파일 정리
+def cleanup_old_backups():
+    """7일 이상 지난 백업 파일 삭제"""
+    try:
+        current_time = time.time()
+        seven_days_ago = current_time - (7 * 24 * 3600)  # 7일 전
+        
+        for filename in os.listdir(BACKUP_DIR):
+            if filename.startswith("api-stats_") and filename.endswith(".log"):
+                file_path = os.path.join(BACKUP_DIR, filename)
+                file_mtime = os.path.getmtime(file_path)
+                
+                if file_mtime < seven_days_ago:
+                    os.remove(file_path)
+                    logger.info(f"오래된 백업 파일 삭제: {filename}")
+        
+        logger.info("백업 파일 정리 완료")
+        
+    except Exception as e:
+        logger.error(f"백업 파일 정리 중 오류: {e}")
 
 # 상태 확인 엔드포인트
 @app.route('/health', methods=['GET'])

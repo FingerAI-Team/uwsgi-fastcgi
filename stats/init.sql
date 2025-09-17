@@ -35,51 +35,5 @@ CREATE TABLE IF NOT EXISTS daily_stats (
     INDEX idx_date (date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 일별 통계 집계를 위한 이벤트 스케줄러
-DELIMITER //
-CREATE EVENT IF NOT EXISTS aggregate_daily_stats
-    ON SCHEDULE EVERY 1 DAY
-    STARTS CURRENT_DATE + INTERVAL 1 DAY
-    DO
-    BEGIN
-        -- 어제 날짜의 통계 집계
-        INSERT INTO daily_stats (endpoint, date, total_calls, success_calls, error_calls, 
-                              avg_response_time, max_response_time, min_response_time,
-                              total_request_size, total_response_size)
-        SELECT 
-            endpoint,
-            DATE(created_at) as call_date,
-            COUNT(*) as total_calls,
-            SUM(CASE WHEN status_code < 400 THEN 1 ELSE 0 END) as success_calls,
-            SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as error_calls,
-            AVG(response_time) as avg_response_time,
-            MAX(response_time) as max_response_time,
-            MIN(response_time) as min_response_time,
-            SUM(request_size) as total_request_size,
-            SUM(response_size) as total_response_size
-        FROM api_calls
-        WHERE DATE(created_at) = DATE_SUB(CURRENT_DATE, INTERVAL 1 DAY)
-        GROUP BY endpoint, DATE(created_at)
-        ON DUPLICATE KEY UPDATE
-            total_calls = VALUES(total_calls),
-            success_calls = VALUES(success_calls),
-            error_calls = VALUES(error_calls),
-            avg_response_time = VALUES(avg_response_time),
-            max_response_time = VALUES(max_response_time),
-            min_response_time = VALUES(min_response_time),
-            total_request_size = VALUES(total_request_size),
-            total_response_size = VALUES(total_response_size),
-            updated_at = CURRENT_TIMESTAMP;
-    END //
-
--- 오래된 통계 데이터 정리를 위한 이벤트 스케줄러
-CREATE EVENT IF NOT EXISTS cleanup_old_api_calls
-    ON SCHEDULE EVERY 1 WEEK
-    STARTS CURRENT_DATE + INTERVAL 1 WEEK
-    DO
-    BEGIN
-        -- 30일 이상 지난 상세 로그 삭제
-        DELETE FROM api_calls 
-        WHERE created_at < DATE_SUB(CURRENT_DATE, INTERVAL 30 DAY);
-    END //
-DELIMITER ; 
+-- 이벤트 스케줄러 제거 - 로그 파일 로테이션 방식으로 변경
+-- DB는 초기화하지 않고, 로그 파일만 주기적으로 로테이션 

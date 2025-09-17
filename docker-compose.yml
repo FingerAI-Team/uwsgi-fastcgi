@@ -380,6 +380,8 @@ services:
       - MYSQL_DATABASE=api_stats
       - UWSGI_PROCESSES=3  # 워커 수를 3으로 설정 (1개는 로그 처리, 나머지는 API 처리)
       - LOG_CHECK_INTERVAL=5  # 로그 확인 주기 설정 (5초)
+      - LOG_ROTATION_INTERVAL=604800  # 로그 로테이션 주기 (7일, 초 단위)
+      - BACKUP_DIR=/var/log/nginx/backups  # 백업 디렉토리
     depends_on:
       - stats-db
     networks:
