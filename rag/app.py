@@ -363,6 +363,8 @@ def search_data():
     title_query = request_data.get('title')      # 제목 검색
     info_filter = request_data.get('info_filter') # info 필터 조건
     tags_filter = request_data.get('tags_filter') # tags 필터 조건
+    
+    # 로그 DB mariaDB rag_management db, api_calls table, rag user, rag2025 password
 
     logger.info(f"[TIMING] 검색 요청 시작: query='{query_text}', top_k={top_k}, domains={domains}")
 
