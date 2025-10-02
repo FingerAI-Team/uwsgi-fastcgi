@@ -804,6 +804,19 @@ class InteractManager:
         collection_load_end = time.time()
         print(f"[TIMING] 컬렉션 로드 완료: {(collection_load_end - collection_load_start):.4f}초")
         
+        # 검색 limit 안전 보정: 컬렉션 전체 엔티티 수를 초과하지 않도록 설정
+        try:
+            collection_entity_count = int(getattr(collection, 'num_entities', 0) or 0)
+        except Exception:
+            collection_entity_count = 0
+        try:
+            requested_top_k = int(top_k)
+        except Exception:
+            requested_top_k = 10
+        safe_upper_bound = collection_entity_count if collection_entity_count > 0 else requested_top_k
+        search_limit = min(requested_top_k, safe_upper_bound) if safe_upper_bound > 0 else max(1, requested_top_k)
+        print(f"[DEBUG] Using search limit: {search_limit} (top_k={requested_top_k}, entities={collection_entity_count})")
+        
         # === 새로운 위계형 필드들 완전 포함 ===
         hierarchical_fields = [
             "chapter_number", "chapter_title", 
@@ -877,7 +890,7 @@ class InteractManager:
         search_params_start = time.time()
         self.vectordb.set_search_params(
             query_emb, 
-            limit=top_k, 
+            limit=search_limit, 
             output_fields=output_fields,
             expr=expr
         )
@@ -886,7 +899,7 @@ class InteractManager:
         search_params_end = time.time()
         print(f"[TIMING] 검색 파라미터 설정 완료: {(search_params_end - search_params_start):.4f}초")
         
-        # 실제 검색 실행
+        # 실제 검색 실행 + 실패 시 제한 축소 재시도
         try:
             search_exec_start = time.time()
             search_result = self.vectordb.search_data(collection, self.vectordb.search_params)
@@ -915,6 +928,32 @@ class InteractManager:
             return results
             
         except Exception as e:
+            print(f"[DEBUG] 1차 검색 실패: {str(e)}")
+            # 제한 축소 재시도
+            fallback_limit = min(50, requested_top_k)
+            if fallback_limit < search_limit and fallback_limit > 0:
+                try:
+                    print(f"[DEBUG] Fallback search with limit={fallback_limit}")
+                    self.vectordb.set_search_params(
+                        query_emb,
+                        limit=fallback_limit,
+                        output_fields=output_fields,
+                        expr=expr
+                    )
+                    search_result = self.vectordb.search_data(collection, self.vectordb.search_params)
+                    results = self.vectordb.decode_search_result(search_result, include_metadata=True)
+                    for result in results:
+                        result['info'] = self.parse_json_field(result.get('info'))
+                        result['tags'] = self.parse_json_field(result.get('tags'))
+                    print(f"[DEBUG] Fallback decoded results: {results}")
+                    return results
+                except Exception as e2:
+                    error_time = time.time()
+                    total_time = error_time - start_time
+                    print(f"[TIMING] Fallback 검색 오류 발생: {total_time:.4f}초 소요, 오류: {str(e2)}")
+                    print(f"[DEBUG] Fallback search error: {str(e2)}")
+                    return []
+            # 재시도 불가 시 빈 결과
             error_time = time.time()
             total_time = error_time - start_time
             print(f"[TIMING] 검색 오류 발생: {total_time:.4f}초 소요, 오류: {str(e)}")
