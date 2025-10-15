@@ -10,6 +10,8 @@ import asyncio
 import httpx
 import base64
 from services.rag_chat_service import RagChatService
+from services.session_manager import SessionManager
+from query_rewriter.query_rewriter import QueryRewriter
 
 # 로깅 설정
 logging.basicConfig(
@@ -850,6 +852,409 @@ def enhanced_search():
             # 예외 발생 시 원본 결과 사용
             reranked_results = {
                 "query": query,
+                "results": search_results.get("search_result", []),
+                "total": len(search_results.get("search_result", [])),
+                "reranked": False,
+                "reranker_type": "none",
+                "error": f"재랭킹 처리 중 예외 발생: {str(e)}"
+            }
+            rerank_time = 0
+        
+        # 3. 결과 처리 및 응답 포맷팅
+        processed_results = []
+        logger.info("결과 처리 및 응답 포맷팅 시작")
+
+        # 재랭킹 직후의 결과 수 저장 (임계치 필터링 전)
+        reranked_count = len(reranked_results.get("results", []))
+        logger.info(f"재랭킹 직후 결과 수: {reranked_count}")
+
+        # Reranker 결과 처리
+        for idx, item in enumerate(reranked_results.get("results", [])):
+            # 점수 확인 - 하이브리드 점수를 우선 사용
+            if "hybrid_score" in item:
+                rerank_score = item["hybrid_score"]
+                logger.info(f"[FILTER-DEBUG] 결과 {idx}: 하이브리드 점수 사용 - {rerank_score:.6f}")
+            else:
+                rerank_score = item.get("score", 0)
+                logger.info(f"[FILTER-DEBUG] 결과 {idx}: 기본 점수 사용 - {rerank_score:.6f}")
+            
+            # 임계치 필터링
+            if rerank_score < threshold:
+                logger.info(f"[FILTER-DEBUG] 임계치({threshold}) 미만 결과 필터링: doc_id={item.get('doc_id', 'unknown')}, score={rerank_score:.6f}")
+                continue
+            else:
+                logger.info(f"[FILTER-DEBUG] 임계치({threshold}) 통과: doc_id={item.get('doc_id', 'unknown')}, score={rerank_score:.6f}")
+            
+            # 결과 아이템 초기화
+            result_item = {}
+            
+            # 1. 원본 검색 결과의 모든 필드 복사 (있는 경우)
+            doc_id = item.get("doc_id")
+            original_item = None
+            if doc_id and doc_id in original_results_by_id:
+                original_item = original_results_by_id[doc_id]
+                # 원본 검색 결과의 모든 필드 복사 (점수 관련 필드 제외)
+                for key, value in original_item.items():
+                    if key not in ["score", "flashrank_score", "mrc_score", "hybrid_score"]:
+                        result_item[key] = value
+            
+            # 2. 재랭킹 결과의 필드 복사 (원본 덮어쓰기, 점수 관련 필드 제외)
+            for key, value in item.items():
+                if key not in ["score", "flashrank_score", "mrc_score", "hybrid_score", "rerank_score"]:
+                    result_item[key] = value
+            
+            # 3. 점수 정보 설정 - 중복 제거하고 명확하게 구분
+            # 기본 점수 설정 - 하이브리드 점수를 우선 사용
+            if "hybrid_score" in item:
+                result_item["score"] = item["hybrid_score"]
+                result_item["hybrid_score"] = item["hybrid_score"]
+                if "hybrid_score_raw" in item:
+                    result_item["hybrid_score_raw"] = item["hybrid_score_raw"]
+                logger.info(f"[SCORE-DEBUG] 결과 {idx}: 하이브리드 점수 설정 - score={result_item['score']:.6f}")
+            else:
+                result_item["score"] = item.get("score", 0)
+                logger.info(f"[SCORE-DEBUG] 결과 {idx}: 기본 점수 설정 - score={result_item['score']:.6f}")
+            
+            result_item["rerank_position"] = idx
+            
+            # 원본 점수 정보 (있는 경우)
+            if original_item and "score" in original_item:
+                result_item["original_score"] = original_item["score"]
+                logger.info(f"[SCORE-DEBUG] 결과 {idx}: 원본 점수 복사 - original_score={result_item['original_score']:.6f}")
+            
+            # 재랭킹 점수 정보 복사 (있는 경우에만)
+            for score_field in ["hybrid_score", "flashrank_score", "mrc_score", "mrc_answer", "mrc_char_ids"]:
+                if score_field in item:
+                    result_item[score_field] = item[score_field]
+                    if score_field in ["hybrid_score", "flashrank_score", "mrc_score"]:
+                        logger.info(f"[SCORE-DEBUG] 결과 {idx}: {score_field} 복사 - {result_item[score_field]:.6f}")
+            
+            # MRC 관련 필드가 있는지 확인하고 없으면 기본값 설정
+            if "mrc_score" in result_item and "mrc_answer" not in result_item:
+                result_item["mrc_answer"] = ""
+            if "mrc_score" in result_item and "mrc_char_ids" not in result_item:
+                result_item["mrc_char_ids"] = []
+            
+            # 최종 결과에 추가
+            processed_results.append(result_item)
+            logger.info(f"[RESULT-DEBUG] 결과 {idx} 추가됨: doc_id={doc_id}, title={result_item.get('title', 'N/A')[:30]}...")
+        
+        # 총 처리 시간 계산
+        total_time = (datetime.now() - start_time).total_seconds()
+        
+        # 최종 응답 구성
+        response = {
+            "query": query,
+            "top_m": top_m,
+            "top_n": top_n,
+            "threshold": threshold,
+            "search_count": len(search_results.get("search_result", [])),
+            "reranked_count": reranked_count,  # 임계치 필터링 전 결과 수
+            "filtered_count": len(processed_results),  # 임계치 필터링 후 결과 수
+            "weights": {  # 사용된 가중치 정보
+                "flashrank": weight_flashrank,
+                "mrc": weight_mrc,
+                "original": weight_original
+            },
+            "processing_time": {
+                "total": total_time,
+                "rag_search": rag_time,
+                "reranking": rerank_time
+            },
+            "results": processed_results,
+            "reranked": reranked_results.get("reranked", True),  # 재랭커에서 반환된 재랭킹 여부
+            "reranker_type": reranked_results.get("reranker_type", "hybrid")  # 사용된 재랭킹 타입
+        }
+        
+        # 도메인별 결과가 있으면 포함
+        if "domain_results" in search_results:
+            response["domain_results"] = search_results["domain_results"]
+        
+        logger.info(f"[FINAL-DEBUG] 최종 응답: {len(processed_results)}개 결과, 총 처리 시간: {total_time:.3f}초")
+        logger.info(f"[FINAL-DEBUG] 임계치 필터링 통계: 검색={len(search_results.get('search_result', []))}개 -> 재랭킹={reranked_count}개 -> 필터링={len(processed_results)}개")
+        
+        # 최종 결과의 점수 분포 로깅
+        if processed_results:
+            scores = [r.get("score", 0) for r in processed_results]
+            logger.info(f"[FINAL-DEBUG] 최종 점수 분포: 최고={max(scores):.6f}, 최저={min(scores):.6f}, 평균={sum(scores)/len(scores):.6f}")
+            logger.info(f"[FINAL-DEBUG] 최종 결과 샘플:")
+            for i, result in enumerate(processed_results[:3]):  # 처음 3개만 로깅
+                logger.info(f"[FINAL-DEBUG]   {i+1}. doc_id={result.get('doc_id', 'N/A')}, score={result.get('score', 0):.6f}, title={result.get('title', 'N/A')[:50]}...")
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"처리 중 오류 발생: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": f"처리 중 오류가 발생했습니다: {str(e)}"}), 500
+
+# RAG 검색 API (enhanced_search와 동일 로직 복제)
+@app.route("/prompt/rag_search", methods=["POST"])
+def rag_search():
+    try:
+        # 로그 설정
+        log_dir = "/var/log/prompt" if os.path.exists("/var/log/prompt") else "logs"
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # 기본 로거 설정
+        logger = logging.getLogger("rag-search")
+        logger.setLevel(logging.INFO)
+        
+        # 이전 핸들러 제거
+        for handler in logger.handlers[:]:
+            logger.removeHandler(handler)
+        
+        # 파일 핸들러 추가
+        file_handler = logging.FileHandler(f"{log_dir}/rag_search.log")
+        file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(file_formatter)
+        logger.addHandler(file_handler)
+        
+        # 콘솔 핸들러 추가
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(file_formatter)
+        logger.addHandler(console_handler)
+        
+        logger.info("=== 새로운 /prompt/rag_search 요청 시작 ===")
+        
+        # 메타데이터 로거는 기본 로거와 동일하게 사용
+        metadata_logger = logger
+        
+        # 요청 시작 시간 기록
+        start_time = datetime.now()
+        
+        data = request.json
+        logger.info(f"RAG 검색 요청 받음: {json.dumps(data, ensure_ascii=False)}")
+        
+        # 필수 파라미터 확인
+        query = data.get("query")
+        if not query:
+            logger.error("쿼리 누락")
+            return jsonify({"error": "쿼리가 필요합니다"}), 400
+        
+        summaryAgent = AgentService(config_path)
+        
+        # 사용자 지정 파라미터 또는 기본값 사용
+        top_m = data.get("top_m", summaryAgent.search_top)  # RAG 검색 결과 수
+        top_n = data.get("top_n", summaryAgent.rerank_top)  # Reranker 결과 수
+        threshold = data.get("threshold", summaryAgent.rerank_threshold)  # Reranker 점수 임계치
+        session_id = data.get("session_id")  # 선택적 세션
+        
+        # 가중치 파라미터
+        weight_flashrank = data.get("weight_flashrank", 0.5)  # FlashRank 가중치 (기본값 0.5)
+        weight_mrc = data.get("weight_mrc", 0.3)  # MRC 가중치 (기본값 0.3)
+        weight_original = data.get("weight_original", 0.2)  # 원본 점수 가중치 (기본값 0.2)
+        
+        # 파라미터 유효성 검사
+        if top_m < top_n:
+            logger.warning(f"파라미터 오류: top_m({top_m}) < top_n({top_n}), top_m으로 조정합니다")
+            top_n = top_m
+            
+        logger.info(f"검색 파라미터(원본): query='{query}', top_m={top_m}, top_n={top_n}, threshold={threshold}")
+        logger.info(f"가중치 파라미터: weight_flashrank={weight_flashrank}, weight_mrc={weight_mrc}, weight_original={weight_original}")
+        
+        # Query Rewrite (세션이 있는 경우에만 수행)
+        final_query = query
+        query_rewrite_info = {}
+        try:
+            if session_id:
+                logger.info(f"[QueryRewrite] 세션 기반 리라이트 시작: session_id={session_id}")
+                session_manager = SessionManager(memory_dir=MEMORY_DIR)
+                # 세션에 사용자 메시지 추가 후 세션 데이터 확보
+                session_data = session_manager.add_user_message(session_id, query)
+                # Rewriter 초기화 (vLLM 사용)
+                query_rewriter = QueryRewriter(
+                    vllm_endpoint=VLLM_ENDPOINT,
+                    default_model=VLLM_MODEL,
+                    temperature=summaryAgent.temperature,
+                    max_history_turns=3
+                )
+                rewrite_result = query_rewriter.rewrite_query(
+                    current_query=query,
+                    session_data=session_data
+                )
+                final_query = rewrite_result.get("rewritten_query", query)
+                query_rewrite_info = {
+                    "original_query": query,
+                    "rewritten_query": final_query,
+                    "confidence": rewrite_result.get("confidence", 0.0),
+                    "reasoning": rewrite_result.get("reasoning", "")
+                }
+                logger.info(f"[QueryRewrite] 결과: '{query[:30]}...' → '{final_query[:30]}...' (신뢰도={query_rewrite_info['confidence']:.2f})")
+            else:
+                logger.info("[QueryRewrite] 세션 없음 → 원본 쿼리 사용")
+        except Exception as e:
+            logger.warning(f"[QueryRewrite] 처리 실패, 원본 쿼리 사용: {str(e)}")
+            
+        # 1. RAG 서비스 호출하여 문서 검색
+        logger.info(f"RAG 서비스 호출 준비: endpoint={RAG_ENDPOINT}/search")
+        search_params = {
+            "query_text": final_query,
+            "top_k": top_m,
+            "domains": []  # 기본 빈 도메인 리스트
+        }
+        
+        # 추가 검색 매개변수
+        if "domain" in data:  # 단일 도메인 지원
+            search_params["domains"] = [data["domain"]]
+        elif "domains" in data:  # 복수 도메인 지원
+            search_params["domains"] = data["domains"]
+            
+        for param in ["author", "start_date", "end_date", "title", "info_filter", "tags_filter"]:
+            if param in data:
+                search_params[param] = data[param]
+                logger.info(f"추가 검색 파라미터: {param}={data[param]}")
+        
+        logger.info(f"RAG 검색 요청: params={json.dumps(search_params, ensure_ascii=False)}")
+        
+        # RAG 요청 시작 시간
+        rag_start_time = datetime.now()
+        search_response = requests.post(f"{RAG_ENDPOINT}/search", json=search_params)
+        rag_time = (datetime.now() - rag_start_time).total_seconds()
+        
+        logger.info(f"RAG 응답 코드: {search_response.status_code}, 소요 시간: {rag_time:.3f}초")
+        
+        if search_response.status_code != 200:
+            logger.error(f"RAG 검색 오류 응답: {search_response.text}")
+            return jsonify({"error": "문서 검색 중 오류가 발생했습니다"}), 500
+            
+        search_results = search_response.json()
+        logger.info(f"RAG 검색 결과 수: {len(search_results.get('search_result', []))}")
+        
+        # 검색 결과가 없는 경우
+        if not search_results.get("search_result"):
+            logger.warning("검색 결과가 없습니다")
+            return jsonify({
+                "query": final_query,
+                "top_m": top_m,
+                "top_n": top_n,
+                "search_count": 0,
+                "reranked_count": 0,
+                "results": []
+            })
+        
+        # 재랭킹 준비
+        logger.info("재랭킹 준비 시작")
+        
+        # 재랭킹에 사용할 변수 초기화
+        rerank_passages = []
+        original_results_by_id = {}
+        
+        # 검색 결과 전처리 (필요한 필드만 추출)
+        for item in search_results.get("search_result", []):
+            # 문서 ID 기반으로 원본 결과 저장 (재랭킹 후 매핑용)
+            doc_id = item.get("doc_id")
+            if doc_id:
+                original_results_by_id[doc_id] = item
+                
+            # 재랭킹에 필요한 필드만 포함
+            rerank_item = {
+                "id": item.get("id") or f"{doc_id}_{item.get('passage_id', 0)}",
+                "text": item.get("text", ""),
+                "doc_id": doc_id,
+                "passage_id": item.get("passage_id"),
+                "score": item.get("score", 0),
+                "original_score": item.get("score", 0)  # 원본 점수 저장
+            }
+            
+            # 기타 중요 필드 복사
+            for field in ["title", "author", "domain", "info", "tags"]:
+                if field in item:
+                    rerank_item[field] = item[field]
+            
+            rerank_passages.append(rerank_item)
+        
+        # 재랭킹 수행
+        try:
+            logger.info(f"하이브리드 재랭킹 요청 시작: 쿼리='{final_query}', 결과 수={len(rerank_passages)}개")
+            rerank_start_time = datetime.now()
+            
+            # 재랭킹 요청 준비
+            rerank_payload = {
+                "query": final_query,
+                "results": rerank_passages,
+                "total": len(rerank_passages),
+                "reranked": False
+            }
+            
+            # 재랭킹 파라미터
+            rerank_params = {
+                "top_k": int(top_n),  # 상위 N개 결과만 요청 (정수형으로 변환)
+                "weight_flashrank": weight_flashrank,
+                "weight_mrc": weight_mrc,
+                "weight_original": weight_original
+            }
+            
+            # 재랭킹 요청 수행
+            try:
+                logger.info(f"Reranker 서비스 호출: {len(rerank_passages)}개 결과, top_k={top_n}, "
+                           f"weight_flashrank={weight_flashrank}, weight_mrc={weight_mrc}, weight_original={weight_original}")
+                logger.info(f"Reranker 파라미터: {rerank_params}")
+                rerank_response = requests.post(
+                    f"{RERANKER_ENDPOINT}/rerank",
+                    json=rerank_payload,
+                    params=rerank_params,
+                    timeout=60
+                )
+                
+                # 응답 처리
+                if rerank_response.status_code == 200:
+                    reranked_results = rerank_response.json()
+                    logger.info(f"재랭킹 응답 성공: {len(reranked_results.get('results', []))}개 결과")
+                    
+                    # 디버깅: 첫 번째 결과의 점수 확인
+                    if "results" in reranked_results and reranked_results["results"]:
+                        first_result = reranked_results["results"][0]
+                        logger.info(f"[DEBUG] 첫 번째 결과 점수: {first_result.get('score', 0)}")
+                        
+                        # FlashRank 초기화 여부 확인 (flashrank_score 필드 존재 여부)
+                        if "flashrank_score" in first_result:
+                            flashrank_score = first_result.get("flashrank_score", 0)
+                            logger.info(f"[FLASHRANK-INIT-CHECK] 첫 번째 결과의 FlashRank 점수: {flashrank_score}")
+                        
+                        # MRC 초기화 여부 확인 (mrc_score 필드 존재 여부)
+                        if "mrc_score" in first_result:
+                            mrc_score = first_result.get("mrc_score", 0)
+                            logger.info(f"[MRC-INIT-CHECK] 첫 번째 결과의 MRC 점수: {mrc_score}")
+                        
+                        # 하이브리드 점수 확인
+                        if "hybrid_score" in first_result:
+                            hybrid_score = first_result.get("hybrid_score", 0)
+                            logger.info(f"[HYBRID-SCORE-CHECK] 첫 번째 결과의 하이브리드 점수: {hybrid_score}")
+                        
+                        # 원본 점수 확인
+                        if "original_score" in first_result:
+                            original_score = first_result.get("original_score", 0)
+                            logger.info(f"[ORIGINAL-SCORE-CHECK] 첫 번째 결과의 원본 점수: {original_score}")
+                else:
+                    logger.error(f"재랭킹 응답 실패: 상태 코드={rerank_response.status_code}, 응답={rerank_response.text}")
+                    reranked_results = {
+                        "query": final_query,
+                        "results": search_results.get("search_result", []),
+                        "total": len(search_results.get("search_result", [])),
+                        "reranked": False,
+                        "reranker_type": "none",
+                        "error": f"재랭킹 응답 실패: {rerank_response.status_code}"
+                    }
+            except Exception as e:
+                logger.error(f"재랭킹 서비스 요청 실패: {str(e)}", exc_info=True)
+                reranked_results = {
+                    "query": final_query,
+                    "results": search_results.get("search_result", []),
+                    "total": len(search_results.get("search_result", [])),
+                    "reranked": False,
+                    "reranker_type": "none",
+                    "error": f"재랭킹 서비스 요청 실패: {str(e)}"
+                }
+            
+            # 재랭킹 시간 계산
+            rerank_time = (datetime.now() - rerank_start_time).total_seconds()
+            logger.info(f"재랭킹 완료: {rerank_time:.3f}초")
+        except Exception as e:
+            logger.error(f"재랭킹 처리 중 예외 발생: {str(e)}", exc_info=True)
+            # 예외 발생 시 원본 결과 사용
+            reranked_results = {
+                "query": final_query,
                 "results": search_results.get("search_result", []),
                 "total": len(search_results.get("search_result", [])),
                 "reranked": False,
