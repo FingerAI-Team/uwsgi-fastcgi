@@ -603,6 +603,7 @@ def insert_data():
                 "title": "메타버스 뉴스",
                 "author": "삼성전자",
                 "text": "메타버스는 비대면 시대 뜨거운 화두로 떠올랐다...",
+                "doc_id": "unique_document_id",  // 선택: 있으면 그대로 사용, 없으면 자동 생성
                 "info": {
                     "press_num": "비즈니스 워치",
                     "url": "http://example.com/news/1"
@@ -690,8 +691,8 @@ def insert_data():
         ignore = request_data.get('ignore', True)
         insert_logger.info(f"중복 문서 처리 모드: ignore={ignore}")
 
-        # 필수 필드 검증
-        required_fields = ['domain', 'title', 'author', 'text', 'tags']
+        # 필수 필드 검증 (기본 필수 필드)
+        required_fields = ['domain', 'title', 'text']
         
         # 요청 유효성 검사 결과 저장용 변수
         validation_results = []
@@ -700,7 +701,7 @@ def insert_data():
         # 유효성 검사 단계
         validation_start = time.time()
         for doc_index, doc in enumerate(request_data["documents"]):
-            # 필수 필드 검증
+            # 기본 필수 필드 검증
             missing_fields = [field for field in required_fields if field not in doc]
             if missing_fields:
                 validation_results.append({
@@ -712,15 +713,29 @@ def insert_data():
                 })
                 continue
 
-            if 'date' not in doc['tags']:
-                validation_results.append({
-                    "status": "error",
-                    "result_code": "F000005",
-                    "message": "tags.date는 필수 입력값입니다.",
-                    "title": doc['title'],
-                    "index": doc_index
-                })
-                continue
+            # doc_id가 없을 때만 author와 tags.date가 필수 (자동 생성에 필요)
+            if 'doc_id' not in doc or doc['doc_id'] is None or doc['doc_id'] == '':
+                # author 필수 검증
+                if 'author' not in doc or doc['author'] is None or doc['author'] == '':
+                    validation_results.append({
+                        "status": "error",
+                        "result_code": "F000005",
+                        "message": "doc_id가 없을 때는 author가 필수입니다 (자동 생성에 사용).",
+                        "title": doc['title'],
+                        "index": doc_index
+                    })
+                    continue
+                
+                # tags.date 필수 검증 (tags가 있을 때만)
+                if 'tags' not in doc or 'date' not in doc.get('tags', {}):
+                    validation_results.append({
+                        "status": "error",
+                        "result_code": "F000005",
+                        "message": "doc_id가 없을 때는 tags.date가 필수입니다 (자동 생성에 사용).",
+                        "title": doc['title'],
+                        "index": doc_index
+                    })
+                    continue
                 
             # 유효한 문서 목록에 추가
             doc['_index'] = doc_index  # 원래 인덱스 추적용
@@ -775,8 +790,17 @@ def insert_data():
                 doc_hash_map = {}  # 해시 ID -> 원본 문서 매핑
                 
                 for doc in docs:
-                    # doc_id 생성 및 해시 처리
-                    raw_doc_id = f"{doc['tags']['date'].replace('-','')}-{doc['title']}-{doc['author']}"
+                    # doc_id 처리: 있으면 그대로 사용, 없으면 자동 생성
+                    if 'doc_id' in doc and doc['doc_id'] is not None and doc['doc_id'] != '':
+                        # 사용자가 입력한 doc_id 사용
+                        raw_doc_id = doc['doc_id']
+                    else:
+                        # 자동 생성: 날짜-제목-작성자
+                        date = doc.get('tags', {}).get('date', '00000000').replace('-', '')
+                        title = doc.get('title', 'unknown')
+                        author = doc.get('author', 'unknown')
+                        raw_doc_id = f"{date}-{title}-{author}"
+                    
                     hashed_doc_id = env_manager.data_p.hash_text(raw_doc_id, hash_type='blake')
                     
                     # 추적을 위해 문서에 해시 ID 저장
