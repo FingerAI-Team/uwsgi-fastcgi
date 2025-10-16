@@ -1194,13 +1194,11 @@ def insert_data():
                                         logger.warning(f"청크 처리 실패: {doc_hashed_id}, 청크 #{index}")
                                         return None
                                     
-                                    # 해시 기반 고유 ID 생성 (passage_uid)
+                                    # passage_uid 생성 (raw insert와 동일한 형태)
                                     if 'passage_uid' not in processed_chunk:
-                                        import hashlib
-                                        text_hash = hashlib.sha512(processed_chunk['text'].encode('utf-8')).hexdigest()
                                         passage_id = str(processed_chunk.get('passage_id', '0'))
-                                        # 문서 ID를 포함하여 문서 간 고유성 보장
-                                        processed_chunk['passage_uid'] = f"{doc_hashed_id}_{text_hash}_{passage_id}"
+                                        # raw insert와 동일한 형태: doc_id-p{passage_id}
+                                        processed_chunk['passage_uid'] = f"{doc_hashed_id}-p{passage_id}"
                                     
                                     # 처리된 청크 데이터를 글로벌 배치 큐에 직접 추가
                                     from src.pipe import InteractManager

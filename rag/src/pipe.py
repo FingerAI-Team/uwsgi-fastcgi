@@ -1890,13 +1890,11 @@ class InteractManager:
                 
                 # passage_uid 생성 (없는 경우)
                 if 'passage_uid' not in processed_chunk:
-                    # 해시 기반 고유 ID 생성
-                    import hashlib
-                    text_hash = hashlib.sha512(processed_chunk['text'].encode('utf-8')).hexdigest()
+                    # 표준 형태로 고유 ID 생성
                     doc_id = str(processed_chunk.get('doc_id', ''))
                     passage_id = str(processed_chunk.get('passage_id', '0'))
-                    processed_chunk['passage_uid'] = f"{text_hash}_{passage_id}"
-                    self.insert_logger.info(f"[Thread-{thread_id}] passage_uid 자동 생성: {processed_chunk['passage_uid'][:20]}...")
+                    processed_chunk['passage_uid'] = f"{doc_id}-p{passage_id}"
+                    self.insert_logger.info(f"[Thread-{thread_id}] passage_uid 자동 생성: {processed_chunk['passage_uid']}")
                 
                 return processed_chunk
                 
@@ -1984,13 +1982,11 @@ class InteractManager:
                 
                 # passage_uid 확인 (없으면 생성)
                 if 'passage_uid' not in processed_chunk:
-                    # 해시 기반 고유 ID 생성
-                    import hashlib
-                    text_hash = hashlib.sha512(processed_chunk['text'].encode('utf-8')).hexdigest()
+                    # 표준 형태로 고유 ID 생성
                     doc_id = str(processed_chunk.get('doc_id', ''))
                     passage_id = str(processed_chunk.get('passage_id', '0'))
-                    processed_chunk['passage_uid'] = f"{doc_id}_{text_hash}_{passage_id}"
-                    insert_logger.info(f"[Thread-{thread_id}] passage_uid 자동 생성: {processed_chunk['passage_uid'][:20]}...")
+                    processed_chunk['passage_uid'] = f"{doc_id}-p{passage_id}"
+                    insert_logger.info(f"[Thread-{thread_id}] passage_uid 자동 생성: {processed_chunk['passage_uid']}")
                 
                 return processed_chunk
                 
@@ -2677,9 +2673,9 @@ class InteractManager:
                         passage_id = str(item.get('passage_id', '0'))
                         doc_id = item.get('doc_id', '')
                         
-                        # doc_id + text_hash + passage_id 형식으로 고유 ID 생성
-                        item['passage_uid'] = f"{doc_id}_{text_hash}_{passage_id}"
-                        logger.info(f"passage_uid 자동 생성: {item['passage_uid'][:20]}...")
+                        # 표준 형태로 고유 ID 생성
+                        item['passage_uid'] = f"{doc_id}-p{passage_id}"
+                        logger.info(f"passage_uid 자동 생성: {item['passage_uid']}")
                     except Exception as e:
                         logger.error(f"passage_uid 생성 실패: {str(e)}")
                 
