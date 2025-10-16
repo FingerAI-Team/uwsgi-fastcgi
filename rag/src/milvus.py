@@ -166,10 +166,36 @@ class MilvusEnvManager(MilVus):
 
     def delete_collection(self, collection_name):
         try:
-            assert utility.has_collection(collection_name), f'{collection_name}이 존재하지 않습니다.'
+            # 삭제 전 컬렉션 존재 확인
+            if not utility.has_collection(collection_name):
+                print(f"[DELETE] 컬렉션 '{collection_name}'이 존재하지 않습니다.")
+                return False
+            
+            # 삭제 전 컬렉션 정보 조회
+            try:
+                collection = Collection(collection_name)
+                entity_count = collection.num_entities
+                print(f"[DELETE] 삭제 전 컬렉션 '{collection_name}' 정보: 엔티티 수 = {entity_count}")
+            except Exception as e:
+                print(f"[DELETE] 삭제 전 컬렉션 정보 조회 실패: {str(e)}")
+                entity_count = "알 수 없음"
+            
+            # 컬렉션 삭제 실행
+            print(f"[DELETE] 컬렉션 '{collection_name}' 삭제 시작...")
             utility.drop_collection(collection_name)
-        except:
-            pass
+            print(f"[DELETE] 컬렉션 '{collection_name}' 삭제 완료")
+            
+            # 삭제 후 확인
+            if not utility.has_collection(collection_name):
+                print(f"[DELETE] 삭제 확인: 컬렉션 '{collection_name}'이 성공적으로 삭제되었습니다.")
+                return True
+            else:
+                print(f"[DELETE] 삭제 실패: 컬렉션 '{collection_name}'이 여전히 존재합니다.")
+                return False
+                
+        except Exception as e:
+            print(f"[DELETE] 컬렉션 '{collection_name}' 삭제 중 오류 발생: {str(e)}")
+            return False
     
 
 class DataMilVus(MilVus):   #  args: (DataProcessor)

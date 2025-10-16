@@ -2373,24 +2373,43 @@ def delete_domains():
             try:
                 logger.info(f"도메인 '{domain}' 삭제 시작")
                 
-                # 컬렉션 정보 조회 (삭제 전 로깅용)
+                # 삭제 전 컬렉션 정보 조회
                 try:
                     milvus_db.get_collection_info(domain)
                     entity_count = milvus_db.num_entities if hasattr(milvus_db, 'num_entities') else 0
-                except:
+                    logger.info(f"삭제 전 도메인 '{domain}' 정보: 엔티티 수 = {entity_count}")
+                except Exception as e:
                     entity_count = "알 수 없음"
+                    logger.warning(f"삭제 전 도메인 '{domain}' 정보 조회 실패: {str(e)}")
                 
-                # 컬렉션 삭제
-                milvus_db.delete_collection(domain)
+                # 삭제 전 컬렉션 존재 확인
+                available_before = milvus_db.get_list_collection()
+                logger.info(f"삭제 전 전체 컬렉션 목록: {available_before}")
                 
-                # 결과 추가
-                results.append({
-                    "name": domain,
-                    "status": "success",
-                    "entity_count": entity_count,
-                    "message": "도메인이 성공적으로 삭제되었습니다."
-                })
-                logger.info(f"도메인 '{domain}' 삭제 완료 (엔티티 수: {entity_count})")
+                # 컬렉션 삭제 실행
+                delete_success = milvus_db.delete_collection(domain)
+                
+                # 삭제 후 확인
+                available_after = milvus_db.get_list_collection()
+                logger.info(f"삭제 후 전체 컬렉션 목록: {available_after}")
+                
+                if delete_success and domain not in available_after:
+                    # 결과 추가
+                    results.append({
+                        "name": domain,
+                        "status": "success",
+                        "entity_count": entity_count,
+                        "message": "도메인이 성공적으로 삭제되었습니다."
+                    })
+                    logger.info(f"도메인 '{domain}' 삭제 완료 (엔티티 수: {entity_count})")
+                else:
+                    results.append({
+                        "name": domain,
+                        "status": "error",
+                        "entity_count": entity_count,
+                        "message": "도메인 삭제가 완료되지 않았습니다."
+                    })
+                    logger.error(f"도메인 '{domain}' 삭제 실패 - 삭제 후에도 여전히 존재함")
                 
             except Exception as e:
                 logger.error(f"도메인 '{domain}' 삭제 중 오류 발생: {str(e)}")
