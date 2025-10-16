@@ -752,7 +752,7 @@ class InteractManager:
         print(f"[TIMING] 텍스트 전처리 완료: {(cleanse_time - start_time):.4f}초")
         
         # 기본 출력 필드 후보 (실제 스키마에 있는 필드만 사용)
-        base_output_fields = ["doc_id", "raw_doc_id", "passage_id", "domain", "title", "author", "text", "info", "tags"]
+        base_output_fields = ["passage_uid", "doc_id", "raw_doc_id", "passage_id", "domain", "title", "author", "text", "info", "tags"]
         
         # 검색 표현식 구성 준비
         expr_parts = []
@@ -1014,7 +1014,7 @@ class InteractManager:
                     
                     results = collection.query(
                         expr=expr,
-                        output_fields=["doc_id", "raw_doc_id", "passage_id", "domain", "title", "author", "text", "info", "tags"]
+                        output_fields=["passage_uid", "doc_id", "raw_doc_id", "passage_id", "domain", "title", "author", "text", "info", "tags"]
                     )
                     
                     if results:
@@ -1155,7 +1155,7 @@ class InteractManager:
                     try:
                         results = collection.query(
                             expr=expr,
-                            output_fields=["doc_id", "raw_doc_id", "passage_id", "domain", "title", "author", "text", "info", "tags"]
+                            output_fields=["passage_uid", "doc_id", "raw_doc_id", "passage_id", "domain", "title", "author", "text", "info", "tags"]
                         )
                         print(f"[DEBUG] Query results count: {len(results) if results else 0}")
                         
