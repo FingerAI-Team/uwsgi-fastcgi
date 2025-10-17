@@ -259,7 +259,7 @@ class QueryRewriter:
                 ],
                 "stream": False,
                 "temperature": self.temperature,
-                "max_tokens": 100
+                "max_tokens": 50
             }
             logger.info(f"VLLM 요청 URL: {self.vllm_endpoint}/v1/chat/completions")
             logger.info(f"VLLM 요청 모델: {model}")
@@ -303,6 +303,14 @@ class QueryRewriter:
         
         # 따옴표 제거
         response = response.strip('"\'')
+        
+        # 설명 부분 제거 (개선 이유, ** 등)
+        if '**' in response:
+            response = response.split('**')[0].strip()
+        
+        # 질문 마크가 있으면 그 앞까지만
+        if '?' in response:
+            response = response.split('?')[0] + '?'
         
         return response
     
