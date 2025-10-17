@@ -188,14 +188,24 @@ class QueryRewriter:
         recent_history = history[-self.max_history_turns * 2:]  # 사용자+봇 메시지 쌍
         
         conversation_history = []
-        for i in range(0, len(recent_history), 2):
-            if i + 1 < len(recent_history):
-                user_msg = recent_history[i].get("message", "")  # "content" → "message"로 수정
-                bot_msg = recent_history[i + 1].get("message", "")
-                conversation_history.append({
-                    "user": user_msg,
-                    "bot": bot_msg
-                })
+        current_turn = {"user": "", "bot": ""}
+        
+        for msg in recent_history:
+            role = msg.get("role", "")
+            message = msg.get("message", "")
+            
+            if role == "user":
+                # 새로운 턴 시작
+                if current_turn["user"]:  # 이전 턴이 있으면 저장
+                    conversation_history.append(current_turn)
+                current_turn = {"user": message, "bot": ""}
+            elif role == "bot":
+                # 봇 메시지 추가
+                current_turn["bot"] = message
+        
+        # 마지막 턴 저장
+        if current_turn["user"]:
+            conversation_history.append(current_turn)
         
         logger.debug(f"대화 기록 추출: {len(conversation_history)}개 턴 (현재 질문 제외)")
         return conversation_history
